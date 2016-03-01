@@ -21,6 +21,7 @@
 #include "nsIObserver.h"
 #include "nsITimer.h"
 #include "nsCRT.h"
+#include "nsIWidgetListener.h"
 #include "FramePropertyTable.h"
 #include "nsGkAtoms.h"
 #include "nsCycleCollectionParticipant.h"
@@ -39,6 +40,8 @@
 #include "nsIMessageManager.h"
 #include "mozilla/RestyleLogging.h"
 #include "Units.h"
+#include "mozilla/RestyleManagerHandle.h"
+#include "prenv.h"
 
 class nsAString;
 class nsIPrintSettings;
@@ -67,7 +70,6 @@ class gfxMissingFontRecorder;
 namespace mozilla {
 class EffectCompositor;
 class EventStateManager;
-class RestyleManager;
 class CounterStyleManager;
 namespace layers {
 class ContainerLayer;
@@ -220,7 +222,7 @@ public:
   }
 
 #ifdef MOZILLA_INTERNAL_API
-  nsStyleSet* StyleSet() { return GetPresShell()->StyleSet(); }
+  mozilla::StyleSetHandle StyleSet() { return GetPresShell()->StyleSet(); }
 
   nsFrameManager* FrameManager()
     { return PresShell()->FrameManager(); }
@@ -234,7 +236,7 @@ public:
 
   nsRefreshDriver* RefreshDriver() { return mRefreshDriver; }
 
-  mozilla::RestyleManager* RestyleManager() { return mRestyleManager; }
+  mozilla::RestyleManagerHandle RestyleManager() { return mRestyleManager; }
 
   mozilla::CounterStyleManager* CounterStyleManager() {
     return mCounterStyleManager;
@@ -278,12 +280,27 @@ public:
    */
   void MediaFeatureValuesChanged(nsRestyleHint aRestyleHint,
                                  nsChangeHint aChangeHint = nsChangeHint(0));
+  /**
+   * Calls MediaFeatureValuesChanged for this pres context and all descendant
+   * subdocuments that have a pres context. This should be used for media
+   * features that must be updated in all subdocuments e.g. display-mode.
+   */
+  void MediaFeatureValuesChangedAllDocuments(nsRestyleHint aRestyleHint,
+                                             nsChangeHint aChangeHint = nsChangeHint(0));
+
   void PostMediaFeatureValuesChangedEvent();
   void HandleMediaFeatureValuesChangedEvent();
   void FlushPendingMediaFeatureValuesChanged() {
     if (mPendingMediaFeatureValuesChanged)
       MediaFeatureValuesChanged(nsRestyleHint(0));
   }
+
+  /**
+   * Updates the size mode on all remote children and recursively notifies this
+   * document and all subdocuments (including remote children) that a media
+   * feature value has changed.
+   */
+  void SizeModeChanged(nsSizeMode aSizeMode);
 
   /**
    * Access compatibility mode for this context.  This is the same as
@@ -455,7 +472,7 @@ public:
    * presenting the document. The returned value is in the standard
    * nscoord units (as scaled by the device context).
    */
-  nsRect GetVisibleArea() { return mVisibleArea; }
+  nsRect GetVisibleArea() const { return mVisibleArea; }
 
   /**
    * Set the currently visible area. The units for r are standard
@@ -1068,6 +1085,16 @@ public:
     mHasWarnedAboutPositionedTableParts = true;
   }
 
+  static bool StyloEnabled()
+  {
+#ifdef MOZ_STYLO
+    static bool enabled = PR_GetEnv("MOZ_STYLO");
+    return enabled;
+#else
+    return false;
+#endif
+  }
+
 protected:
   friend class nsRunnableMethod<nsPresContext>;
   void ThemeChangedInternal();
@@ -1219,7 +1246,7 @@ protected:
   RefPtr<mozilla::EffectCompositor> mEffectCompositor;
   RefPtr<nsTransitionManager> mTransitionManager;
   RefPtr<nsAnimationManager> mAnimationManager;
-  RefPtr<mozilla::RestyleManager> mRestyleManager;
+  mozilla::RestyleManagerHandle::RefPtr mRestyleManager;
   RefPtr<mozilla::CounterStyleManager> mCounterStyleManager;
   nsIAtom* MOZ_UNSAFE_REF("always a static atom") mMedium; // initialized by subclass ctors
   nsCOMPtr<nsIAtom> mMediaEmulated;

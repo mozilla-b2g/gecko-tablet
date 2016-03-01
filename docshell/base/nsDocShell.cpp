@@ -3492,22 +3492,19 @@ nsDocShell::CanAccessItem(nsIDocShellTreeItem* aTargetItem,
 
   nsCOMPtr<nsIDocShell> targetDS = do_QueryInterface(aTargetItem);
   nsCOMPtr<nsIDocShell> accessingDS = do_QueryInterface(aAccessingItem);
-  if (!!targetDS != !!accessingDS) {
-    // We must be able to convert both or neither to nsIDocShell.
+  if (!targetDS || !accessingDS) {
+    // We must be able to convert both to nsIDocShell.
     return false;
   }
 
-  if (targetDS && accessingDS &&
-      (targetDS->GetIsInBrowserElement() !=
-         accessingDS->GetIsInBrowserElement() ||
-       targetDS->GetAppId() != accessingDS->GetAppId())) {
+  if (targetDS->GetIsInBrowserElement() != accessingDS->GetIsInBrowserElement() ||
+      targetDS->GetAppId() != accessingDS->GetAppId()) {
     return false;
   }
 
   // A private document can't access a non-private one, and vice versa.
-  if (aTargetItem->GetDocument()->GetLoadContext()->UsePrivateBrowsing() !=
-      aAccessingItem->GetDocument()->GetLoadContext()->UsePrivateBrowsing())
-  {
+  if (static_cast<nsDocShell*>(targetDS.get())->UsePrivateBrowsing() !=
+      static_cast<nsDocShell*>(accessingDS.get())->UsePrivateBrowsing()) {
     return false;
   }
 
@@ -4972,7 +4969,7 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
     bool sendTelemetry = false;
     if (NS_ERROR_PHISHING_URI == aError) {
       sendTelemetry = true;
-      error.AssignLiteral("phishingBlocked");
+      error.AssignLiteral("deceptiveBlocked");
       bucketId = IsFrame() ? nsISecurityUITelemetry::WARNING_PHISHING_PAGE_FRAME
                            : nsISecurityUITelemetry::WARNING_PHISHING_PAGE_TOP;
     } else if (NS_ERROR_MALWARE_URI == aError) {
@@ -5815,6 +5812,15 @@ nsDocShell::SetPosition(int32_t aX, int32_t aY)
   }
 
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::SetPositionDesktopPix(int32_t aX, int32_t aY)
+{
+  // Added to nsIBaseWindow in bug 1247335;
+  // implement if a use-case is found.
+  NS_ASSERTION(false, "implement me!");
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP

@@ -818,10 +818,6 @@
   border-bottom-color: var(--theme-splitter-color);
 }
 
-.theme-light .devtools-tabbar {
-  box-shadow: 0 -2px 0 rgba(170,170,170,.1) inset;
-}
-
 .theme-dark .devtools-tabbar {
   box-shadow: 0 -2px 0 rgba(0,0,0,.1) inset;
 }
@@ -836,7 +832,7 @@
   -moz-box-align: center;
   min-width: 32px;
   min-height: 24px;
-  max-width: 110px;
+  max-width: 100px;
   margin: 0;
   padding: 0;
   border-style: solid;
@@ -887,8 +883,8 @@
 
 .devtools-tab > image {
   border: none;
-  -moz-margin-end: 0;
-  -moz-margin-start: 4px;
+  margin: 0;
+  margin-inline-start: 4px;
   opacity: 0.6;
   max-height: 16px;
   width: 16px; /* Prevents collapse during theme switching */
@@ -896,6 +892,7 @@
 
 .devtools-tab > label {
   white-space: nowrap;
+  margin: 0 4px;
 }
 
 .devtools-tab:hover > image {
@@ -917,12 +914,6 @@
   box-shadow: 0 2px 0 #d7f1ff inset,
               0 8px 3px -5px #2b82bf inset,
               0 -2px 0 rgba(0,0,0,.2) inset;
-}
-
-.theme-light .devtools-tabbar .devtools-tab[selected] {
-  box-shadow: 0 2px 0 #d7f1ff inset,
-              0 8px 3px -5px #2b82bf inset,
-              0 -2px 0 rgba(0,0,0,.06) inset;
 }
 
 #toolbox-tabs .devtools-tab[selected],

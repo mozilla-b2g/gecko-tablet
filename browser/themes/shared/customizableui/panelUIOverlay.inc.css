@@ -198,6 +198,7 @@ panelmultiview[nosubviews=true] > .panel-viewcontainer > .panel-viewstack > .pan
   overflow: visible;
 }
 
+.cui-widget-panel > .panel-arrowcontainer > .panel-arrowcontent,
 #PanelUI-popup > .panel-arrowcontainer > .panel-arrowcontent {
   overflow: hidden;
 }
@@ -734,7 +735,7 @@ toolbarpaletteitem[place="palette"] > toolbaritem > toolbarbutton {
 #PanelUI-remotetabs[mainview] #PanelUI-remotetabs-reauthsync,
 #PanelUI-remotetabs[mainview] #PanelUI-remotetabs-nodevicespane,
 #PanelUI-remotetabs[mainview] #PanelUI-remotetabs-tabsdisabledpane {
-  min-height: 30em;
+  min-height: 33em;
 }
 
 #PanelUI-remotetabs-tabslist > label[itemtype="client"] {

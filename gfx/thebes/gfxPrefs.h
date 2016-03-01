@@ -199,6 +199,7 @@ private:
   DECL_GFX_PREF(Once, "dom.vr.oculus050.enabled",              VROculus050Enabled, bool, true);
   DECL_GFX_PREF(Once, "dom.vr.cardboard.enabled",              VRCardboardEnabled, bool, false);
   DECL_GFX_PREF(Once, "dom.vr.add-test-devices",               VRAddTestDevices, int32_t, 1);
+  DECL_GFX_PREF(Live, "dom.vr.poseprediction.enabled",         VRPosePredictionEnabled, bool, false);
   DECL_GFX_PREF(Live, "dom.w3c_pointer_events.enabled",        PointerEventsEnabled, bool, false);
   DECL_GFX_PREF(Live, "dom.w3c_touch_events.enabled",          TouchEventsEnabled, int32_t, 0);
 
@@ -212,6 +213,16 @@ private:
                 WheelSmoothScrollMaxDurationMs, int32_t, 400);
   DECL_GFX_PREF(Live, "general.smoothScroll.mouseWheel.durationMinMS",
                 WheelSmoothScrollMinDurationMs, int32_t, 200);
+  DECL_GFX_PREF(Live, "general.smoothScroll.pages",            PageSmoothScrollEnabled, bool, true);
+  DECL_GFX_PREF(Live, "general.smoothScroll.pages.durationMaxMS",
+                PageSmoothScrollMaxDurationMs, int32_t, 150);
+  DECL_GFX_PREF(Live, "general.smoothScroll.pages.durationMinMS",
+                PageSmoothScrollMinDurationMs, int32_t, 150);
+  DECL_GFX_PREF(Live, "general.smoothScroll.pixels",           PixelSmoothScrollEnabled, bool, true);
+  DECL_GFX_PREF(Live, "general.smoothScroll.pixels.durationMaxMS",
+                PixelSmoothScrollMaxDurationMs, int32_t, 150);
+  DECL_GFX_PREF(Live, "general.smoothScroll.pixels.durationMinMS",
+                PixelSmoothScrollMinDurationMs, int32_t, 150);
   DECL_GFX_PREF(Live, "general.smoothScroll.stopDecelerationWeighting",
                 SmoothScrollStopDecelerationWeighting, float, 0.4f);
 
@@ -242,8 +253,6 @@ private:
 
   DECL_GFX_PREF(Once, "gfx.direct2d.disabled",                 Direct2DDisabled, bool, false);
   DECL_GFX_PREF(Once, "gfx.direct2d.force-enabled",            Direct2DForceEnabled, bool, false);
-  DECL_GFX_PREF(Live, "gfx.direct2d.use1_1",                   Direct2DUse1_1, bool, false);
-  DECL_GFX_PREF(Live, "gfx.direct2d.allow1_0",                 Direct2DAllow1_0, bool, false);
   DECL_GFX_PREF(Live, "gfx.draw-color-bars",                   CompositorDrawColorBars, bool, false);
   DECL_GFX_PREF(Once, "gfx.e10s.hide-plugins-for-scroll",      HidePluginsForScroll, bool, true);
   DECL_GFX_PREF(Once, "gfx.font_rendering.directwrite.force-enabled", DirectWriteFontRenderingForceEnabled, bool, false);
@@ -251,8 +260,10 @@ private:
   DECL_GFX_PREF(Live, "gfx.layerscope.enabled",                LayerScopeEnabled, bool, false);
   DECL_GFX_PREF(Live, "gfx.layerscope.port",                   LayerScopePort, int32_t, 23456);
   // Note that        "gfx.logging.level" is defined in Logging.h
-  DECL_GFX_PREF(Once, "gfx.logging.crash.length",              GfxLoggingCrashLength, uint32_t, 6);
+  DECL_GFX_PREF(Once, "gfx.logging.crash.length",              GfxLoggingCrashLength, uint32_t, 16);
   // The maximums here are quite conservative, we can tighten them if problems show up.
+  DECL_GFX_PREF(Once, "gfx.logging.texture-usage.enabled",     GfxLoggingTextureUsageEnabled, bool, false);
+  DECL_GFX_PREF(Once, "gfx.logging.peak-texture-usage.enabled",GfxLoggingPeakTextureUsageEnabled, bool, false);
   DECL_GFX_PREF(Once, "gfx.max-alloc-size",                    MaxAllocSize, int32_t, (int32_t)500000000);
   DECL_GFX_PREF(Once, "gfx.max-texture-size",                  MaxTextureSize, int32_t, (int32_t)32767);
   DECL_GFX_PREF(Live, "gfx.partialpresent.force",              PartialPresent, int32_t, 0);

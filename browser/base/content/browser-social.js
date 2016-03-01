@@ -259,8 +259,6 @@ SocialUI = {
   // called on tab/urlbar/location changes and after customization. Update
   // anything that is tab specific.
   updateState: function() {
-    if (location == "about:customizing")
-      return;
     goSetCommandEnabled("Social:PageShareOrMark", this.canShareOrMarkPage(gBrowser.currentURI));
     if (!SocialUI.enabled)
       return;
@@ -763,7 +761,7 @@ SocialSidebar = {
 
   // Whether the sidebar can be shown for this window.
   get canShow() {
-    if (!SocialUI.enabled || document.mozFullScreen)
+    if (!SocialUI.enabled || document.fullscreenElement)
       return false;
     return Social.providers.some(p => p.sidebarURL);
   },

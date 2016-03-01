@@ -115,6 +115,7 @@ enum {
     JS_TELEMETRY_GC_MAX_PAUSE_MS,
     JS_TELEMETRY_GC_MARK_MS,
     JS_TELEMETRY_GC_SWEEP_MS,
+    JS_TELEMETRY_GC_COMPACT_MS,
     JS_TELEMETRY_GC_MARK_ROOTS_MS,
     JS_TELEMETRY_GC_MARK_GRAY_MS,
     JS_TELEMETRY_GC_SLICE_MS,
@@ -130,8 +131,13 @@ enum {
     JS_TELEMETRY_GC_MINOR_US,
     JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT,
     JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_ADDONS,
-    JS_TELEMETRY_ADDON_EXCEPTIONS
+    JS_TELEMETRY_ADDON_EXCEPTIONS,
+    JS_TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED,
+    JS_TELEMETRY_END
 };
+
+static_assert(JS_TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED == 25,
+              "This value needs to be kept in sync with SelfHostingDefines.h");
 
 typedef void
 (*JSAccumulateTelemetryDataCallback)(int id, uint32_t sample, const char* key);
@@ -2675,7 +2681,7 @@ class MOZ_RAII JS_FRIEND_API(AutoCTypesActivityCallback) {
 };
 
 typedef JSObject*
-(* ObjectMetadataCallback)(JSContext* cx, JSObject* obj);
+(* ObjectMetadataCallback)(JSContext* cx, JS::HandleObject obj);
 
 /**
  * Specify a callback to invoke when creating each JS object in the current

@@ -24,6 +24,7 @@
 #include "nsPlaceholderFrame.h"
 #include "nsIContent.h"
 #include "nsContentUtils.h"
+#include "nsCSSPseudoElements.h"
 #include "nsIAtom.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
@@ -39,7 +40,9 @@
 #include "mozilla/Snprintf.h"
 #include "nsFrameManager.h"
 #include "nsLayoutUtils.h"
-#include "RestyleManager.h"
+#include "mozilla/RestyleManager.h"
+#include "mozilla/RestyleManagerHandle.h"
+#include "mozilla/RestyleManagerHandleInlines.h"
 
 #include "nsIDOMNode.h"
 #include "nsISelection.h"
@@ -671,21 +674,30 @@ nsFrame::DestroyFrom(nsIFrame* aDestructRoot)
     // and not only those whose current style involves CSS transitions,
     // because what matters is whether the new style (not the old)
     // specifies CSS transitions.
-    RestyleManager::ReframingStyleContexts* rsc =
-      presContext->RestyleManager()->GetReframingStyleContexts();
-    if (rsc) {
-      rsc->Put(mContent, mStyleContext);
+    if (presContext->RestyleManager()->IsGecko()) {
+      // stylo: ServoRestyleManager does not handle transitions yet, and when
+      // it does it probably won't need to track reframed style contexts to
+      // start transitions correctly.
+      RestyleManager::ReframingStyleContexts* rsc =
+        presContext->RestyleManager()->AsGecko()->GetReframingStyleContexts();
+      if (rsc) {
+        rsc->Put(mContent, mStyleContext);
+      }
     }
   }
 
   if (HasCSSAnimations()) {
     // If no new frame for this element is created by the end of the
     // restyling process, stop animations for this frame
-    RestyleManager::AnimationsWithDestroyedFrame* adf =
-      presContext->RestyleManager()->GetAnimationsWithDestroyedFrame();
-    // AnimationsWithDestroyedFrame only lives during the restyling process.
-    if (adf) {
-      adf->Put(mContent, mStyleContext);
+    if (presContext->RestyleManager()->IsGecko()) {
+      RestyleManager::AnimationsWithDestroyedFrame* adf =
+        presContext->RestyleManager()->AsGecko()->GetAnimationsWithDestroyedFrame();
+      // AnimationsWithDestroyedFrame only lives during the restyling process.
+      if (adf) {
+        adf->Put(mContent, mStyleContext);
+      }
+    } else {
+      NS_ERROR("stylo: ServoRestyleManager does not support animations yet");
     }
   }
 
@@ -1162,6 +1174,12 @@ nsIFrame::Combines3DTransformWithAncestors() const
     return false;
   }
   return StyleDisplay()->HasTransform(this) || StyleDisplay()->BackfaceIsHidden();
+}
+
+bool
+nsIFrame::In3DContextAndBackfaceIsHidden() const
+{
+  return Combines3DTransformWithAncestors() && StyleDisplay()->BackfaceIsHidden();
 }
 
 bool
@@ -2106,8 +2124,6 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
 
   DisplayListClipState::AutoSaveRestore clipState(aBuilder);
 
-  nsDisplayListBuilder::AutoSaveRestorePerspectiveIndex perspectiveIndex(aBuilder, this);
-
   if (isTransformed || useBlendMode || usingSVGEffects || useFixedPosition || useStickyPosition) {
     // We don't need to pass ancestor clipping down to our children;
     // everything goes inside a display item's child list, and the display
@@ -2126,6 +2142,9 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
     DisplayListClipState::AutoSaveRestore nestedClipState(aBuilder);
     nsDisplayListBuilder::AutoInTransformSetter
       inTransformSetter(aBuilder, inTransform);
+    nsDisplayListBuilder::AutoSaveRestorePerspectiveIndex
+      perspectiveIndex(aBuilder, this);
+
     CheckForApzAwareEventHandlers(aBuilder, this);
 
     nsRect clipPropClip;
@@ -9114,13 +9133,13 @@ nsIFrame::IsPseudoStackingContextFromStyle() {
 }
 
 Element*
-nsIFrame::GetPseudoElement(nsCSSPseudoElements::Type aType)
+nsIFrame::GetPseudoElement(CSSPseudoElementType aType)
 {
   nsIFrame* frame = nullptr;
 
-  if (aType == nsCSSPseudoElements::ePseudo_before) {
+  if (aType == CSSPseudoElementType::before) {
     frame = nsLayoutUtils::GetBeforeFrame(this);
-  } else if (aType == nsCSSPseudoElements::ePseudo_after) {
+  } else if (aType == CSSPseudoElementType::after) {
     frame = nsLayoutUtils::GetAfterFrame(this);
   }
 
@@ -9130,7 +9149,7 @@ nsIFrame::GetPseudoElement(nsCSSPseudoElements::Type aType)
       return content->AsElement();
     }
   }
-  
+
   return nullptr;
 }
 

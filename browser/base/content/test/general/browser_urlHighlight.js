@@ -60,12 +60,28 @@ function test() {
   testVal("<user:pass@sub1.sub2.sub3.>mozilla.org");
   testVal("<user:pass@>mozilla.org");
 
+  testVal("<https://>mozilla.org<   >");
+  testVal("mozilla.org<   >");
+
   testVal("<https://>mozilla.org</file.ext>");
   testVal("<https://>mozilla.org</sub/file.ext>");
   testVal("<https://>mozilla.org</sub/file.ext?foo>");
   testVal("<https://>mozilla.org</sub/file.ext?foo&bar>");
   testVal("<https://>mozilla.org</sub/file.ext?foo&bar#top>");
   testVal("<https://>mozilla.org</sub/file.ext?foo&bar#top>");
+  testVal("foo.bar<?q=test>");
+  testVal("foo.bar<#mozilla.org>");
+  testVal("foo.bar<?somewhere.mozilla.org>");
+  testVal("foo.bar<?@mozilla.org>");
+  testVal("foo.bar<#x@mozilla.org>");
+  testVal("foo.bar<#@x@mozilla.org>");
+  testVal("foo.bar<?x@mozilla.org>");
+  testVal("foo.bar<?@x@mozilla.org>");
+  testVal("<foo.bar@x@>mozilla.org");
+  testVal("<foo.bar@:baz@>mozilla.org");
+  testVal("<foo.bar:@baz@>mozilla.org");
+  testVal("<foo.bar@:ba:z@>mozilla.org");
+  testVal("<foo.:bar:@baz@>mozilla.org");
 
   testVal("<https://sub.>mozilla.org<:666/file.ext>");
   testVal("<sub.>mozilla.org<:666/file.ext>");

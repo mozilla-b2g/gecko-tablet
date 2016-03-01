@@ -17,16 +17,15 @@ using namespace js::jit;
 
 using mozilla::FloorLog2;
 
-void
-LIRGeneratorARM::useBoxFixed(LInstruction* lir, size_t n, MDefinition* mir, Register reg1,
-                             Register reg2, bool useAtStart)
+LBoxAllocation
+LIRGeneratorARM::useBoxFixed(MDefinition* mir, Register reg1, Register reg2, bool useAtStart)
 {
     MOZ_ASSERT(mir->type() == MIRType_Value);
     MOZ_ASSERT(reg1 != reg2);
 
     ensureDefined(mir);
-    lir->setOperand(n, LUse(reg1, mir->virtualRegister(), useAtStart));
-    lir->setOperand(n + 1, LUse(reg2, VirtualRegisterOfPayload(mir), useAtStart));
+    return LBoxAllocation(LUse(reg1, mir->virtualRegister(), useAtStart),
+                          LUse(reg2, VirtualRegisterOfPayload(mir), useAtStart));
 }
 
 LAllocation
@@ -65,7 +64,7 @@ LIRGeneratorARM::visitBox(MBox* box)
     }
 
     if (inner->isConstant()) {
-        defineBox(new(alloc()) LValue(inner->toConstant()->value()), box);
+        defineBox(new(alloc()) LValue(inner->toConstant()->toJSValue()), box);
         return;
     }
 
@@ -108,10 +107,9 @@ LIRGeneratorARM::visitUnbox(MUnbox* unbox)
     ensureDefined(inner);
 
     if (IsFloatingPointType(unbox->type())) {
-        LUnboxFloatingPoint* lir = new(alloc()) LUnboxFloatingPoint(unbox->type());
+        LUnboxFloatingPoint* lir = new(alloc()) LUnboxFloatingPoint(useBox(inner), unbox->type());
         if (unbox->fallible())
             assignSnapshot(lir, unbox->bailoutKind());
-        useBox(lir, LUnboxFloatingPoint::Input, inner);
         define(lir, unbox);
         return;
     }
@@ -163,6 +161,13 @@ LIRGeneratorARM::lowerForALU(LInstructionHelper<1, 2, 0>* ins, MDefinition* mir,
     ins->setOperand(1, ins->snapshot() ? useRegisterOrConstant(rhs) :
                                          useRegisterOrConstantAtStart(rhs));
     define(ins, mir, LDefinition(LDefinition::TypeFrom(mir->type()), LDefinition::REGISTER));
+}
+
+void
+LIRGeneratorARM::lowerForALUInt64(LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins,
+                                  MDefinition* mir, MDefinition* lhs, MDefinition* rhs)
+{
+    MOZ_CRASH("NYI");
 }
 
 void
@@ -233,6 +238,13 @@ LIRGeneratorARM::lowerForShift(LInstructionHelper<1, 2, 0>* ins, MDefinition* mi
 }
 
 void
+LIRGeneratorARM::lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, 0>* ins,
+                                    MDefinition* mir, MDefinition* lhs, MDefinition* rhs)
+{
+    MOZ_CRASH("NYI");
+}
+
+void
 LIRGeneratorARM::lowerDivI(MDiv* div)
 {
     if (div->isUnsigned()) {
@@ -243,7 +255,7 @@ LIRGeneratorARM::lowerDivI(MDiv* div)
     // Division instructions are slow. Division by constant denominators can be
     // rewritten to use other instructions.
     if (div->rhs()->isConstant()) {
-        int32_t rhs = div->rhs()->toConstant()->value().toInt32();
+        int32_t rhs = div->rhs()->toConstant()->toInt32();
         // Check for division by a positive power of two, which is an easy and
         // important case to optimize. Note that other optimizations are also
         // possible; division by negative powers of two can be optimized in a
@@ -292,7 +304,7 @@ LIRGeneratorARM::lowerModI(MMod* mod)
     }
 
     if (mod->rhs()->isConstant()) {
-        int32_t rhs = mod->rhs()->toConstant()->value().toInt32();
+        int32_t rhs = mod->rhs()->toConstant()->toInt32();
         int32_t shift = FloorLog2(rhs);
         if (rhs > 0 && 1 << shift == rhs) {
             LModPowTwoI* lir = new(alloc()) LModPowTwoI(useRegister(mod->lhs()), shift);
@@ -345,7 +357,8 @@ LIRGeneratorARM::newLTableSwitch(const LAllocation& in, const LDefinition& input
 LTableSwitchV*
 LIRGeneratorARM::newLTableSwitchV(MTableSwitch* tableswitch)
 {
-    return new(alloc()) LTableSwitchV(temp(), tempDouble(), tableswitch);
+    return new(alloc()) LTableSwitchV(useBox(tableswitch->getOperand(0)),
+                                      temp(), tempDouble(), tableswitch);
 }
 
 void
@@ -466,10 +479,10 @@ LIRGeneratorARM::visitAsmJSLoadHeap(MAsmJSLoadHeap* ins)
     LAllocation ptrAlloc;
 
     // For the ARM it is best to keep the 'ptr' in a register if a bounds check is needed.
-    if (ptr->isConstantValue() && !ins->needsBoundsCheck()) {
+    if (ptr->isConstant() && !ins->needsBoundsCheck()) {
         // A bounds check is only skipped for a positive index.
-        MOZ_ASSERT(ptr->constantValue().toInt32() >= 0);
-        ptrAlloc = LAllocation(ptr->constantVp());
+        MOZ_ASSERT(ptr->toConstant()->toInt32() >= 0);
+        ptrAlloc = LAllocation(ptr->toConstant());
     } else {
         ptrAlloc = useRegisterAtStart(ptr);
     }
@@ -484,9 +497,9 @@ LIRGeneratorARM::visitAsmJSStoreHeap(MAsmJSStoreHeap* ins)
     MOZ_ASSERT(ptr->type() == MIRType_Int32);
     LAllocation ptrAlloc;
 
-    if (ptr->isConstantValue() && !ins->needsBoundsCheck()) {
-        MOZ_ASSERT(ptr->constantValue().toInt32() >= 0);
-        ptrAlloc = LAllocation(ptr->constantVp());
+    if (ptr->isConstant() && !ins->needsBoundsCheck()) {
+        MOZ_ASSERT(ptr->toConstant()->toInt32() >= 0);
+        ptrAlloc = LAllocation(ptr->toConstant());
     } else {
         ptrAlloc = useRegisterAtStart(ptr);
     }

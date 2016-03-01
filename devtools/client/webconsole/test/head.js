@@ -12,6 +12,7 @@ var {Task} = Cu.import("resource://gre/modules/Task.jsm", {});
 var {Utils: WebConsoleUtils} = require("devtools/shared/webconsole/utils");
 var {Messages} = require("devtools/client/webconsole/console-output");
 const asyncStorage = require("devtools/shared/async-storage");
+const HUDService = require("devtools/client/webconsole/hudservice");
 
 // Services.prefs.setBoolPref("devtools.debugger.log", true);
 
@@ -38,7 +39,7 @@ const GROUP_INDENT = 12;
 
 const WEBCONSOLE_STRINGS_URI = "chrome://devtools/locale/" +
                                "webconsole.properties";
-var WCUL10n = new WebConsoleUtils.l10n(WEBCONSOLE_STRINGS_URI);
+var WCUL10n = new WebConsoleUtils.L10n(WEBCONSOLE_STRINGS_URI);
 
 DevToolsUtils.testing = true;
 

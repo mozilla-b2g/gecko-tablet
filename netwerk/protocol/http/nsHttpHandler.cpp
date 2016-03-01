@@ -53,6 +53,7 @@
 #include "nsServiceManagerUtils.h"
 #include "nsComponentManagerUtils.h"
 #include "nsSocketTransportService2.h"
+#include "nsIOService.h"
 
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/ipc/URIUtils.h"
@@ -325,7 +326,7 @@ nsHttpHandler::Init()
     mSchedulingContextService =
         do_GetService("@mozilla.org/network/scheduling-context-service;1");
 
-#ifdef ANDROID
+#if defined(ANDROID) || defined(MOZ_MULET)
     mProductSub.AssignLiteral(MOZILLA_UAVERSION);
 #else
     mProductSub.AssignLiteral("20100101");
@@ -776,7 +777,7 @@ nsHttpHandler::InitUserAgentComponents()
     }
 #endif // ANDROID
 
-#ifdef FXOS_SIMULATOR
+#ifdef MOZ_MULET
     {
         // Add the `Mobile` or `Tablet` or `TV` token when running in the b2g
         // desktop simulator via preference.
@@ -788,7 +789,7 @@ nsHttpHandler::InitUserAgentComponents()
             mCompatDevice.AssignLiteral("Mobile");
         }
     }
-#endif // FXOS_SIMULATOR
+#endif // MOZ_MULET
 
 #if defined(MOZ_WIDGET_GONK)
     // Device model identifier should be a simple token, which can be composed
@@ -2059,6 +2060,11 @@ nsHttpHandler::Observe(nsISupports *subject,
         mPrivateAuthCache.ClearAll();
         if (mWifiTickler)
             mWifiTickler->Cancel();
+
+        // Inform nsIOService that network is tearing down.
+        gIOService->SetHttpHandlerAlreadyShutingDown();
+
+        ShutdownConnectionManager();
 
         // need to reset the session start time since cache validation may
         // depend on this value.

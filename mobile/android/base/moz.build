@@ -6,6 +6,8 @@
 
 DIRS += ['locales']
 
+CONFIGURE_SUBST_FILES += ['adjust_sdk_app_token']
+
 include('android-services.mozbuild')
 
 thirdparty_source_dir = TOPSRCDIR + '/mobile/android/thirdparty/'
@@ -97,7 +99,6 @@ gujar.sources += ['java/org/mozilla/gecko/' + x for x in [
     'util/ColorUtils.java',
     'util/DrawableUtil.java',
     'util/EventCallback.java',
-    'util/Experiments.java',
     'util/FileUtils.java',
     'util/FloatUtils.java',
     'util/GamepadUtils.java',
@@ -224,6 +225,7 @@ gbjar.sources += ['java/org/mozilla/gecko/' + x for x in [
     'db/LocalReadingListAccessor.java',
     'db/LocalSearches.java',
     'db/LocalTabsAccessor.java',
+    'db/LocalUrlAnnotations.java',
     'db/LocalURLMetadata.java',
     'db/PasswordsProvider.java',
     'db/PerProfileDatabaseProvider.java',
@@ -242,6 +244,7 @@ gbjar.sources += ['java/org/mozilla/gecko/' + x for x in [
     'db/TabsAccessor.java',
     'db/TabsProvider.java',
     'db/TopSitesCursorWrapper.java',
+    'db/UrlAnnotations.java',
     'db/URLMetadata.java',
     'db/URLMetadataTable.java',
     'DevToolsAuthHelper.java',
@@ -576,6 +579,7 @@ gbjar.sources += ['java/org/mozilla/gecko/' + x for x in [
     'trackingprotection/TrackingProtectionPrompt.java',
     'updater/UpdateService.java',
     'updater/UpdateServiceHelper.java',
+    'util/Experiments.java',
     'Webapp.java',
     'webapp/Allocator.java',
     'webapp/ApkResources.java',
@@ -985,4 +989,5 @@ if CONFIG['MOZ_ANDROID_SEARCH_ACTIVITY']:
 
 FINAL_TARGET_PP_FILES += ['package-name.txt.in']
 
+DEFINES['OBJDIR'] = OBJDIR
 DEFINES['TOPOBJDIR'] = TOPOBJDIR

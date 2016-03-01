@@ -9,6 +9,7 @@
 
 const {Cc, Ci, Cu} = require("chrome");
 const promise = require("promise");
+const Services = require("Services");
 const {Tools} = require("devtools/client/main");
 const {setTimeout, clearTimeout} =
       Cu.import("resource://gre/modules/Timer.jsm", {});
@@ -34,7 +35,6 @@ loader.lazyRequireGetter(this, "EventEmitter",
   "devtools/shared/event-emitter");
 loader.lazyRequireGetter(this, "StyleInspectorMenu",
   "devtools/client/inspector/shared/style-inspector-menu");
-loader.lazyImporter(this, "Services", "resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "clipboardHelper", function() {
   return Cc["@mozilla.org/widget/clipboardhelper;1"]
@@ -957,7 +957,7 @@ CssRuleView.prototype = {
     let elementStyle = this._elementStyle;
     return this._elementStyle.populate().then(() => {
       if (this._elementStyle !== elementStyle || this.isDestroyed) {
-        return;
+        return null;
       }
 
       this._clearRules();
@@ -1693,8 +1693,8 @@ RuleViewTool.prototype = {
       let target = this.inspector.target;
       if (Tools.styleEditor.isTargetSupported(target)) {
         gDevTools.showToolbox(target, "styleeditor").then(function(toolbox) {
-          let sheet = source || href;
-          toolbox.getCurrentPanel().selectStyleSheet(sheet, line, column);
+          let url = source || href;
+          toolbox.getCurrentPanel().selectStyleSheet(url, line, column);
         });
       }
       return;

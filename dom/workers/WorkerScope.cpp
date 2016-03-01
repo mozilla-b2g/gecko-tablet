@@ -13,6 +13,7 @@
 #include "mozilla/dom/DedicatedWorkerGlobalScopeBinding.h"
 #include "mozilla/dom/Fetch.h"
 #include "mozilla/dom/FunctionBinding.h"
+#include "mozilla/dom/IDBFactory.h"
 #include "mozilla/dom/ImageBitmap.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/PromiseWorkerProxy.h"
@@ -21,7 +22,6 @@
 #include "mozilla/dom/WorkerDebuggerGlobalScopeBinding.h"
 #include "mozilla/dom/WorkerGlobalScopeBinding.h"
 #include "mozilla/dom/cache/CacheStorage.h"
-#include "mozilla/dom/indexedDB/IDBFactory.h"
 #include "mozilla/Services.h"
 #include "nsServiceManagerUtils.h"
 
@@ -53,7 +53,6 @@ using namespace mozilla::dom;
 USING_WORKERS_NAMESPACE
 
 using mozilla::dom::cache::CacheStorage;
-using mozilla::dom::indexedDB::IDBFactory;
 using mozilla::ipc::PrincipalInfo;
 
 BEGIN_WORKERS_NAMESPACE
@@ -600,9 +599,7 @@ public:
     RefPtr<SkipWaitingResultRunnable> runnable =
       new SkipWaitingResultRunnable(workerPrivate, mPromiseProxy);
 
-    AutoJSAPI jsapi;
-    jsapi.Init();
-    if (!runnable->Dispatch(jsapi.cx())) {
+    if (!runnable->Dispatch()) {
       NS_WARNING("Failed to dispatch SkipWaitingResultRunnable to the worker.");
     }
     return NS_OK;
@@ -912,10 +909,9 @@ WorkerDebuggerGlobalScope::PostMessage(const nsAString& aMessage)
 }
 
 void
-WorkerDebuggerGlobalScope::SetImmediate(JSContext* aCx, Function& aHandler,
-                                        ErrorResult& aRv)
+WorkerDebuggerGlobalScope::SetImmediate(Function& aHandler, ErrorResult& aRv)
 {
-  mWorkerPrivate->SetDebuggerImmediate(aCx, aHandler, aRv);
+  mWorkerPrivate->SetDebuggerImmediate(aHandler, aRv);
 }
 
 void

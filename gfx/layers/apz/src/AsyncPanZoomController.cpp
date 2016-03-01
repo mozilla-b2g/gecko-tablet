@@ -54,6 +54,7 @@
 #include "mozilla/layers/CompositorParent.h" // for CompositorParent
 #include "mozilla/layers/LayerTransactionParent.h" // for LayerTransactionParent
 #include "mozilla/layers/PCompositorParent.h" // for PCompositorParent
+#include "mozilla/layers/ScrollInputMethods.h" // for ScrollInputMethod
 #include "mozilla/mozalloc.h"           // for operator new, etc
 #include "mozilla/unused.h"             // for unused
 #include "mozilla/FloatingPoint.h"      // for FuzzyEquals*
@@ -1035,6 +1036,9 @@ nsEventStatus AsyncPanZoomController::HandleDragEvent(const MouseInput& aEvent,
     return nsEventStatus_eConsumeNoDefault;
   }
 
+  mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+      (uint32_t) ScrollInputMethod::ApzScrollbarDrag);
+
   ReentrantMonitorAutoEnter lock(mMonitor);
   CSSPoint scrollFramePoint = aEvent.mLocalOrigin / GetFrameMetrics().GetZoom();
   // The scrollbar can be transformed with the frame but the pres shell
@@ -1732,6 +1736,25 @@ AsyncPanZoomController::AllowScrollHandoffInCurrentBlock() const
   return result;
 }
 
+static ScrollInputMethod
+ScrollInputMethodForWheelDeltaType(ScrollWheelInput::ScrollDeltaType aDeltaType)
+{
+  switch (aDeltaType) {
+    case ScrollWheelInput::SCROLLDELTA_LINE: {
+      return ScrollInputMethod::ApzWheelLine;
+    }
+    case ScrollWheelInput::SCROLLDELTA_PAGE: {
+      return ScrollInputMethod::ApzWheelPage;
+    }
+    case ScrollWheelInput::SCROLLDELTA_PIXEL: {
+      return ScrollInputMethod::ApzWheelPixel;
+    }
+    default:
+      MOZ_ASSERT_UNREACHABLE("unexpected scroll delta type");
+      return ScrollInputMethod::ApzWheelLine;
+  }
+}
+
 nsEventStatus AsyncPanZoomController::OnScrollWheel(const ScrollWheelInput& aEvent)
 {
   ParentLayerPoint delta = GetScrollWheelDelta(aEvent);
@@ -1754,6 +1777,9 @@ nsEventStatus AsyncPanZoomController::OnScrollWheel(const ScrollWheelInput& aEve
     // Avoid spurious state changes and unnecessary work
     return nsEventStatus_eIgnore;
   }
+
+  mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+      (uint32_t) ScrollInputMethodForWheelDeltaType(aEvent.mDeltaType));
 
   switch (aEvent.mScrollMode) {
     case ScrollWheelInput::SCROLLMODE_INSTANT: {
@@ -1792,8 +1818,7 @@ nsEventStatus AsyncPanZoomController::OnScrollWheel(const ScrollWheelInput& aEve
 
         nsPoint initialPosition = CSSPoint::ToAppUnits(mFrameMetrics.GetScrollOffset());
         StartAnimation(new WheelScrollAnimation(
-          *this,
-          initialPosition));
+          *this, initialPosition, aEvent.mDeltaType));
       }
 
       nsPoint deltaInAppUnits =
@@ -1912,6 +1937,9 @@ nsEventStatus AsyncPanZoomController::OnPan(const PanGestureInput& aEvent, bool 
   mY.UpdateWithTouchAtDevicePoint(aEvent.mLocalPanStartPoint.y, aEvent.mLocalPanDisplacement.y, aEvent.mTime);
 
   HandlePanningUpdate(aEvent.mPanDisplacement);
+
+  mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+      (uint32_t) ScrollInputMethod::ApzPanGesture);
 
   ScreenPoint panDistance(fabs(aEvent.mPanDisplacement.x), fabs(aEvent.mPanDisplacement.y));
   OverscrollHandoffState handoffState(
@@ -2571,6 +2599,8 @@ void AsyncPanZoomController::TrackTouch(const MultiTouchInput& aEvent) {
   UpdateWithTouchAtDevicePoint(aEvent);
 
   if (prevTouchPoint != touchPoint) {
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+        (uint32_t) ScrollInputMethod::ApzTouch);
     OverscrollHandoffState handoffState(
         *CurrentTouchBlock()->GetOverscrollHandoffChain(),
         panDistance,
@@ -3514,11 +3544,30 @@ void AsyncPanZoomController::ZoomToRect(CSSRect aRect, const uint32_t aFlags) {
     FrameMetrics endZoomToMetrics = mFrameMetrics;
     if (aFlags & PAN_INTO_VIEW_ONLY) {
       targetZoom = currentZoom;
+    } else if(aFlags & ONLY_ZOOM_TO_DEFAULT_SCALE) {
+      CSSToParentLayerScale zoomAtDefaultScale =
+        mFrameMetrics.GetDevPixelsPerCSSPixel() * LayoutDeviceToParentLayerScale(1.0);
+      if (targetZoom.scale > zoomAtDefaultScale.scale) {
+        // Only change the zoom if we are less than the default zoom
+        if (currentZoom.scale < zoomAtDefaultScale.scale) {
+          targetZoom = zoomAtDefaultScale;
+        } else {
+          targetZoom = currentZoom;
+        }
+      }
     }
     endZoomToMetrics.SetZoom(CSSToParentLayerScale2D(targetZoom));
 
     // Adjust the zoomToRect to a sensible position to prevent overscrolling.
     CSSSize sizeAfterZoom = endZoomToMetrics.CalculateCompositedSizeInCssPixels();
+
+    // Vertically center the zoomed element in the screen.
+    if (!zoomOut && (sizeAfterZoom.height > aRect.height)) {
+      aRect.y -= (sizeAfterZoom.height - aRect.height) * 0.5f;
+      if (aRect.y < 0.0f) {
+        aRect.y = 0.0f;
+      }
+    }
 
     // If either of these conditions are met, the page will be
     // overscrolled after zoomed
@@ -3529,14 +3578,6 @@ void AsyncPanZoomController::ZoomToRect(CSSRect aRect, const uint32_t aFlags) {
     if (aRect.x + sizeAfterZoom.width > cssPageRect.width) {
       aRect.x = cssPageRect.width - sizeAfterZoom.width;
       aRect.x = aRect.x > 0 ? aRect.x : 0;
-    }
-
-    // Vertically center the zoomed element in the screen.
-    if (!zoomOut && (sizeAfterZoom.height > aRect.height)) {
-      aRect.y -= (sizeAfterZoom.height - aRect.height) * 0.5f;
-      if (aRect.y < 0.0f) {
-        aRect.y = 0.0f;
-      }
     }
 
     endZoomToMetrics.SetScrollOffset(aRect.TopLeft());

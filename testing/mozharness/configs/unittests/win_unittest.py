@@ -110,6 +110,7 @@ config = {
             "options": [
                 "--binary=%(binary_path)s",
                 "--testing-modules-dir=test/modules",
+                "--plugins-path=%(test_plugin_path)s",
                 "--symbols-path=%(symbols_path)s"
             ],
             "run_filename": "runtestlist.py",
@@ -231,13 +232,13 @@ config = {
     "all_xpcshell_suites": {
         "xpcshell": {
             'options': ["--xpcshell=%(abs_app_dir)s/" + XPCSHELL_NAME,
-                        "--manifest=tests/xpcshell/tests/all-test-dirs.list"],
+                        "--manifest=tests/xpcshell/tests/xpcshell.ini"],
             'tests': []
         },
         "xpcshell-addons": {
             'options': ["--xpcshell=%(abs_app_dir)s/" + XPCSHELL_NAME,
                         "--tag=addons",
-                        "--manifest=tests/xpcshell/tests/all-test-dirs.list"],
+                        "--manifest=tests/xpcshell/tests/xpcshell.ini"],
             'tests': []
         },
     },

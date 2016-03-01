@@ -38,7 +38,7 @@
 #include "mozilla/dom/MessageEventBinding.h"
 #include "mozilla/dom/WorkerBinding.h"
 #include "mozilla/dom/ScriptSettings.h"
-#include "mozilla/dom/indexedDB/IndexedDatabaseManager.h"
+#include "mozilla/dom/IndexedDatabaseManager.h"
 #include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Preferences.h"
@@ -67,12 +67,6 @@
 #include "WorkerRunnable.h"
 #include "WorkerThread.h"
 
-#ifdef ENABLE_TESTS
-#include "BackgroundChildImpl.h"
-#include "mozilla/ipc/PBackgroundChild.h"
-#include "prrng.h"
-#endif
-
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::ipc;
@@ -82,7 +76,6 @@ USING_WORKERS_NAMESPACE
 using mozilla::MutexAutoLock;
 using mozilla::MutexAutoUnlock;
 using mozilla::Preferences;
-using mozilla::dom::indexedDB::IndexedDatabaseManager;
 
 // The size of the worker runtime heaps in bytes. May be changed via pref.
 #define WORKER_DEFAULT_RUNTIME_HEAPSIZE 32 * 1024 * 1024
@@ -134,10 +127,8 @@ static_assert(MAX_WORKERS_PER_DOMAIN >= 1,
     }                                                                          \
                                                                                \
     if (!workers.IsEmpty()) {                                                  \
-      AutoSafeJSContext cx;                                                    \
-      JSAutoRequest ar(cx);                                                    \
       for (uint32_t index = 0; index < workers.Length(); index++) {            \
-        workers[index]-> _func (cx, __VA_ARGS__);                              \
+        workers[index]-> _func (__VA_ARGS__);                                  \
       }                                                                        \
     }                                                                          \
   PR_END_MACRO
@@ -162,10 +153,6 @@ RuntimeService* gRuntimeService = nullptr;
 
 // Only true during the call to Init.
 bool gRuntimeServiceDuringInit = false;
-
-#ifdef ENABLE_TESTS
-bool gTestPBackground = false;
-#endif // ENABLE_TESTS
 
 class LiteralRebindingCString : public nsDependentCString
 {
@@ -612,7 +599,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   bool
-  Dispatch(JSContext* aCx)
+  Dispatch()
   {
     AutoSyncLoopHolder syncLoop(mWorkerPrivate);
 
@@ -620,7 +607,6 @@ public:
     MOZ_ASSERT(mSyncLoopTarget);
 
     if (NS_FAILED(NS_DispatchToMainThread(this))) {
-      JS_ReportError(aCx, "Failed to dispatch to main thread!");
       return false;
     }
 
@@ -647,15 +633,13 @@ ContentSecurityPolicyAllows(JSContext* aCx)
     if (JS::DescribeScriptedCaller(aCx, &file, &lineNum) && file.get()) {
       fileName = NS_ConvertUTF8toUTF16(file.get());
     } else {
-      JS_ReportPendingException(aCx);
+      MOZ_ASSERT(!JS_IsExceptionPending(aCx));
     }
 
     RefPtr<LogViolationDetailsRunnable> runnable =
         new LogViolationDetailsRunnable(worker, fileName, lineNum);
 
-    if (!runnable->Dispatch(aCx)) {
-      JS_ReportPendingException(aCx);
-    }
+    runnable->Dispatch();
   }
 
   return worker->IsEvalAllowed();
@@ -886,23 +870,10 @@ class WorkerJSRuntime : public mozilla::CycleCollectedJSRuntime
 public:
   // The heap size passed here doesn't matter, we will change it later in the
   // call to JS_SetGCParameter inside CreateJSContextForWorker.
-  WorkerJSRuntime(JSRuntime* aParentRuntime, WorkerPrivate* aWorkerPrivate)
-    : CycleCollectedJSRuntime(aParentRuntime,
-                              WORKER_DEFAULT_RUNTIME_HEAPSIZE,
-                              WORKER_DEFAULT_NURSERY_SIZE),
-    mWorkerPrivate(aWorkerPrivate)
+  explicit WorkerJSRuntime(WorkerPrivate* aWorkerPrivate)
+    : mWorkerPrivate(aWorkerPrivate)
   {
-    JSRuntime* rt = Runtime();
-    MOZ_ASSERT(rt);
-
-    JS_SetRuntimePrivate(rt, new WorkerThreadRuntimePrivate(aWorkerPrivate));
-
-    js::SetPreserveWrapperCallback(rt, PreserveWrapper);
-    JS_InitDestroyPrincipalsCallback(rt, DestroyWorkerPrincipals);
-    JS_SetWrapObjectCallbacks(rt, &WrapObjectCallbacks);
-    if (aWorkerPrivate->IsDedicatedWorker()) {
-      JS_SetFutexCanWait(rt);
-    }
+    MOZ_ASSERT(aWorkerPrivate);
   }
 
   ~WorkerJSRuntime()
@@ -922,6 +893,31 @@ public:
     // The CC is shut down, and the superclass destructor will GC, so make sure
     // we don't try to CC again.
     mWorkerPrivate = nullptr;
+  }
+
+  nsresult Initialize(JSRuntime* aParentRuntime)
+  {
+    nsresult rv =
+      CycleCollectedJSRuntime::Initialize(aParentRuntime,
+                                          WORKER_DEFAULT_RUNTIME_HEAPSIZE,
+                                          WORKER_DEFAULT_NURSERY_SIZE);
+     if (NS_WARN_IF(NS_FAILED(rv))) {
+       return rv;
+     }
+
+    JSRuntime* rt = Runtime();
+    MOZ_ASSERT(rt);
+
+    JS_SetRuntimePrivate(rt, new WorkerThreadRuntimePrivate(mWorkerPrivate));
+
+    js::SetPreserveWrapperCallback(rt, PreserveWrapper);
+    JS_InitDestroyPrincipalsCallback(rt, DestroyWorkerPrincipals);
+    JS_SetWrapObjectCallbacks(rt, &WrapObjectCallbacks);
+    if (mWorkerPrivate->IsDedicatedWorker()) {
+      JS_SetFutexCanWait(rt);
+    }
+
+    return NS_OK;
   }
 
   virtual void
@@ -974,58 +970,6 @@ public:
 private:
   WorkerPrivate* mWorkerPrivate;
 };
-
-#ifdef ENABLE_TESTS
-
-class TestPBackgroundCreateCallback final :
-  public nsIIPCBackgroundChildCreateCallback
-{
-public:
-  NS_DECL_ISUPPORTS
-
-  virtual void
-  ActorCreated(PBackgroundChild* aActor) override
-  {
-    MOZ_RELEASE_ASSERT(aActor);
-  }
-
-  virtual void
-  ActorFailed() override
-  {
-    MOZ_CRASH("TestPBackground() should not fail "
-              "GetOrCreateForCurrentThread()");
-  }
-
-private:
-  ~TestPBackgroundCreateCallback()
-  { }
-};
-
-NS_IMPL_ISUPPORTS(TestPBackgroundCreateCallback,
-                  nsIIPCBackgroundChildCreateCallback);
-
-void
-TestPBackground()
-{
-  using namespace mozilla::ipc;
-
-  if (gTestPBackground) {
-    // Randomize value to validate workers are not cross-posting messages.
-    uint32_t testValue;
-    size_t randomSize = PR_GetRandomNoise(&testValue, sizeof(testValue));
-    MOZ_RELEASE_ASSERT(randomSize == sizeof(testValue));
-    nsCString testStr;
-    testStr.AppendInt(testValue);
-    testStr.AppendInt(reinterpret_cast<int64_t>(PR_GetCurrentThread()));
-    PBackgroundChild* existingBackgroundChild =
-      BackgroundChild::GetForCurrentThread();
-    MOZ_RELEASE_ASSERT(existingBackgroundChild);
-    bool ok = existingBackgroundChild->SendPBackgroundTestConstructor(testStr);
-    MOZ_RELEASE_ASSERT(ok);
-  }
-}
-
-#endif // ENABLE_TESTS
 
 class WorkerBackgroundChildCallback final :
   public nsIIPCBackgroundChildCreateCallback
@@ -1120,15 +1064,14 @@ public:
 
 private:
   virtual bool
-  PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
+  PreDispatch(WorkerPrivate* aWorkerPrivate) override
   {
     // May be called on any thread!
     return true;
   }
 
   virtual void
-  PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
-               bool aDispatchResult) override
+  PostDispatch(WorkerPrivate* aWorkerPrivate, bool aDispatchResult) override
   {
     // May be called on any thread!
   }
@@ -1307,7 +1250,7 @@ WorkerCrossThreadDispatcher::PostTask(WorkerTask* aTask)
 
   RefPtr<WorkerTaskRunnable> runnable =
     new WorkerTaskRunnable(mWorkerPrivate, aTask);
-  return runnable->Dispatch(nullptr);
+  return runnable->Dispatch();
 }
 
 WorkerPrivate*
@@ -1358,6 +1301,12 @@ GetCurrentThreadJSContext()
   return GetCurrentThreadWorkerPrivate()->GetJSContext();
 }
 
+JSObject*
+GetCurrentThreadWorkerGlobal()
+{
+  return GetCurrentThreadWorkerPrivate()->GlobalScope()->GetGlobalJSObject();
+}
+
 END_WORKERS_NAMESPACE
 
 struct RuntimeService::IdleThreadInfo
@@ -1404,10 +1353,6 @@ RuntimeService::GetOrCreateService()
       gRuntimeService = nullptr;
       return nullptr;
     }
-
-#ifdef ENABLE_TESTS
-    gTestPBackground = mozilla::Preferences::GetBool("pbackground.testing", false);
-#endif // ENABLE_TESTS
   }
 
   return gRuntimeService;
@@ -2195,19 +2140,13 @@ RuntimeService::CancelWorkersForWindow(nsPIDOMWindowInner* aWindow)
   GetWorkersForWindow(aWindow, workers);
 
   if (!workers.IsEmpty()) {
-    AutoJSAPI jsapi;
-    if (NS_WARN_IF(!jsapi.InitWithLegacyErrorReporting(aWindow))) {
-      return;
-    }
-    JSContext* cx = jsapi.cx();
-
     for (uint32_t index = 0; index < workers.Length(); index++) {
       WorkerPrivate*& worker = workers[index];
 
       if (worker->IsSharedWorker()) {
         worker->CloseSharedWorkersForWindow(aWindow);
-      } else if (!worker->Cancel(cx)) {
-        JS_ReportPendingException(cx);
+      } else {
+        worker->Cancel();
       }
     }
   }
@@ -2222,18 +2161,8 @@ RuntimeService::FreezeWorkersForWindow(nsPIDOMWindowInner* aWindow)
   AutoTArray<WorkerPrivate*, MAX_WORKERS_PER_DOMAIN> workers;
   GetWorkersForWindow(aWindow, workers);
 
-  if (!workers.IsEmpty()) {
-    AutoJSAPI jsapi;
-    if (NS_WARN_IF(!jsapi.InitWithLegacyErrorReporting(aWindow))) {
-      return;
-    }
-    JSContext* cx = jsapi.cx();
-
-    for (uint32_t index = 0; index < workers.Length(); index++) {
-      if (!workers[index]->Freeze(cx, aWindow)) {
-        JS_ReportPendingException(cx);
-      }
-    }
+  for (uint32_t index = 0; index < workers.Length(); index++) {
+    workers[index]->Freeze(aWindow);
   }
 }
 
@@ -2246,18 +2175,8 @@ RuntimeService::ThawWorkersForWindow(nsPIDOMWindowInner* aWindow)
   AutoTArray<WorkerPrivate*, MAX_WORKERS_PER_DOMAIN> workers;
   GetWorkersForWindow(aWindow, workers);
 
-  if (!workers.IsEmpty()) {
-    AutoJSAPI jsapi;
-    if (NS_WARN_IF(!jsapi.InitWithLegacyErrorReporting(aWindow))) {
-      return;
-    }
-    JSContext* cx = jsapi.cx();
-
-    for (uint32_t index = 0; index < workers.Length(); index++) {
-      if (!workers[index]->Thaw(cx, aWindow)) {
-        JS_ReportPendingException(cx);
-      }
-    }
+  for (uint32_t index = 0; index < workers.Length(); index++) {
+    workers[index]->Thaw(aWindow);
   }
 }
 
@@ -2377,8 +2296,7 @@ RuntimeService::CreateSharedWorkerFromLoadInfo(JSContext* aCx,
   RefPtr<SharedWorker> sharedWorker = new SharedWorker(window, workerPrivate,
                                                          channel->Port1());
 
-  if (!workerPrivate->RegisterSharedWorker(aCx, sharedWorker,
-                                           channel->Port2())) {
+  if (!workerPrivate->RegisterSharedWorker(sharedWorker, channel->Port2())) {
     NS_WARNING("Worker is unreachable, this shouldn't happen!");
     sharedWorker->Close();
     return NS_ERROR_FAILURE;
@@ -2643,7 +2561,7 @@ LogViolationDetailsRunnable::Run()
   RefPtr<MainThreadStopSyncLoopRunnable> response =
     new MainThreadStopSyncLoopRunnable(mWorkerPrivate, mSyncLoopTarget.forget(),
                                        true);
-  MOZ_ALWAYS_TRUE(response->Dispatch(nullptr));
+  MOZ_ALWAYS_TRUE(response->Dispatch());
 
   return NS_OK;
 }
@@ -2686,16 +2604,17 @@ WorkerThreadPrimaryRunnable::Run()
 
   mWorkerPrivate->SetThread(mThread);
 
-#ifdef ENABLE_TESTS
-  TestPBackground();
-#endif
-
   mWorkerPrivate->AssertIsOnWorkerThread();
 
   {
     nsCycleCollector_startup();
 
-    WorkerJSRuntime runtime(mParentRuntime, mWorkerPrivate);
+    WorkerJSRuntime runtime(mWorkerPrivate);
+    nsresult rv = runtime.Initialize(mParentRuntime);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
     JSRuntime* rt = runtime.Runtime();
 
     JSContext* cx = CreateJSContextForWorker(mWorkerPrivate, rt);
@@ -2717,13 +2636,11 @@ WorkerThreadPrimaryRunnable::Run()
         JSAutoRequest ar(cx);
 
         mWorkerPrivate->DoRunLoop(cx);
-
-        JS_ReportPendingException(cx);
+        // The AutoJSAPI in DoRunLoop should have reported any exceptions left
+        // on cx.  Note that we still need the JSAutoRequest above because
+        // AutoJSAPI on workers does NOT enter a request!
+        MOZ_ASSERT(!JS_IsExceptionPending(cx));
       }
-
-#ifdef ENABLE_TESTS
-      TestPBackground();
-#endif
 
       BackgroundChild::CloseForCurrentThread();
 
@@ -2733,6 +2650,13 @@ WorkerThreadPrimaryRunnable::Run()
       }
 #endif
     }
+
+    // There may still be runnables on the debugger event queue that hold a
+    // strong reference to the debugger global scope. These runnables are not
+    // visible to the cycle collector, so we need to make sure to clear the
+    // debugger event queue before we try to destroy the context. If we don't,
+    // the garbage collector will crash.
+    mWorkerPrivate->ClearDebuggerEventQueue();
 
     // Destroy the main context. This will unroot the main worker global and GC,
     // which should break all cycles that touch JS.

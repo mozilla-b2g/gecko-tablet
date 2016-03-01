@@ -147,6 +147,7 @@ config = {
             "options": [
                 "--binary=%(binary_path)s",
                 "--testing-modules-dir=test/modules",
+                "--plugins-path=%(test_plugin_path)s",
                 "--symbols-path=%(symbols_path)s"
             ],
             "run_filename": "runtestlist.py",
@@ -204,8 +205,9 @@ config = {
     "all_mochitest_suites": {
         "valgrind-plain": ["--valgrind=/usr/bin/valgrind",
                            "--valgrind-supp-files=" + VALGRIND_SUPP_ARCH +
-                               "," + VALGRIND_SUPP_CROSS_ARCH],
-        "plain": [],
+                               "," + VALGRIND_SUPP_CROSS_ARCH,
+                           "--timeout=900", "--max-timeouts=50"],
+         "plain": [],
         "plain-chunked": ["--chunk-by-dir=4"],
         "mochitest-push": ["--subsuite=push"],
         "chrome": ["--chrome"],
@@ -272,13 +274,13 @@ config = {
     "all_xpcshell_suites": {
         "xpcshell": {
             "options": ["--xpcshell=%(abs_app_dir)s/" + XPCSHELL_NAME,
-                        "--manifest=tests/xpcshell/tests/all-test-dirs.list"],
+                        "--manifest=tests/xpcshell/tests/xpcshell.ini"],
             "tests": []
         },
         "xpcshell-addons": {
             "options": ["--xpcshell=%(abs_app_dir)s/" + XPCSHELL_NAME,
                         "--tag=addons",
-                        "--manifest=tests/xpcshell/tests/all-test-dirs.list"],
+                        "--manifest=tests/xpcshell/tests/xpcshell.ini"],
             "tests": []
         },
     },

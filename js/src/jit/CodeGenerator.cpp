@@ -2550,7 +2550,7 @@ CodeGenerator::visitStackArgT(LStackArgT* lir)
     else if (arg->isRegister())
         masm.storeValue(ValueTypeFromMIRType(argType), ToRegister(arg), dest);
     else
-        masm.storeValue(*(arg->toConstant()), dest);
+        masm.storeValue(arg->toConstant()->toJSValue(), dest);
 }
 
 void
@@ -2629,6 +2629,12 @@ CodeGenerator::visitInteger(LInteger* lir)
 }
 
 void
+CodeGenerator::visitInteger64(LInteger64* lir)
+{
+    masm.move64(Imm64(lir->getValue()), ToOutRegister64(lir));
+}
+
+void
 CodeGenerator::visitPointer(LPointer* lir)
 {
     if (lir->kind() == LPointer::GC_THING)
@@ -2687,7 +2693,7 @@ CodeGenerator::visitStoreSlotT(LStoreSlotT* lir)
     } else {
         ConstantOrRegister value;
         if (lir->value()->isConstant())
-            value = ConstantOrRegister(*lir->value()->toConstant());
+            value = ConstantOrRegister(lir->value()->toConstant()->toJSValue());
         else
             value = TypedOrValueRegister(valueType, ToAnyRegister(lir->value()));
         masm.storeUnboxedValue(value, valueType, dest, lir->mir()->slotType());
@@ -2878,7 +2884,7 @@ CodeGenerator::visitSetPropertyPolymorphicT(LSetPropertyPolymorphicT* ins)
 
     ConstantOrRegister value;
     if (ins->mir()->value()->isConstant())
-        value = ConstantOrRegister(ins->mir()->value()->toConstant()->value());
+        value = ConstantOrRegister(ins->mir()->value()->toConstant()->toJSValue());
     else
         value = TypedOrValueRegister(ins->mir()->value()->type(), ToAnyRegister(ins->value()));
 
@@ -4650,6 +4656,9 @@ CodeGenerator::generateBody()
 #endif
 
         for (LInstructionIterator iter = current->begin(); iter != current->end(); iter++) {
+            if (!alloc().ensureBallast())
+                return false;
+
 #ifdef JS_JITSPEW
             JitSpewStart(JitSpew_Codegen, "instruction %s", iter->opName());
             if (const char* extra = iter->extraName())
@@ -7237,7 +7246,7 @@ static ConstantOrRegister
 ToConstantOrRegister(const LAllocation* value, MIRType valueType)
 {
     if (value->isConstant())
-        return ConstantOrRegister(*value->toConstant());
+        return ConstantOrRegister(value->toConstant()->toJSValue());
     return TypedOrValueRegister(valueType, ToAnyRegister(value));
 }
 
@@ -7429,7 +7438,7 @@ CodeGenerator::visitOutOfLineStoreElementHole(OutOfLineStoreElementHole* ool)
         index = store->index();
         valueType = store->mir()->value()->type();
         if (store->value()->isConstant())
-            value = ConstantOrRegister(*store->value()->toConstant());
+            value = ConstantOrRegister(store->value()->toConstant()->toJSValue());
         else
             value = TypedOrValueRegister(valueType, ToAnyRegister(store->value()));
         unboxedType = store->mir()->unboxedType();
@@ -7526,7 +7535,7 @@ StoreUnboxedPointer(MacroAssembler& masm, T address, MIRType type, const LAlloca
     if (preBarrier)
         masm.patchableCallPreBarrier(address, type);
     if (value->isConstant()) {
-        Value v = *value->toConstant();
+        Value v = value->toConstant()->toJSValue();
         if (v.isMarkable()) {
             masm.storePtr(ImmGCPtr(v.toGCThing()), address);
         } else {
@@ -7794,7 +7803,7 @@ CodeGenerator::visitArrayPushT(LArrayPushT* lir)
     Register length = ToRegister(lir->output());
     ConstantOrRegister value;
     if (lir->value()->isConstant())
-        value = ConstantOrRegister(*lir->value()->toConstant());
+        value = ConstantOrRegister(lir->value()->toConstant()->toJSValue());
     else
         value = TypedOrValueRegister(lir->mir()->value()->type(), ToAnyRegister(lir->value()));
     emitArrayPush(lir, lir->mir(), obj, value, elementsTemp, length);
@@ -8962,7 +8971,7 @@ CodeGenerator::visitStoreFixedSlotT(LStoreFixedSlotT* ins)
         masm.storeObjectOrNull(nvalue, address);
     } else {
         ConstantOrRegister nvalue = value->isConstant()
-                                    ? ConstantOrRegister(*value->toConstant())
+                                    ? ConstantOrRegister(value->toConstant()->toJSValue())
                                     : TypedOrValueRegister(valueType, ToAnyRegister(value));
         masm.storeConstantOrRegister(nvalue, address);
     }
@@ -9032,7 +9041,7 @@ CodeGenerator::toConstantOrRegister(LInstruction* lir, size_t n, MIRType type)
 
     const LAllocation* value = lir->getOperand(n);
     if (value->isConstant())
-        return ConstantOrRegister(*value->toConstant());
+        return ConstantOrRegister(value->toConstant()->toJSValue());
 
     return TypedOrValueRegister(type, ToAnyRegister(value));
 }
@@ -9450,23 +9459,23 @@ CodeGenerator::visitToIdV(LToIdV* lir)
     Label notInt32;
     FloatRegister temp = ToFloatRegister(lir->tempFloat());
     const ValueOperand out = ToOutValue(lir);
-    ValueOperand index = ToValue(lir, LToIdV::Index);
+    ValueOperand input = ToValue(lir, LToIdV::Input);
 
     OutOfLineCode* ool = oolCallVM(ToIdInfo, lir,
                                    ArgList(ImmGCPtr(current->mir()->info().script()),
                                            ImmPtr(lir->mir()->resumePoint()->pc()),
-                                           ToValue(lir, LToIdV::Index)),
+                                           ToValue(lir, LToIdV::Input)),
                                    StoreValueTo(out));
 
-    Register tag = masm.splitTagForTest(index);
+    Register tag = masm.splitTagForTest(input);
 
     masm.branchTestInt32(Assembler::NotEqual, tag, &notInt32);
-    masm.moveValue(index, out);
+    masm.moveValue(input, out);
     masm.jump(ool->rejoin());
 
     masm.bind(&notInt32);
     masm.branchTestDouble(Assembler::NotEqual, tag, ool->entry());
-    masm.unboxDouble(index, temp);
+    masm.unboxDouble(input, temp);
     masm.convertDoubleToInt32(temp, out.scratchReg(), ool->entry(), true);
     masm.tagValue(JSVAL_TYPE_INT32, out.scratchReg(), out);
 

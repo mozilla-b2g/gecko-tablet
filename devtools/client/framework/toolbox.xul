@@ -3,7 +3,6 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 <?xml-stylesheet href="chrome://global/skin/" type="text/css"?>
-<?xml-stylesheet href="chrome://devtools/skin/common.css" type="text/css"?>
 
 <?xul-overlay href="chrome://global/content/editMenuOverlay.xul"?>
 
@@ -95,10 +94,6 @@
          key="&toolboxToggle.key;"
          oncommand="void(0);"
          modifiers="accel shift"/>
-    <key id="tools-reload-key"
-         key="&toolboxReload.key;"
-         oncommand="void(0);"
-         modifiers="accel alt"/>
   </keyset>
 
   <popupset>
@@ -140,7 +135,7 @@
                        tooltiptext="&toolboxCloseButton.tooltip;"/>
       </hbox>
     </toolbar>
-    <vbox flex="1">
+    <vbox flex="1" class="theme-body">
       <!-- Set large flex to allow the toolbox-panel-webconsole to have a
            height set to a small value without flexing to fill up extra
            space. There must be a flex on both to ensure that the console

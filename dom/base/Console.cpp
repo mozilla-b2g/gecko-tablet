@@ -158,7 +158,7 @@ public:
 
     ConsoleCallData* tmp = this;
     for (uint32_t i = 0; i < mCopiedArguments.Length(); ++i) {
-      NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mCopiedArguments[i]);
+      NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mCopiedArguments[i])
     }
   }
 
@@ -371,7 +371,7 @@ private:
 
     RefPtr<WorkerControlRunnable> runnable =
       new ConsoleReleaseRunnable(mWorkerPrivate, this);
-    runnable->Dispatch(nullptr);
+    runnable->Dispatch();
   }
 
   void
@@ -1547,7 +1547,7 @@ bool
 Console::ProcessArguments(JSContext* aCx,
                           const Sequence<JS::Value>& aData,
                           Sequence<JS::Value>& aSequence,
-                          Sequence<JS::Value>& aStyles) const
+                          Sequence<nsString>& aStyles) const
 {
   AssertIsOnMainThread();
 
@@ -1693,13 +1693,18 @@ Console::ProcessArguments(JSContext* aCx,
           int32_t diff = aSequence.Length() - aStyles.Length();
           if (diff > 0) {
             for (int32_t i = 0; i < diff; i++) {
-              if (!aStyles.AppendElement(JS::NullValue(), fallible)) {
+              if (!aStyles.AppendElement(NullString(), fallible)) {
                 return false;
               }
             }
           }
 
-          if (!aStyles.AppendElement(JS::StringValue(jsString), fallible)) {
+          nsAutoJSString string;
+          if (!string.init(aCx, jsString)) {
+            return false;
+          }
+
+          if (!aStyles.AppendElement(string, fallible)) {
             return false;
           }
         }

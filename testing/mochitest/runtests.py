@@ -31,6 +31,7 @@ import tempfile
 import time
 import traceback
 import urllib2
+import uuid
 import zipfile
 import bisection
 
@@ -1210,8 +1211,6 @@ toolbar#nav-bar {
         self.nsprLogs = NSPR_LOG_MODULES and "MOZ_UPLOAD_DIR" in os.environ
         if self.nsprLogs:
             browserEnv["NSPR_LOG_MODULES"] = NSPR_LOG_MODULES
-
-            browserEnv["NSPR_LOG_FILE"] = "%s/nspr.log" % tempfile.gettempdir()
             browserEnv["GECKO_SEPARATE_NSPR_LOGS"] = "1"
 
         if debugger and not options.slowscript:
@@ -1928,12 +1927,7 @@ class MochitestDesktop(MochitestBase):
             # TODO: mozrunner should use -foreground at least for mac
             # https://bugzilla.mozilla.org/show_bug.cgi?id=916512
             args.append('-foreground')
-            if testUrl:
-                if debuggerInfo and debuggerInfo.requiresEscapedArgs:
-                    testUrl = testUrl.replace("&", "\\&")
-                self.start_script_args.append(testUrl)
-            else:
-                self.start_script_args.append('about:blank')
+            self.start_script_args.append(testUrl or 'about:blank')
 
             if detectShutdownLeaks:
                 shutdownLeaks = ShutdownLeaks(self.log)
@@ -2002,8 +1996,9 @@ class MochitestDesktop(MochitestBase):
 
             # start marionette and kick off the tests
             marionette_args = marionette_args or {}
+            port_timeout = marionette_args.pop('port_timeout')
             self.marionette = Marionette(**marionette_args)
-            self.marionette.start_session()
+            self.marionette.start_session(timeout=port_timeout)
 
             # install specialpowers and mochikit as temporary addons
             addons = Addons(self.marionette)
@@ -2292,6 +2287,9 @@ class MochitestDesktop(MochitestBase):
         if self.browserEnv is None:
             return 1
 
+        if self.nsprLogs:
+            self.browserEnv["NSPR_LOG_FILE"] = "{}/nspr-pid=%PID-uid={}.log".format(self.browserEnv["MOZ_UPLOAD_DIR"], str(uuid.uuid4()))
+
         try:
             self.startServers(options, debuggerInfo)
 
@@ -2354,6 +2352,8 @@ class MochitestDesktop(MochitestBase):
             self.start_script_args.append(self.getTestFlavor(options))
             marionette_args = {
                 'symbols_path': options.symbolsPath,
+                'socket_timeout': options.marionette_socket_timeout,
+                'port_timeout': options.marionette_port_timeout,
             }
 
             if options.marionette:
@@ -2401,14 +2401,6 @@ class MochitestDesktop(MochitestBase):
             stack_fixer=get_stack_fixer_function(options.utilityPath,
                                                  options.symbolsPath),
         )
-
-        if self.nsprLogs:
-            with zipfile.ZipFile("%s/nsprlog.zip" % self.browserEnv["MOZ_UPLOAD_DIR"], "w", zipfile.ZIP_DEFLATED) as logzip:
-                for logfile in glob.glob(
-                        "%s/nspr*.log*" %
-                        tempfile.gettempdir()):
-                    logzip.write(logfile)
-                    os.remove(logfile)
 
         self.log.info("runtests.py | Running tests: end.")
 
@@ -2655,6 +2647,14 @@ def run_test_harness(options):
         options.runByDir = False
 
     result = runner.runTests(options)
+
+    if runner.nsprLogs:
+        with zipfile.ZipFile("{}/nsprlogs.zip".format(runner.browserEnv["MOZ_UPLOAD_DIR"]),
+                             "w", zipfile.ZIP_DEFLATED) as logzip:
+            for logfile in glob.glob("{}/nspr*.log*".format(runner.browserEnv["MOZ_UPLOAD_DIR"])):
+                logzip.write(logfile)
+                os.remove(logfile)
+            logzip.close()
 
     # don't dump failures if running from automation as treeherder already displays them
     if build_obj:

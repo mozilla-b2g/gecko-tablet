@@ -357,6 +357,7 @@ class BuildOptionParser(object):
         'source': 'builds/releng_sub_%s_configs/%s_source.py',
         'api-9': 'builds/releng_sub_%s_configs/%s_api_9.py',
         'api-11': 'builds/releng_sub_%s_configs/%s_api_11.py',
+        'api-15-frontend': 'builds/releng_sub_%s_configs/%s_api_15_frontend.py',
         'api-15': 'builds/releng_sub_%s_configs/%s_api_15.py',
         'api-9-debug': 'builds/releng_sub_%s_configs/%s_api_9_debug.py',
         'api-11-debug': 'builds/releng_sub_%s_configs/%s_api_11_debug.py',
@@ -1041,6 +1042,8 @@ or run without that action (ie: --no-{action})"
             post_upload_cmd.append('--release-to-dated')
             if c['platform_supports_post_upload_to_latest']:
                 post_upload_cmd.append('--release-to-latest')
+        post_upload_cmd.extend(c.get('post_upload_extra', []))
+
         return post_upload_cmd
 
     def _ccache_z(self):
@@ -1878,29 +1881,78 @@ or run without that action (ie: --no-{action})"
         if self.config.get('enable_ccache'):
             self._ccache_s()
 
+        # A list of argument lists.  Better names gratefully accepted!
+        mach_commands = self.config.get('postflight_build_mach_commands', [])
+        for mach_command in mach_commands:
+            self._execute_postflight_build_mach_command(mach_command)
+
+    def _execute_postflight_build_mach_command(self, mach_command_args):
+        env = self.query_build_env()
+        env.update(self.query_mach_build_env())
+        python = self.query_exe('python2.7')
+
+        command = [python, 'mach', '--log-no-times']
+        command.extend(mach_command_args)
+
+        self.run_command_m(
+            command=command,
+            cwd=self.query_abs_dirs()['abs_src_dir'],
+            env=env, output_timeout=self.config.get('max_build_output_timeout', 60 * 20),
+            halt_on_failure=True,
+        )
+
     def preflight_package_source(self):
         self._get_mozconfig()
-        self._run_tooltool()
 
     def package_source(self):
         """generates source archives and uploads them"""
         env = self.query_build_env()
         env.update(self.query_mach_build_env())
         python = self.query_exe('python2.7')
+        dirs = self.query_abs_dirs()
 
         self.run_command_m(
             command=[python, 'mach', '--log-no-times', 'configure'],
-            cwd=self.query_abs_dirs()['abs_src_dir'],
+            cwd=dirs['abs_src_dir'],
             env=env, output_timeout=60*3, halt_on_failure=True,
         )
         self.run_command_m(
             command=[
-                'make', 'source-package', 'hg-bundle',
+                'make', 'source-package', 'hg-bundle', 'source-upload',
                 'HG_BUNDLE_REVISION=%s' % self.query_revision(),
+                'UPLOAD_HG_BUNDLE=1',
             ],
-            cwd=self.query_abs_dirs()['abs_obj_dir'],
+            cwd=dirs['abs_obj_dir'],
             env=env, output_timeout=60*45, halt_on_failure=True,
         )
+
+    def generate_source_signing_manifest(self):
+        """Sign source checksum file"""
+        env = self.query_build_env()
+        env.update(self.query_mach_build_env())
+        if env.get("UPLOAD_HOST") != "localhost":
+            self.warning("Skipping signing manifest generation. Set "
+                         "UPLOAD_HOST to `localhost' to enable.")
+            return
+
+        if not env.get("UPLOAD_PATH"):
+            self.warning("Skipping signing manifest generation. Set "
+                         "UPLOAD_PATH to enable.")
+            return
+
+        dirs = self.query_abs_dirs()
+        objdir = dirs['abs_obj_dir']
+
+        output = self.get_output_from_command_m(
+            command=['make', 'echo-variable-SOURCE_CHECKSUM_FILE'],
+            cwd=objdir,
+        )
+        files = shlex.split(output)
+        abs_files = [os.path.abspath(os.path.join(objdir, f)) for f in files]
+        manifest_file = os.path.join(env["UPLOAD_PATH"],
+                                     "signing_manifest.json")
+        self.write_to_file(manifest_file,
+                           self.generate_signing_manifest(abs_files))
 
     def check_test(self):
         c = self.config

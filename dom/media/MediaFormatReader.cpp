@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/Preferences.h"
+#include "nsContentUtils.h"
 #include "nsPrintfCString.h"
 #include "nsSize.h"
 #include "Layers.h"
@@ -84,6 +85,10 @@ RefPtr<ShutdownPromise>
 MediaFormatReader::Shutdown()
 {
   MOZ_ASSERT(OnTaskQueue());
+
+  if (HasVideo()) {
+    ReportDroppedFramesTelemetry();
+  }
 
   mDemuxerInitRequest.DisconnectIfExists();
   mMetadataPromise.RejectIfExists(ReadMetadataFailureReason::METADATA_ERROR, __func__);
@@ -341,7 +346,7 @@ MediaFormatReader::OnDemuxerInitDone(nsresult)
   mInitDone = true;
   RefPtr<MetadataHolder> metadata = new MetadataHolder();
   metadata->mInfo = mInfo;
-  metadata->mTags = nullptr;
+  metadata->mTags = tags->Count() ? tags.release() : nullptr;
   mMetadataPromise.Resolve(metadata, __func__);
 }
 
@@ -666,6 +671,7 @@ MediaFormatReader::NotifyNewOutput(TrackType aTrack, MediaData* aSample)
   decoder.mOutput.AppendElement(aSample);
   decoder.mNumSamplesOutput++;
   decoder.mNumSamplesOutputTotal++;
+  decoder.mNumSamplesOutputTotalSinceTelemetry++;
   ScheduleUpdate(aTrack);
 }
 
@@ -909,6 +915,9 @@ MediaFormatReader::HandleDemuxedSamples(TrackType aTrack,
         LOG("%s stream id has changed from:%d to:%d, draining decoder.",
             TrackTypeToStr(aTrack), decoder.mLastStreamSourceID,
             info->GetID());
+        if (aTrack == TrackType::kVideoTrack) {
+          ReportDroppedFramesTelemetry();
+        }
         decoder.mNeedDraining = true;
         decoder.mNextStreamSourceID = Some(info->GetID());
         ScheduleUpdate(aTrack);
@@ -1370,6 +1379,7 @@ MediaFormatReader::OnVideoSkipCompleted(uint32_t aSkipped)
     mDecoder->NotifyDecodedFrames(aSkipped, 0, aSkipped);
   }
   mVideo.mNumSamplesSkippedTotal += aSkipped;
+  mVideo.mNumSamplesSkippedTotalSinceTelemetry += aSkipped;
   MOZ_ASSERT(!mVideo.mError); // We have flushed the decoder, no frame could
                               // have been decoded (and as such errored)
   NotifyDecodingRequested(TrackInfo::kVideoTrack);
@@ -1697,6 +1707,53 @@ MediaFormatReader::GetMozDebugReaderData(nsAString& aString)
                             mVideo.mNumSamplesOutputTotal,
                             mVideo.mNumSamplesSkippedTotal);
   aString += NS_ConvertUTF8toUTF16(result);
+}
+
+void
+MediaFormatReader::ReportDroppedFramesTelemetry()
+{
+  MOZ_ASSERT(OnTaskQueue());
+
+  const VideoInfo* info =
+    mVideo.mInfo ? mVideo.mInfo->GetAsVideoInfo() : &mInfo.mVideo;
+
+  if (!info || !mVideo.mDecoder) {
+    return;
+  }
+
+  nsCString keyPhrase = nsCString("MimeType=");
+  keyPhrase.Append(info->mMimeType);
+  keyPhrase.Append("; ");
+
+  keyPhrase.Append("Resolution=");
+  keyPhrase.AppendInt(info->mDisplay.width);
+  keyPhrase.Append('x');
+  keyPhrase.AppendInt(info->mDisplay.height);
+  keyPhrase.Append("; ");
+
+  keyPhrase.Append("HardwareAcceleration=");
+  if (VideoIsHardwareAccelerated()) {
+    keyPhrase.Append(mVideo.mDecoder->GetDescriptionName());
+    keyPhrase.Append("enabled");
+  } else {
+    keyPhrase.Append("disabled");
+  }
+
+  if (mVideo.mNumSamplesOutputTotalSinceTelemetry) {
+    uint32_t percentage =
+      100 * mVideo.mNumSamplesSkippedTotalSinceTelemetry /
+            mVideo.mNumSamplesOutputTotalSinceTelemetry;
+    nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction([=]() -> void {
+      LOG("Reporting telemetry DROPPED_FRAMES_IN_VIDEO_PLAYBACK");
+      Telemetry::Accumulate(Telemetry::VIDEO_DETAILED_DROPPED_FRAMES_PROPORTION,
+                            keyPhrase,
+                            percentage);
+    });
+    AbstractThread::MainThread()->Dispatch(task.forget());
+  }
+
+  mVideo.mNumSamplesSkippedTotalSinceTelemetry = 0;
+  mVideo.mNumSamplesOutputTotalSinceTelemetry = 0;
 }
 
 } // namespace mozilla

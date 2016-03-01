@@ -281,6 +281,18 @@ let json = [
      },
    ],
   },
+  {
+    namespace: "inject",
+    properties: {
+      PROP1: {value: "should inject"},
+    },
+  },
+  {
+    namespace: "do-not-inject",
+    properties: {
+      PROP1: {value: "should not inject"},
+    },
+  },
 ];
 
 let tallied = null;
@@ -322,6 +334,11 @@ let wrapper = {
     tally("call", ns, name, args);
   },
 
+  shouldInject(path) {
+    let ns = path.join(".");
+    return ns != "do-not-inject";
+  },
+
   getProperty(path, name) {
     let ns = path.join(".");
     tally("get", ns, name);
@@ -358,6 +375,9 @@ add_task(function* () {
   do_check_eq(root.testing.type1.VALUE1, "value1", "enum type");
   do_check_eq(root.testing.type1.VALUE2, "value2", "enum type");
 
+  do_check_eq("inject" in root, true, "namespace 'inject' should be injected");
+  do_check_eq("do-not-inject" in root, false, "namespace 'do-not-inject' should not be injected");
+
   root.testing.foo(11, true);
   verify("call", "testing", "foo", [11, true]);
 
@@ -384,28 +404,28 @@ add_task(function* () {
   root.testing.bar(true);
   verify("call", "testing", "bar", [null, true]);
 
-  root.testing.baz({ prop1: "hello", prop2: 22 });
-  verify("call", "testing", "baz", [{ prop1: "hello", prop2: 22 }]);
+  root.testing.baz({prop1: "hello", prop2: 22});
+  verify("call", "testing", "baz", [{prop1: "hello", prop2: 22}]);
 
-  root.testing.baz({ prop1: "hello" });
-  verify("call", "testing", "baz", [{ prop1: "hello", prop2: null }]);
+  root.testing.baz({prop1: "hello"});
+  verify("call", "testing", "baz", [{prop1: "hello", prop2: null}]);
 
-  root.testing.baz({ prop1: "hello", prop2: null });
-  verify("call", "testing", "baz", [{ prop1: "hello", prop2: null }]);
+  root.testing.baz({prop1: "hello", prop2: null});
+  verify("call", "testing", "baz", [{prop1: "hello", prop2: null}]);
 
-  Assert.throws(() => root.testing.baz({ prop2: 12 }),
+  Assert.throws(() => root.testing.baz({prop2: 12}),
                 /Property "prop1" is required/,
                 "should throw without required property");
 
-  Assert.throws(() => root.testing.baz({ prop1: "hi", prop3: 12 }),
+  Assert.throws(() => root.testing.baz({prop1: "hi", prop3: 12}),
                 /Property "prop3" is unsupported by Firefox/,
                 "should throw with unsupported property");
 
-  Assert.throws(() => root.testing.baz({ prop1: "hi", prop4: 12 }),
+  Assert.throws(() => root.testing.baz({prop1: "hi", prop4: 12}),
                 /Unexpected property "prop4"/,
                 "should throw with unexpected property");
 
-  Assert.throws(() => root.testing.baz({ prop1: 12 }),
+  Assert.throws(() => root.testing.baz({prop1: 12}),
                 /Expected string instead of 12/,
                 "should throw with wrong type");
 

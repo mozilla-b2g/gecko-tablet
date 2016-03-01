@@ -462,7 +462,7 @@ jit::SplitCriticalEdges(MIRGraph& graph)
 
 // Return whether a block simply computes the specified constant value.
 static bool
-BlockComputesConstant(MBasicBlock* block, MDefinition* value)
+BlockComputesConstant(MBasicBlock* block, MDefinition* value, bool* constBool)
 {
     // Look for values with no uses. This is used to eliminate constant
     // computing blocks in condition statements, and the phi which used to
@@ -478,7 +478,7 @@ BlockComputesConstant(MBasicBlock* block, MDefinition* value)
         if (*iter != value || !iter->isGoto())
             return false;
     }
-    return true;
+    return value->toConstant()->valueToBoolean(constBool);
 }
 
 // Find phis that are redudant:
@@ -745,10 +745,9 @@ MaybeFoldConditionBlock(MIRGraph& graph, MBasicBlock* initialBlock)
     // directly to successors of testBlock, rather than to testBlock itself.
 
     MBasicBlock* trueTarget = trueBranch;
-    if (BlockComputesConstant(trueBranch, trueResult)) {
-        trueTarget = trueResult->constantToBoolean()
-                     ? finalTest->ifTrue()
-                     : finalTest->ifFalse();
+    bool constBool;
+    if (BlockComputesConstant(trueBranch, trueResult, &constBool)) {
+        trueTarget = constBool ? finalTest->ifTrue() : finalTest->ifFalse();
         phiBlock->removePredecessor(trueBranch);
         graph.removeBlock(trueBranch);
     } else if (initialTest->input() == trueResult) {
@@ -759,10 +758,8 @@ MaybeFoldConditionBlock(MIRGraph& graph, MBasicBlock* initialBlock)
     }
 
     MBasicBlock* falseTarget = falseBranch;
-    if (BlockComputesConstant(falseBranch, falseResult)) {
-        falseTarget = falseResult->constantToBoolean()
-                      ? finalTest->ifTrue()
-                      : finalTest->ifFalse();
+    if (BlockComputesConstant(falseBranch, falseResult, &constBool)) {
+        falseTarget = constBool ? finalTest->ifTrue() : finalTest->ifFalse();
         phiBlock->removePredecessor(falseBranch);
         graph.removeBlock(falseBranch);
     } else if (initialTest->input() == falseResult) {
@@ -927,6 +924,9 @@ jit::EliminateDeadResumePointOperands(MIRGenerator* mir, MIRGraph& graph)
                 {
                     continue;
                 }
+
+                if (!graph.alloc().ensureBallast())
+                    return false;
 
                 // Store an optimized out magic value in place of all dead
                 // resume point operands. Making any such substitution can in
@@ -1272,7 +1272,9 @@ GuessPhiType(MPhi* phi, bool* hasInputsWithEmptyTypes)
                 // If we only saw definitions that can be converted into Float32 before and
                 // encounter a Float32 value, promote previous values to Float32
                 type = MIRType_Float32;
-            } else if (IsNumberType(type) && IsNumberType(in->type())) {
+            } else if (IsTypeRepresentableAsDouble(type) &&
+                       IsTypeRepresentableAsDouble(in->type()))
+            {
                 // Specialize phis with int32 and double operands as double.
                 type = MIRType_Double;
                 convertibleToFloat32 &= in->canProduceFloat32();
@@ -1332,7 +1334,9 @@ TypeAnalyzer::propagateSpecialization(MPhi* phi)
             }
 
             // Specialize phis with int32 and double operands as double.
-            if (IsNumberType(use->type()) && IsNumberType(phi->type())) {
+            if (IsTypeRepresentableAsDouble(use->type()) &&
+                IsTypeRepresentableAsDouble(phi->type()))
+            {
                 if (!respecialize(use, MIRType_Double))
                     return false;
                 continue;
@@ -2504,6 +2508,7 @@ IsResumableMIRType(MIRType type)
       case MIRType_ObjectGroup:
       case MIRType_Doublex2: // NYI, see also RSimdBox::recover
       case MIRType_SinCosDouble:
+      case MIRType_Int64:
         return false;
     }
     MOZ_CRASH("Unknown MIRType.");
@@ -2705,11 +2710,10 @@ jit::ExtractLinearSum(MDefinition* ins)
     if (ins->type() != MIRType_Int32)
         return SimpleLinearSum(ins, 0);
 
-    if (ins->isConstantValue()) {
-        const Value& v = ins->constantValue();
-        MOZ_ASSERT(v.isInt32());
-        return SimpleLinearSum(nullptr, v.toInt32());
-    } else if (ins->isAdd() || ins->isSub()) {
+    if (ins->isConstant())
+        return SimpleLinearSum(nullptr, ins->toConstant()->toInt32());
+
+    if (ins->isAdd() || ins->isSub()) {
         MDefinition* lhs = ins->getOperand(0);
         MDefinition* rhs = ins->getOperand(1);
         if (lhs->type() == MIRType_Int32 && rhs->type() == MIRType_Int32) {
@@ -2725,7 +2729,8 @@ jit::ExtractLinearSum(MDefinition* ins)
                 if (!SafeAdd(lsum.constant, rsum.constant, &constant))
                     return SimpleLinearSum(ins, 0);
                 return SimpleLinearSum(lsum.term ? lsum.term : rsum.term, constant);
-            } else if (lsum.term) {
+            }
+            if (lsum.term) {
                 int32_t constant;
                 if (!SafeSub(lsum.constant, rsum.constant, &constant))
                     return SimpleLinearSum(ins, 0);
@@ -3187,7 +3192,7 @@ NeedsKeepAlive(MInstruction* slotsOrElements, MInstruction* use)
     MOZ_CRASH("Unreachable");
 }
 
-void
+bool
 jit::AddKeepAliveInstructions(MIRGraph& graph)
 {
     for (MBasicBlockIterator i(graph.begin()); i != graph.end(); i++) {
@@ -3249,11 +3254,15 @@ jit::AddKeepAliveInstructions(MIRGraph& graph)
                 if (!NeedsKeepAlive(ins, use))
                     continue;
 
+                if (!graph.alloc().ensureBallast())
+                    return false;
                 MKeepAliveObject* keepAlive = MKeepAliveObject::New(graph.alloc(), ownerObject);
                 use->block()->insertAfter(use, keepAlive);
             }
         }
     }
+
+    return true;
 }
 
 bool
@@ -3322,8 +3331,8 @@ LinearSum::add(MDefinition* term, int32_t scale)
     if (scale == 0)
         return true;
 
-    if (term->isConstantValue()) {
-        int32_t constant = term->constantValue().toInt32();
+    if (MConstant* termConst = term->maybeConstantValue()) {
+        int32_t constant = termConst->toInt32();
         if (!SafeMul(constant, scale, &constant))
             return false;
         return add(constant);
@@ -3395,7 +3404,7 @@ jit::ConvertLinearSum(TempAllocator& alloc, MBasicBlock* block, const LinearSum&
 
     for (size_t i = 0; i < sum.numTerms(); i++) {
         LinearTerm term = sum.term(i);
-        MOZ_ASSERT(!term.term->isConstantValue());
+        MOZ_ASSERT(!term.term->isConstant());
         if (term.scale == 1) {
             if (def) {
                 def = MAdd::New(alloc, def, term.term);

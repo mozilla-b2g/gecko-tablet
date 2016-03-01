@@ -48,6 +48,7 @@ enum State {
     MARK_ROOTS,
     MARK,
     SWEEP,
+    FINALIZE,
     COMPACT
 };
 
@@ -1349,6 +1350,19 @@ class ZoneList
 
 JSObject*
 NewMemoryStatisticsObject(JSContext* cx);
+
+struct MOZ_RAII AutoAssertNoNurseryAlloc
+{
+#ifdef DEBUG
+    explicit AutoAssertNoNurseryAlloc(JSRuntime* rt);
+    ~AutoAssertNoNurseryAlloc();
+
+  private:
+    gc::GCRuntime& gc;
+#else
+    explicit AutoAssertNoNurseryAlloc(JSRuntime* rt) {}
+#endif
+};
 
 } /* namespace gc */
 

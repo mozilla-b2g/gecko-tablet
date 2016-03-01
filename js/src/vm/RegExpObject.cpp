@@ -123,6 +123,33 @@ RegExpObject::getShared(JSContext* cx, RegExpGuard* g)
     return createShared(cx, g);
 }
 
+/* static */ bool
+RegExpObject::isOriginalFlagGetter(JSNative native, RegExpFlag* mask)
+{
+  if (native == regexp_global) {
+      *mask = GlobalFlag;
+      return true;
+  }
+  if (native == regexp_ignoreCase) {
+      *mask = IgnoreCaseFlag;
+      return true;
+  }
+  if (native == regexp_multiline) {
+      *mask = MultilineFlag;
+      return true;
+  }
+  if (native == regexp_sticky) {
+      *mask = StickyFlag;
+      return true;
+  }
+  if (native == regexp_unicode) {
+      *mask = UnicodeFlag;
+      return true;
+  }
+
+  return false;
+}
+
 /* static */ void
 RegExpObject::trace(JSTracer* trc, JSObject* obj)
 {
@@ -273,11 +300,7 @@ RegExpObject::init(ExclusiveContext* cx, HandleAtom source, RegExpFlag flags)
 
     self->zeroLastIndex();
     self->setSource(source);
-    self->setGlobal(flags & GlobalFlag);
-    self->setIgnoreCase(flags & IgnoreCaseFlag);
-    self->setMultiline(flags & MultilineFlag);
-    self->setSticky(flags & StickyFlag);
-    self->setUnicode(flags & UnicodeFlag);
+    self->setFlags(flags);
     return true;
 }
 

@@ -175,7 +175,8 @@
 #include "nsPlaceholderFrame.h"
 #include "nsTransitionManager.h"
 #include "ChildIterator.h"
-#include "RestyleManager.h"
+#include "mozilla/RestyleManagerHandle.h"
+#include "mozilla/RestyleManagerHandleInlines.h"
 #include "nsIDOMHTMLElement.h"
 #include "nsIDragSession.h"
 #include "nsIFrameInlines.h"
@@ -183,6 +184,12 @@
 #include "nsSubDocumentFrame.h"
 #include "nsQueryObject.h"
 #include "nsLayoutStylesheetCache.h"
+#include "mozilla/layers/ScrollInputMethods.h"
+#include "nsStyleSet.h"
+#include "mozilla/StyleSetHandle.h"
+#include "mozilla/StyleSetHandleInlines.h"
+#include "mozilla/StyleSheetHandle.h"
+#include "mozilla/StyleSheetHandleInlines.h"
 
 #ifdef ANDROID
 #include "nsIDocShellTreeOwner.h"
@@ -544,8 +551,12 @@ static void
 VerifyStyleTree(nsPresContext* aPresContext, nsFrameManager* aFrameManager)
 {
   if (nsFrame::GetVerifyStyleTreeEnable()) {
+    if (aPresContext->RestyleManager()->IsServo()) {
+      NS_ERROR("stylo: cannot verify style tree with a ServoRestyleManager");
+      return;
+    }
     nsIFrame* rootFrame = aFrameManager->GetRootFrame();
-    aPresContext->RestyleManager()->DebugVerifyStyleTree(rootFrame);
+    aPresContext->RestyleManager()->AsGecko()->DebugVerifyStyleTree(rootFrame);
   }
 }
 #define VERIFY_STYLE_TREE ::VerifyStyleTree(mPresContext, mFrameConstructor)
@@ -813,7 +824,7 @@ PresShell::~PresShell()
              "Some pres arena objects were not freed");
 #endif
 
-  delete mStyleSet;
+  mStyleSet->Delete();
   delete mFrameConstructor;
 
   mCurrentEventContent = nullptr;
@@ -829,7 +840,7 @@ void
 PresShell::Init(nsIDocument* aDocument,
                 nsPresContext* aPresContext,
                 nsViewManager* aViewManager,
-                nsStyleSet* aStyleSet)
+                StyleSetHandle aStyleSet)
 {
   NS_PRECONDITION(aDocument, "null ptr");
   NS_PRECONDITION(aPresContext, "null ptr");
@@ -909,6 +920,7 @@ PresShell::Init(nsIDocument* aDocument,
 #ifdef MOZ_XUL
       os->AddObserver(this, "chrome-flush-skin-caches", false);
 #endif
+      os->AddObserver(this, "memory-pressure", false);
     }
   }
 
@@ -1133,6 +1145,7 @@ PresShell::Destroy()
 #ifdef MOZ_XUL
       os->RemoveObserver(this, "chrome-flush-skin-caches");
 #endif
+      os->RemoveObserver(this, "memory-pressure");
     }
   }
 
@@ -1361,10 +1374,11 @@ PresShell::UpdatePreferenceStyles()
   // matter which pres context we pass in when it does need to be recreated.
   // (See nsPresContext::GetDocumentColorPreferences for how whether we
   // are a chrome origin image affects some pref styling information.)
-  RefPtr<CSSStyleSheet> newPrefSheet =
+  auto cache = nsLayoutStylesheetCache::For(mStyleSet->BackendType());
+  StyleSheetHandle::RefPtr newPrefSheet =
     mPresContext->IsChromeOriginImage() ?
-      nsLayoutStylesheetCache::ChromePreferenceSheet(mPresContext) :
-      nsLayoutStylesheetCache::ContentPreferenceSheet(mPresContext);
+      cache->ChromePreferenceSheet(mPresContext) :
+      cache->ContentPreferenceSheet(mPresContext);
 
   if (mPrefStyleSheet == newPrefSheet) {
     return;
@@ -1392,6 +1406,11 @@ PresShell::RemovePreferenceStyles()
 void
 PresShell::AddUserSheet(nsISupports* aSheet)
 {
+  if (mStyleSet->IsServo()) {
+    NS_ERROR("stylo: nsStyleSheetService doesn't handle ServoStyleSheets yet");
+    return;
+  }
+
   // Make sure this does what nsDocumentViewer::CreateStyleSet does wrt
   // ordering. We want this new sheet to come after all the existing stylesheet
   // service sheets, but before other user sheets; see nsIStyleSheetService.idl
@@ -1403,16 +1422,16 @@ PresShell::AddUserSheet(nsISupports* aSheet)
   mStyleSet->BeginUpdate();
 
   nsStyleSheetService* sheetService = nsStyleSheetService::gInstance;
-  nsTArray<RefPtr<CSSStyleSheet>>& userSheets = *sheetService->UserStyleSheets();
+  nsTArray<StyleSheetHandle::RefPtr>& userSheets = *sheetService->UserStyleSheets();
   // Iterate forwards when removing so the searches for RemoveStyleSheet are as
   // short as possible.
-  for (CSSStyleSheet* sheet : userSheets) {
+  for (StyleSheetHandle sheet : userSheets) {
     mStyleSet->RemoveStyleSheet(SheetType::User, sheet);
   }
 
   // Now iterate backwards, so that the order of userSheets will be the same as
   // the order of sheets from it in the style set.
-  for (CSSStyleSheet* sheet : Reversed(userSheets)) {
+  for (StyleSheetHandle sheet : Reversed(userSheets)) {
     mStyleSet->PrependStyleSheet(SheetType::User, sheet);
   }
 
@@ -1426,8 +1445,10 @@ PresShell::AddAgentSheet(nsISupports* aSheet)
 {
   // Make sure this does what nsDocumentViewer::CreateStyleSet does
   // wrt ordering.
+  // XXXheycam This needs to work with ServoStyleSheets too.
   RefPtr<CSSStyleSheet> sheet = do_QueryObject(aSheet);
   if (!sheet) {
+    NS_ERROR("stylo: AddAgentSheet needs to support ServoStyleSheets");
     return;
   }
 
@@ -1438,14 +1459,16 @@ PresShell::AddAgentSheet(nsISupports* aSheet)
 void
 PresShell::AddAuthorSheet(nsISupports* aSheet)
 {
+  // XXXheycam This needs to work with ServoStyleSheets too.
   RefPtr<CSSStyleSheet> sheet = do_QueryObject(aSheet);
   if (!sheet) {
+    NS_ERROR("stylo: AddAuthorSheet needs to support ServoStyleSheets");
     return;
   }
 
   // Document specific "additional" Author sheets should be stronger than the ones
   // added with the StyleSheetService.
-  CSSStyleSheet* firstAuthorSheet = mDocument->FirstAdditionalAuthorSheet();
+  StyleSheetHandle firstAuthorSheet = mDocument->FirstAdditionalAuthorSheet();
   if (firstAuthorSheet) {
     mStyleSet->InsertStyleSheetBefore(SheetType::Doc, sheet, firstAuthorSheet);
   } else {
@@ -1460,6 +1483,7 @@ PresShell::RemoveSheet(SheetType aType, nsISupports* aSheet)
 {
   RefPtr<CSSStyleSheet> sheet = do_QueryObject(aSheet);
   if (!sheet) {
+    NS_ERROR("stylo: RemoveSheet needs to support ServoStyleSheets");
     return;
   }
 
@@ -2105,7 +2129,8 @@ PresShell::PageMove(bool aForward, bool aExtend)
   // flushed and PresShell/PresContext/Frames may be dead. See bug 418470.
   return ScrollSelectionIntoView(nsISelectionController::SELECTION_NORMAL,
                                  nsISelectionController::SELECTION_FOCUS_REGION,
-                                 nsISelectionController::SCROLL_SYNCHRONOUS);
+                                 nsISelectionController::SCROLL_SYNCHRONOUS |
+                                 nsISelectionController::SCROLL_FOR_CARET_MOVE);
 }
 
 
@@ -2116,6 +2141,8 @@ PresShell::ScrollPage(bool aForward)
   nsIScrollableFrame* scrollFrame =
     GetFrameToScrollAsScrollable(nsIPresShell::eVertical);
   if (scrollFrame) {
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+        (uint32_t) ScrollInputMethod::MainThreadScrollPage);
     scrollFrame->ScrollBy(nsIntPoint(0, aForward ? 1 : -1),
                           nsIScrollableFrame::PAGES,
                           nsIScrollableFrame::SMOOTH,
@@ -2132,6 +2159,9 @@ PresShell::ScrollLine(bool aForward)
   nsIScrollableFrame* scrollFrame =
     GetFrameToScrollAsScrollable(nsIPresShell::eVertical);
   if (scrollFrame) {
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+        (uint32_t) ScrollInputMethod::MainThreadScrollLine);
+
     int32_t lineCount = Preferences::GetInt("toolkit.scrollbox.verticalScrollDistance",
                                             NS_DEFAULT_VERTICAL_SCROLL_DISTANCE);
     scrollFrame->ScrollBy(nsIntPoint(0, aForward ? lineCount : -lineCount),
@@ -2150,6 +2180,8 @@ PresShell::ScrollCharacter(bool aRight)
   nsIScrollableFrame* scrollFrame =
     GetFrameToScrollAsScrollable(nsIPresShell::eHorizontal);
   if (scrollFrame) {
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+        (uint32_t) ScrollInputMethod::MainThreadScrollCharacter);
     int32_t h = Preferences::GetInt("toolkit.scrollbox.horizontalScrollDistance",
                                     NS_DEFAULT_HORIZONTAL_SCROLL_DISTANCE);
     scrollFrame->ScrollBy(nsIntPoint(aRight ? h : -h, 0),
@@ -2168,6 +2200,8 @@ PresShell::CompleteScroll(bool aForward)
   nsIScrollableFrame* scrollFrame =
     GetFrameToScrollAsScrollable(nsIPresShell::eVertical);
   if (scrollFrame) {
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::SCROLL_INPUT_METHODS,
+        (uint32_t) ScrollInputMethod::MainThreadCompleteScroll);
     scrollFrame->ScrollBy(nsIntPoint(0, aForward ? 1 : -1),
                           nsIScrollableFrame::WHOLE,
                           nsIScrollableFrame::SMOOTH,
@@ -2202,7 +2236,8 @@ PresShell::CompleteMove(bool aForward, bool aExtend)
   // flushed and PresShell/PresContext/Frames may be dead. See bug 418470.
   return ScrollSelectionIntoView(nsISelectionController::SELECTION_NORMAL,
                                  nsISelectionController::SELECTION_FOCUS_REGION,
-                                 nsISelectionController::SCROLL_SYNCHRONOUS);
+                                 nsISelectionController::SCROLL_SYNCHRONOUS |
+                                 nsISelectionController::SCROLL_FOR_CARET_MOVE);
 }
 
 NS_IMETHODIMP
@@ -2780,9 +2815,13 @@ PresShell::RecreateFramesFor(nsIContent* aContent)
 
   // Mark ourselves as not safe to flush while we're doing frame construction.
   ++mChangeNestCount;
-  RestyleManager* restyleManager = mPresContext->RestyleManager();
-  nsresult rv = restyleManager->ProcessRestyledFrames(changeList);
-  restyleManager->FlushOverflowChangedTracker();
+  RestyleManagerHandle restyleManager = mPresContext->RestyleManager();
+  if (restyleManager->IsServo()) {
+    MOZ_CRASH("stylo: PresShell::RecreateFramesFor not implemented for Servo-"
+              "backed style system");
+  }
+  nsresult rv = restyleManager->AsGecko()->ProcessRestyledFrames(changeList);
+  restyleManager->AsGecko()->FlushOverflowChangedTracker();
   --mChangeNestCount;
 
   return rv;
@@ -3560,8 +3599,14 @@ void
 PresShell::DispatchSynthMouseMove(WidgetGUIEvent* aEvent,
                                   bool aFlushOnHoverChange)
 {
-  RestyleManager* restyleManager = mPresContext->RestyleManager();
-  uint32_t hoverGenerationBefore = restyleManager->GetHoverGeneration();
+  RestyleManagerHandle restyleManager = mPresContext->RestyleManager();
+  if (restyleManager->IsServo()) {
+    NS_ERROR("stylo: cannot dispatch synthetic mouse moves when using a "
+             "ServoRestyleManager yet");
+    return;
+  }
+  uint32_t hoverGenerationBefore =
+    restyleManager->AsGecko()->GetHoverGeneration();
   nsEventStatus status;
   nsView* targetView = nsView::GetViewFor(aEvent->widget);
   if (!targetView)
@@ -3571,7 +3616,7 @@ PresShell::DispatchSynthMouseMove(WidgetGUIEvent* aEvent,
     return;
   }
   if (aFlushOnHoverChange &&
-      hoverGenerationBefore != restyleManager->GetHoverGeneration()) {
+      hoverGenerationBefore != restyleManager->AsGecko()->GetHoverGeneration()) {
     // Flush so that the resulting reflow happens now so that our caller
     // can suppress any synthesized mouse moves caused by that reflow.
     FlushPendingNotifications(Flush_Layout);
@@ -4101,9 +4146,19 @@ PresShell::DocumentStatesChanged(nsIDocument* aDocument,
   NS_PRECONDITION(!mIsDocumentGone, "Unexpected DocumentStatesChanged");
   NS_PRECONDITION(aDocument == mDocument, "Unexpected aDocument");
 
+  nsStyleSet* styleSet = mStyleSet->GetAsGecko();
+  if (!styleSet) {
+    // XXXheycam ServoStyleSets don't support document state selectors,
+    // but these are only used in chrome documents, which we are not
+    // aiming to support yet.
+    NS_ERROR("stylo: ServoStyleSets cannot respond to document state "
+             "changes yet");
+    return;
+  }
+
   if (mDidInitialize &&
-      mStyleSet->HasDocumentStateDependentStyle(mDocument->GetRootElement(),
-                                                aStateMask)) {
+      styleSet->HasDocumentStateDependentStyle(mDocument->GetRootElement(),
+                                               aStateMask)) {
     mPresContext->RestyleManager()->PostRestyleEvent(mDocument->GetRootElement(),
                                                      eRestyle_Subtree,
                                                      NS_STYLE_HINT_NONE);
@@ -4284,14 +4339,12 @@ PresShell::ContentRemoved(nsIDocument *aDocument,
 
   // We should check that aChild does not contain pointer capturing elements.
   // If it does we should release the pointer capture for the elements.
-  if (aChild) {
-    for (auto iter = gPointerCaptureList->Iter(); !iter.Done(); iter.Next()) {
-      nsIPresShell::PointerCaptureInfo* data = iter.UserData();
-      if (data && data->mOverrideContent &&
-          nsContentUtils::ContentIsDescendantOf(data->mOverrideContent,
-                                                aChild)) {
-        nsIPresShell::ReleasePointerCapturingContent(iter.Key());
-      }
+  for (auto iter = gPointerCaptureList->Iter(); !iter.Done(); iter.Next()) {
+    nsIPresShell::PointerCaptureInfo* data = iter.UserData();
+    if (data && data->mOverrideContent &&
+        nsContentUtils::ContentIsDescendantOf(data->mOverrideContent,
+                                              aChild)) {
+      nsIPresShell::ReleasePointerCapturingContent(iter.Key());
     }
   }
 
@@ -4380,7 +4433,7 @@ nsIPresShell::ReconstructStyleDataInternal()
     return;
   }
 
-  RestyleManager* restyleManager = mPresContext->RestyleManager();
+  RestyleManagerHandle restyleManager = mPresContext->RestyleManager();
   if (scopeRoots.IsEmpty()) {
     // If scopeRoots is empty, we know that mStylesHaveChanged was true at
     // the beginning of this function, and that we need to restyle the whole
@@ -4402,7 +4455,7 @@ nsIPresShell::ReconstructStyleDataExternal()
 }
 
 void
-PresShell::RecordStyleSheetChange(CSSStyleSheet* aStyleSheet)
+PresShell::RecordStyleSheetChange(StyleSheetHandle aStyleSheet)
 {
   // too bad we can't check that the update is UPDATE_STYLE
   NS_ASSERTION(mUpdateCount != 0, "must be in an update");
@@ -4410,20 +4463,22 @@ PresShell::RecordStyleSheetChange(CSSStyleSheet* aStyleSheet)
   if (mStylesHaveChanged)
     return;
 
-  RefPtr<CSSStyleSheet> cssStyleSheet = do_QueryObject(aStyleSheet);
-  if (cssStyleSheet) {
-    Element* scopeElement = cssStyleSheet->GetScopeElement();
+  if (aStyleSheet->IsGecko()) {
+    // XXXheycam ServoStyleSheets don't support <style scoped> yet.
+    Element* scopeElement = aStyleSheet->AsGecko()->GetScopeElement();
     if (scopeElement) {
       mChangedScopeStyleRoots.AppendElement(scopeElement);
       return;
     }
+  } else {
+    NS_ERROR("stylo: ServoStyleSheets don't support <style scoped>");
   }
 
   mStylesHaveChanged = true;
 }
 
 void
-PresShell::StyleSheetAdded(CSSStyleSheet* aStyleSheet,
+PresShell::StyleSheetAdded(StyleSheetHandle aStyleSheet,
                            bool aDocumentSheet)
 {
   // We only care when enabled sheets are added
@@ -4435,7 +4490,7 @@ PresShell::StyleSheetAdded(CSSStyleSheet* aStyleSheet,
 }
 
 void
-PresShell::StyleSheetRemoved(CSSStyleSheet* aStyleSheet,
+PresShell::StyleSheetRemoved(StyleSheetHandle aStyleSheet,
                              bool aDocumentSheet)
 {
   // We only care when enabled sheets are removed
@@ -4447,7 +4502,7 @@ PresShell::StyleSheetRemoved(CSSStyleSheet* aStyleSheet,
 }
 
 void
-PresShell::StyleSheetApplicableStateChanged(CSSStyleSheet* aStyleSheet)
+PresShell::StyleSheetApplicableStateChanged(StyleSheetHandle aStyleSheet)
 {
   if (aStyleSheet->HasRules()) {
     RecordStyleSheetChange(aStyleSheet);
@@ -4455,19 +4510,19 @@ PresShell::StyleSheetApplicableStateChanged(CSSStyleSheet* aStyleSheet)
 }
 
 void
-PresShell::StyleRuleChanged(CSSStyleSheet* aStyleSheet)
+PresShell::StyleRuleChanged(StyleSheetHandle aStyleSheet)
 {
   RecordStyleSheetChange(aStyleSheet);
 }
 
 void
-PresShell::StyleRuleAdded(CSSStyleSheet* aStyleSheet)
+PresShell::StyleRuleAdded(StyleSheetHandle aStyleSheet)
 {
   RecordStyleSheetChange(aStyleSheet);
 }
 
 void
-PresShell::StyleRuleRemoved(CSSStyleSheet* aStyleSheet)
+PresShell::StyleRuleRemoved(StyleSheetHandle aStyleSheet)
 {
   RecordStyleSheetChange(aStyleSheet);
 }
@@ -5534,12 +5589,15 @@ PresShell::ClearVisibleImagesList(uint32_t aNonvisibleAction)
 }
 
 void
-PresShell::MarkImagesInSubtreeVisible(nsIFrame* aFrame, const nsRect& aRect)
+PresShell::MarkImagesInSubtreeVisible(nsIFrame* aFrame,
+                                      const nsRect& aRect,
+                                      bool aRemoveOnly /* = false */)
 {
   MOZ_ASSERT(aFrame->PresContext()->PresShell() == this, "wrong presshell");
 
   nsCOMPtr<nsIImageLoadingContent> content(do_QueryInterface(aFrame->GetContent()));
-  if (content && aFrame->StyleVisibility()->IsVisible()) {
+  if (content && aFrame->StyleVisibility()->IsVisible() &&
+      (!aRemoveOnly || content->GetVisibleCount() > 0)) {
     uint32_t count = mVisibleImages.Count();
     mVisibleImages.PutEntry(content);
     if (mVisibleImages.Count() > count) {
@@ -5620,7 +5678,8 @@ PresShell::MarkImagesInSubtreeVisible(nsIFrame* aFrame, const nsRect& aRect)
 }
 
 void
-PresShell::RebuildImageVisibility(nsRect* aRect)
+PresShell::RebuildImageVisibility(nsRect* aRect,
+                                  bool aRemoveOnly /* = false */)
 {
   MOZ_ASSERT(!mImageVisibilityVisited, "already visited?");
   mImageVisibilityVisited = true;
@@ -5639,7 +5698,7 @@ PresShell::RebuildImageVisibility(nsRect* aRect)
   if (aRect) {
     vis = *aRect;
   }
-  MarkImagesInSubtreeVisible(rootFrame, vis);
+  MarkImagesInSubtreeVisible(rootFrame, vis, aRemoveOnly);
 
   DecrementVisibleCount(oldVisibleImages,
                         nsIImageLoadingContent::ON_NONVISIBLE_NO_ACTION);
@@ -5647,6 +5706,12 @@ PresShell::RebuildImageVisibility(nsRect* aRect)
 
 void
 PresShell::UpdateImageVisibility()
+{
+  DoUpdateImageVisibility(/* aRemoveOnly = */ false);
+}
+
+void
+PresShell::DoUpdateImageVisibility(bool aRemoveOnly)
 {
   MOZ_ASSERT(!mPresContext || mPresContext->IsRootContentDocument(),
     "updating image visibility on a non-root content document?");
@@ -5665,7 +5730,7 @@ PresShell::UpdateImageVisibility()
     return;
   }
 
-  RebuildImageVisibility();
+  RebuildImageVisibility(/* aRect = */ nullptr, aRemoveOnly);
   ClearImageVisibilityVisited(rootFrame->GetView(), true);
 
 #ifdef DEBUG_IMAGE_VISIBILITY_DISPLAY_LIST
@@ -6471,7 +6536,10 @@ FlushThrottledStyles(nsIDocument *aDocument, void *aData)
   if (shell && shell->IsVisible()) {
     nsPresContext* presContext = shell->GetPresContext();
     if (presContext) {
-      presContext->RestyleManager()->UpdateOnlyAnimationStyles();
+      if (presContext->RestyleManager()->IsGecko()) {
+        // XXX stylo: ServoRestyleManager doesn't support animations yet.
+        presContext->RestyleManager()->AsGecko()->UpdateOnlyAnimationStyles();
+      }
     }
   }
 
@@ -7644,7 +7712,7 @@ PresShell::HandleEventInternal(WidgetEvent* aEvent,
         auto keyCode = aEvent->AsKeyboardEvent()->keyCode;
         if (keyCode == NS_VK_ESCAPE) {
           nsIDocument* root = nsContentUtils::GetRootDocument(doc);
-          if (root && root->IsFullScreenDoc()) {
+          if (root && root->GetFullscreenElement()) {
             // Prevent default action on ESC key press when exiting
             // DOM fullscreen mode. This prevents the browser ESC key
             // handler from stopping all loads in the document, which
@@ -8479,7 +8547,7 @@ PresShell::IsVisible()
 }
 
 nsresult
-PresShell::GetAgentStyleSheets(nsTArray<RefPtr<CSSStyleSheet>>& aSheets)
+PresShell::GetAgentStyleSheets(nsTArray<StyleSheetHandle::RefPtr>& aSheets)
 {
   aSheets.Clear();
   int32_t sheetCount = mStyleSet->SheetCount(SheetType::Agent);
@@ -8489,7 +8557,7 @@ PresShell::GetAgentStyleSheets(nsTArray<RefPtr<CSSStyleSheet>>& aSheets)
   }
 
   for (int32_t i = 0; i < sheetCount; ++i) {
-    CSSStyleSheet* sheet = mStyleSet->StyleSheetAt(SheetType::Agent, i);
+    StyleSheetHandle sheet = mStyleSet->StyleSheetAt(SheetType::Agent, i);
     aSheets.AppendElement(sheet);
   }
 
@@ -8497,19 +8565,19 @@ PresShell::GetAgentStyleSheets(nsTArray<RefPtr<CSSStyleSheet>>& aSheets)
 }
 
 nsresult
-PresShell::SetAgentStyleSheets(const nsTArray<RefPtr<CSSStyleSheet>>& aSheets)
+PresShell::SetAgentStyleSheets(const nsTArray<StyleSheetHandle::RefPtr>& aSheets)
 {
   return mStyleSet->ReplaceSheets(SheetType::Agent, aSheets);
 }
 
 nsresult
-PresShell::AddOverrideStyleSheet(CSSStyleSheet* aSheet)
+PresShell::AddOverrideStyleSheet(StyleSheetHandle aSheet)
 {
   return mStyleSet->PrependStyleSheet(SheetType::Override, aSheet);
 }
 
 nsresult
-PresShell::RemoveOverrideStyleSheet(CSSStyleSheet* aSheet)
+PresShell::RemoveOverrideStyleSheet(StyleSheetHandle aSheet)
 {
   return mStyleSet->RemoveStyleSheet(SheetType::Override, aSheet);
 }
@@ -9225,9 +9293,13 @@ PresShell::Observe(nsISupports* aSubject,
         {
           nsAutoScriptBlocker scriptBlocker;
           ++mChangeNestCount;
-          RestyleManager* restyleManager = mPresContext->RestyleManager();
-          restyleManager->ProcessRestyledFrames(changeList);
-          restyleManager->FlushOverflowChangedTracker();
+          RestyleManagerHandle restyleManager = mPresContext->RestyleManager();
+          if (restyleManager->IsServo()) {
+            MOZ_CRASH("stylo: PresShell::Observe(\"chrome-flush-skin-caches\") "
+                      "not implemented for Servo-backed style system");
+          }
+          restyleManager->AsGecko()->ProcessRestyledFrames(changeList);
+          restyleManager->AsGecko()->FlushOverflowChangedTracker();
           --mChangeNestCount;
         }
       }
@@ -9263,6 +9335,13 @@ PresShell::Observe(nsISupports* aSubject,
 
   if (!nsCRT::strcmp(aTopic, "author-sheet-removed") && mStyleSet) {
     RemoveSheet(SheetType::Doc, aSubject);
+    return NS_OK;
+  }
+
+  if (!nsCRT::strcmp(aTopic, "memory-pressure") &&
+      !AssumeAllImagesVisible() &&
+      mPresContext->IsRootContentDocument()) {
+    DoUpdateImageVisibility(/* aRemoveOnly = */ true);
     return NS_OK;
   }
 
@@ -9602,7 +9681,7 @@ FindTopFrame(nsIFrame* aRoot)
 nsStyleSet*
 PresShell::CloneStyleSet(nsStyleSet* aSet)
 {
-  nsStyleSet *clone = new nsStyleSet();
+  nsStyleSet* clone = new nsStyleSet();
 
   int32_t i, n = aSet->SheetCount(SheetType::Override);
   for (i = 0; i < n; i++) {
@@ -9688,8 +9767,12 @@ PresShell::VerifyIncrementalReflow()
 
   // Create a new presentation shell to view the document. Use the
   // exact same style information that this document has.
-  nsAutoPtr<nsStyleSet> newSet(CloneStyleSet(mStyleSet));
-  nsCOMPtr<nsIPresShell> sh = mDocument->CreateShell(cx, vm, newSet);
+  if (mStyleSet->IsServo()) {
+    NS_WARNING("VerifyIncrementalReflow cannot handle ServoStyleSets");
+    return true;
+  }
+  nsAutoPtr<nsStyleSet> newSet(CloneStyleSet(mStyleSet->AsGecko()));
+  nsCOMPtr<nsIPresShell> sh = mDocument->CreateShell(cx, vm, newSet.get());
   NS_ENSURE_TRUE(sh, false);
   newSet.forget();
   // Note that after we create the shell, we must make sure to destroy it
@@ -10574,7 +10657,11 @@ PresShell::AddSizeOfIncludingThis(MallocSizeOf aMallocSizeOf,
   *aPresShellSize += mFramesToDirty.ShallowSizeOfExcludingThis(aMallocSizeOf);
   *aPresShellSize += aArenaObjectsSize->mOther;
 
-  *aStyleSetsSize += StyleSet()->SizeOfIncludingThis(aMallocSizeOf);
+  if (nsStyleSet* styleSet = StyleSet()->GetAsGecko()) {
+    *aStyleSetsSize += styleSet->SizeOfIncludingThis(aMallocSizeOf);
+  } else {
+    NS_WARNING("ServoStyleSets do not support memory measurements yet");
+  }
 
   *aTextRunsSize += SizeOfTextRuns(aMallocSizeOf);
 
@@ -10773,7 +10860,11 @@ nsIPresShell::HasRuleProcessorUsedByMultipleStyleSets(uint32_t aSheetType,
       return NS_ERROR_ILLEGAL_VALUE;
   }
 
-  *aRetVal = mStyleSet->HasRuleProcessorUsedByMultipleStyleSets(type);
+  *aRetVal = false;
+  if (nsStyleSet* styleSet = mStyleSet->GetAsGecko()) {
+    // ServoStyleSets do not have rule processors.
+    *aRetVal = styleSet->HasRuleProcessorUsedByMultipleStyleSets(type);
+  }
   return NS_OK;
 }
 

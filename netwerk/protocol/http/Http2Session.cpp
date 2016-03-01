@@ -535,6 +535,7 @@ Http2Session::FlushOutputQueue()
 void
 Http2Session::DontReuse()
 {
+  LOG3(("Http2Session::DontReuse %p\n", this));
   mShouldGoAway = true;
   if (!mStreamTransactionHash.Count())
     Close(NS_OK);
@@ -1580,8 +1581,8 @@ Http2Session::RecvPushPromise(Http2Session *self)
   bool resetStream = true;
   SpdyPushCache *cache = nullptr;
 
-  if (self->mShouldGoAway) {
-    LOG3(("Http2Session::RecvPushPromise %p push while in GoAway "
+  if (self->mShouldGoAway && !Http2PushedStream::TestOnPush(associatedStream)) {
+    LOG3(("Http2Session::RecvPushPromise %p cache push while in GoAway "
           "mode refused.\n", self));
     self->GenerateRstStream(REFUSED_STREAM_ERROR, promisedID);
   } else if (!gHttpHandler->AllowPush()) {
@@ -2259,8 +2260,8 @@ Http2Session::OnTransportStatus(nsITransport* aTransport,
 // generated instead.
 
 nsresult
-Http2Session::ReadSegments(nsAHttpSegmentReader *reader,
-                           uint32_t count, uint32_t *countRead)
+Http2Session::ReadSegmentsAgain(nsAHttpSegmentReader *reader,
+                                uint32_t count, uint32_t *countRead, bool *again)
 {
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
@@ -2332,6 +2333,8 @@ Http2Session::ReadSegments(nsAHttpSegmentReader *reader,
     CleanupStream(stream, rv, CANCEL_ERROR);
     if (SoftStreamError(rv)) {
       LOG3(("Http2Session::ReadSegments %p soft error override\n", this));
+      *again = false;
+      SetWriteCallbacks();
       rv = NS_OK;
     }
     return rv;
@@ -2359,6 +2362,14 @@ Http2Session::ReadSegments(nsAHttpSegmentReader *reader,
   SetWriteCallbacks();
 
   return rv;
+}
+
+nsresult
+Http2Session::ReadSegments(nsAHttpSegmentReader *reader,
+                           uint32_t count, uint32_t *countRead)
+{
+  bool again = false;
+  return ReadSegmentsAgain(reader, count, countRead, &again);
 }
 
 nsresult
@@ -2428,8 +2439,9 @@ Http2Session::ReadyToProcessDataFrame(enum internalStateType newState)
 // data. It always gets full frames if they are part of the stream
 
 nsresult
-Http2Session::WriteSegments(nsAHttpSegmentWriter *writer,
-                            uint32_t count, uint32_t *countWritten)
+Http2Session::WriteSegmentsAgain(nsAHttpSegmentWriter *writer,
+                                 uint32_t count, uint32_t *countWritten,
+                                 bool *again)
 {
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
@@ -2700,6 +2712,8 @@ Http2Session::WriteSegments(nsAHttpSegmentWriter *writer,
       MOZ_ASSERT(!mNeedsCleanup || mNeedsCleanup->StreamID() == streamID);
       CleanupStream(streamID, NS_OK, CANCEL_ERROR);
       mNeedsCleanup = nullptr;
+      *again = false;
+      ResumeRecv();
       return NS_OK;
     }
 
@@ -2811,6 +2825,14 @@ Http2Session::WriteSegments(nsAHttpSegmentWriter *writer,
   if (mShouldGoAway && !mStreamTransactionHash.Count())
     Close(NS_OK);
   return rv;
+}
+
+nsresult
+Http2Session::WriteSegments(nsAHttpSegmentWriter *writer,
+                            uint32_t count, uint32_t *countWritten)
+{
+  bool again = false;
+  return WriteSegmentsAgain(writer, count, countWritten, &again);
 }
 
 nsresult

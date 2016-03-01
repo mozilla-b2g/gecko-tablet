@@ -30,8 +30,9 @@ flags:
     crashtest: /crashtest.*/
     crashtest-e10s: /crashtest-e10s.*/
     e10s: /.*e10s.*/
+    firefox-ui: /firefox-ui.*/
+    firefox-ui-e10s: /firefox-ui-e10s.*/
     gaia-js-integration: /.*gaia-js-integration.*/
-    gaia-ui-test: /.*gaia-ui-test.*/
     gtest: /gtest.*/
     jittest: /jittest.*/
     jittests: /jittest.*/
@@ -39,6 +40,7 @@ flags:
     jsreftest-e10s: /jsreftest-e10s.*/
     luciddream: /luciddream.*/
     marionette: /marionette.*/
+    marionette-e10s: /marionette-e10s.*/
     mochitest: /mochitest.*/
     mochitests: /mochitest.*/
     mochitest-e10s: /mochitest-e10s.*/
@@ -54,6 +56,7 @@ flags:
     mochitest-dt-e10s: /mochitest-devtools-chrome-e10s.*/
     mochitest-gl: /mochitest-webgl.*/
     mochitest-push: /mochitest-push.*/
+    mochitest-vg: /mochitest-valgrind.*/
     reftest: /(plain-)?reftest.*/
     reftest-no-accel: /(plain-)?reftest-no-accel.*/
     reftests: /(plain-)?reftest.*/
@@ -75,6 +78,7 @@ flags:
     - linux32_gecko  # b2g desktop linux 32 bit
     - linux64_gecko  # b2g desktop linux 64 bit
     - linux64-mulet  # Firefox desktop - b2g gecko linux 64 bit
+    - linux64-mulet-haz  # Firefox desktop - b2g gecko linux 64 bit, rooting hazard analysis
     - macosx64_gecko # b2g desktop osx 64 bit
     - win32_gecko    # b2g desktop win 32 bit
     - flame-kk       # b2g flame kitkat
@@ -99,6 +103,7 @@ flags:
     - aries-dogfood
     - aries-noril
     - android-api-15
+    - android-api-15-frontend
     - android-partner-sample1
     - android-b2gdroid
     - linux
@@ -106,23 +111,20 @@ flags:
     - linux64-st-an
     - macosx64
     - macosx64-st-an
-    - eslint-gecko
 
   tests:
     - cppunit
     - crashtest
     - crashtest-e10s
     - crashtest-ipc
+    - firefox-ui
+    - firefox-ui-e10s
     - gaia-build
     - gaia-build-unit
     - gaia-js-integration
     - gaia-linter
     - gaia-unit
     - gaia-unit-oop
-    - gaia-ui-test-sanity
-    - gaia-ui-test-functional
-    - gaia-ui-test-functional-dsds
-    - gaia-ui-test-unit
     - gtest
     - jetpack
     - jittests
@@ -130,6 +132,7 @@ flags:
     - jsreftest-e10s
     - luciddream
     - marionette
+    - marionette-e10s
     - marionette-webapi
     - mochitest
     - mochitest-a11y
@@ -144,6 +147,7 @@ flags:
     - mochitest-oop
     - mochitest-push
     - mochitest-webgl
+    - mochitest-valgrind
     - mozmill
     - reftest
     - reftest-e10s
@@ -155,4 +159,3 @@ flags:
     - web-platform-tests-reftests
     - web-platform-tests-reftests-e10s
     - xpcshell
-

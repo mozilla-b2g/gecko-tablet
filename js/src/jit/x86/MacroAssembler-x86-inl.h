@@ -15,6 +15,21 @@ namespace js {
 namespace jit {
 
 //{{{ check_macroassembler_style
+
+void
+MacroAssembler::move64(Imm64 imm, Register64 dest)
+{
+    movl(Imm32(imm.value & 0xFFFFFFFFL), dest.low);
+    movl(Imm32((imm.value >> 32) & 0xFFFFFFFFL), dest.high);
+}
+
+void
+MacroAssembler::move64(Register64 src, Register64 dest)
+{
+    movl(src.low, dest.low);
+    movl(src.high, dest.high);
+}
+
 // ===============================================================
 // Logical functions
 
@@ -35,6 +50,20 @@ MacroAssembler::and64(Imm64 imm, Register64 dest)
 {
     andl(Imm32(imm.value & 0xFFFFFFFFL), dest.low);
     andl(Imm32((imm.value >> 32) & 0xFFFFFFFFL), dest.high);
+}
+
+void
+MacroAssembler::or64(Imm64 imm, Register64 dest)
+{
+    orl(Imm32(imm.value & 0xFFFFFFFFL), dest.low);
+    orl(Imm32((imm.value >> 32) & 0xFFFFFFFFL), dest.high);
+}
+
+void
+MacroAssembler::xor64(Imm64 imm, Register64 dest)
+{
+    xorl(Imm32(imm.value & 0xFFFFFFFFL), dest.low);
+    xorl(Imm32((imm.value >> 32) & 0xFFFFFFFFL), dest.high);
 }
 
 void
@@ -255,6 +284,125 @@ MacroAssembler::rshift64(Imm32 imm, Register64 dest)
     shrl(imm, dest.high);
 }
 
+// ===============================================================
+// Branch functions
+
+void
+MacroAssembler::branch32(Condition cond, const AbsoluteAddress& lhs, Register rhs, Label* label)
+{
+    cmp32(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branch32(Condition cond, const AbsoluteAddress& lhs, Imm32 rhs, Label* label)
+{
+    cmp32(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branch32(Condition cond, wasm::SymbolicAddress lhs, Imm32 rhs, Label* label)
+{
+    cmpl(rhs, lhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, const AbsoluteAddress& lhs, Register rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, const AbsoluteAddress& lhs, ImmWord rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, wasm::SymbolicAddress lhs, Register rhs, Label* label)
+{
+    cmpl(rhs, lhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchPrivatePtr(Condition cond, const Address& lhs, Register rhs, Label* label)
+{
+    branchPtr(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchTruncateFloat32(FloatRegister src, Register dest, Label* fail)
+{
+    vcvttss2si(src, dest);
+
+    // vcvttss2si returns 0x80000000 on failure. Test for it by
+    // subtracting 1 and testing overflow (this permits the use of a
+    // smaller immediate field).
+    cmp32(dest, Imm32(1));
+    j(Assembler::Overflow, fail);
+}
+
+void
+MacroAssembler::branchTruncateDouble(FloatRegister src, Register dest, Label* fail)
+{
+    vcvttsd2si(src, dest);
+
+    // vcvttsd2si returns 0x80000000 on failure. Test for it by
+    // subtracting 1 and testing overflow (this permits the use of a
+    // smaller immediate field).
+    cmp32(dest, Imm32(1));
+    j(Assembler::Overflow, fail);
+}
+
+void
+MacroAssembler::branchTest32(Condition cond, const AbsoluteAddress& lhs, Imm32 rhs, Label* label)
+{
+    test32(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchTest64(Condition cond, Register64 lhs, Register64 rhs, Register temp,
+                             Label* label)
+{
+    if (cond == Assembler::Zero) {
+        MOZ_ASSERT(lhs.low == rhs.low);
+        MOZ_ASSERT(lhs.high == rhs.high);
+        movl(lhs.low, temp);
+        orl(lhs.high, temp);
+        branchTestPtr(cond, temp, temp, label);
+    } else {
+        MOZ_CRASH("Unsupported condition");
+    }
+}
+
+void
+MacroAssembler::branchTestInt32(Condition cond, Register tag, Label* label)
+{
+    branchTestInt32Impl(cond, tag, label);
+}
+
+void
+MacroAssembler::branchTestInt32(Condition cond, const Address& address, Label* label)
+{
+    branchTestInt32Impl(cond, address, label);
+}
+
+void
+MacroAssembler::branchTestInt32(Condition cond, const BaseIndex& address, Label* label)
+{
+    branchTestInt32Impl(cond, address, label);
+}
+
+void
+MacroAssembler::branchTestInt32(Condition cond, const ValueOperand& src, Label* label)
+{
+    branchTestInt32Impl(cond, src, label);
+}
+
 //}}} check_macroassembler_style
 // ===============================================================
 
@@ -279,6 +427,89 @@ MacroAssemblerX86::convertUInt32ToFloat32(Register src, FloatRegister dest)
 {
     convertUInt32ToDouble(src, dest);
     convertDoubleToFloat32(dest, dest);
+}
+
+void
+MacroAssemblerX86::branchTestValue(Condition cond, const Address& valaddr, const ValueOperand& value,
+                                   Label* label)
+{
+    MOZ_ASSERT(cond == Equal || cond == NotEqual);
+    // Check payload before tag, since payload is more likely to differ.
+    if (cond == NotEqual) {
+        branchPtrImpl(NotEqual, payloadOf(valaddr), value.payloadReg(), label);
+        branchPtrImpl(NotEqual, tagOf(valaddr), value.typeReg(), label);
+    } else {
+        Label fallthrough;
+        branchPtrImpl(NotEqual, payloadOf(valaddr), value.payloadReg(), &fallthrough);
+        branchPtrImpl(Equal, tagOf(valaddr), value.typeReg(), label);
+        bind(&fallthrough);
+    }
+}
+
+template <typename T, typename S>
+void
+MacroAssemblerX86::branchPtrImpl(Condition cond, const T& lhs, const S& rhs, Label* label)
+{
+    cmpPtr(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssemblerX86::unboxValue(const ValueOperand& src, AnyRegister dest)
+{
+    if (dest.isFloat()) {
+        Label notInt32, end;
+        asMasm().branchTestInt32(Assembler::NotEqual, src, &notInt32);
+        convertInt32ToDouble(src.payloadReg(), dest.fpu());
+        jump(&end);
+        bind(&notInt32);
+        unboxDouble(src, dest.fpu());
+        bind(&end);
+    } else {
+        if (src.payloadReg() != dest.gpr())
+            movl(src.payloadReg(), dest.gpr());
+    }
+}
+
+template <typename T>
+void
+MacroAssemblerX86::loadInt32OrDouble(const T& src, FloatRegister dest)
+{
+    Label notInt32, end;
+    asMasm().branchTestInt32(Assembler::NotEqual, src, &notInt32);
+    convertInt32ToDouble(ToPayload(src), dest);
+    jump(&end);
+    bind(&notInt32);
+    loadDouble(src, dest);
+    bind(&end);
+}
+
+template <typename T>
+void
+MacroAssemblerX86::loadUnboxedValue(const T& src, MIRType type, AnyRegister dest)
+{
+    if (dest.isFloat())
+        loadInt32OrDouble(src, dest.fpu());
+    else
+        movl(Operand(src), dest.gpr());
+}
+
+// If source is a double, load it into dest. If source is int32,
+// convert it to double. Else, branch to failure.
+void
+MacroAssemblerX86::ensureDouble(const ValueOperand& source, FloatRegister dest, Label* failure)
+{
+    Label isDouble, done;
+    branchTestDouble(Assembler::Equal, source.typeReg(), &isDouble);
+    asMasm().branchTestInt32(Assembler::NotEqual, source.typeReg(), failure);
+
+    convertInt32ToDouble(source.payloadReg(), dest);
+    jump(&done);
+
+    bind(&isDouble);
+    unboxDouble(source, dest);
+
+    bind(&done);
 }
 
 } // namespace jit

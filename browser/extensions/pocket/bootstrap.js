@@ -41,6 +41,10 @@ const PREFS = {
 function setDefaultPrefs() {
   let branch = Services.prefs.getDefaultBranch(PREF_BRANCH);
   for (let [key, val] in Iterator(PREFS)) {
+    // If someone beat us to setting a default, don't overwrite it.  This can
+    // happen if distribution.ini sets the default first.
+    if (branch.getPrefType(key) != branch.PREF_INVALID)
+      continue;
     switch (typeof val) {
       case "boolean":
         branch.setBoolPref(key, val);
@@ -357,7 +361,7 @@ var PocketOverlay = {
     PocketContextMenu.init();
     PocketReader.startup();
 
-    if (reason == ADDON_ENABLE) {
+    if (reason != APP_STARTUP) {
       for (let win of allBrowserWindows()) {
         this.setWindowScripts(win);
         this.addStyles(win);
@@ -519,8 +523,7 @@ function startup(data, reason) {
     }
     // watch pref change and enable/disable if necessary
     Services.prefs.addObserver("extensions.pocket.enabled", prefObserver, false);
-    if (Services.prefs.prefHasUserValue("extensions.pocket.enabled") &&
-        !Services.prefs.getBoolPref("extensions.pocket.enabled"))
+    if (!Services.prefs.getBoolPref("extensions.pocket.enabled"))
       return;
     PocketOverlay.startup(reason);
   });
@@ -529,7 +532,7 @@ function startup(data, reason) {
 function shutdown(data, reason) {
   // For speed sake, we should only do a shutdown if we're being disabled.
   // On an app shutdown, just let it fade away...
-  if (reason == ADDON_DISABLE) {
+  if (reason != APP_SHUTDOWN) {
     Services.prefs.removeObserver("extensions.pocket.enabled", prefObserver);
     PocketOverlay.shutdown(reason);
   }

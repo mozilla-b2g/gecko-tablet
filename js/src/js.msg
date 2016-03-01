@@ -106,6 +106,7 @@ MSG_DEF(JSMSG_TERMINATED,              1, JSEXN_ERR, "Script terminated by timeo
 MSG_DEF(JSMSG_PROTO_NOT_OBJORNULL,     1, JSEXN_TYPEERR, "{0}.prototype is not an object or null")
 MSG_DEF(JSMSG_CANT_CALL_CLASS_CONSTRUCTOR, 0, JSEXN_TYPEERR, "class constructors must be invoked with |new|")
 MSG_DEF(JSMSG_UNINITIALIZED_THIS,      1, JSEXN_REFERENCEERR, "|this| used uninitialized in {0} class constructor")
+MSG_DEF(JSMSG_UNINITIALIZED_THIS_ARROW, 0, JSEXN_REFERENCEERR, "|this| used uninitialized in arrow function in class constructor")
 MSG_DEF(JSMSG_BAD_DERIVED_RETURN,      1, JSEXN_TYPEERR, "derived class constructor returned invalid value {0}")
 MSG_DEF(JSMSG_NOT_SELFHOSTED,          1, JSEXN_TYPEERR, "callFunction() used on non self-hosted builtin {0}")
 
@@ -365,6 +366,7 @@ MSG_DEF(JSMSG_USE_ASM_TYPE_OK,         1, JSEXN_NONE,    "Successfully compiled 
 MSG_DEF(JSMSG_WASM_FAIL,               1, JSEXN_TYPEERR, "wasm error: {0}")
 MSG_DEF(JSMSG_WASM_DECODE_FAIL,        2, JSEXN_TYPEERR, "wasm validation error at offset {0}: {1}")
 MSG_DEF(JSMSG_WASM_TEXT_FAIL,          1, JSEXN_SYNTAXERR, "wasm text error: {0}")
+MSG_DEF(JSMSG_WASM_BAD_IND_CALL,       0, JSEXN_ERR,     "wasm indirect call signature mismatch")
 
 // Proxy
 MSG_DEF(JSMSG_BAD_TRAP_RETURN_VALUE,   2, JSEXN_TYPEERR,"trap {1} for {0} returned a primitive value")
@@ -428,6 +430,7 @@ MSG_DEF(JSMSG_DEBUG_OPTIMIZED_OUT,     1, JSEXN_ERR, "variable `{0}' has been op
 MSG_DEF(JSMSG_DEBUG_RESUMPTION_VALUE_DISALLOWED, 0, JSEXN_TYPEERR, "resumption values are disallowed in this hook")
 MSG_DEF(JSMSG_DEBUG_VARIABLE_NOT_FOUND,0, JSEXN_TYPEERR, "variable not found in environment")
 MSG_DEF(JSMSG_DEBUG_WRAPPER_IN_WAY,    3, JSEXN_TYPEERR, "{0} is {1}{2}a global object, but a direct reference is required")
+MSG_DEF(JSMSG_DEBUGGEE_WOULD_RUN,      2, JSEXN_DEBUGGEEWOULDRUN, "debuggee `{0}:{1}' would run")
 MSG_DEF(JSMSG_NOT_CALLABLE_OR_UNDEFINED, 0, JSEXN_TYPEERR, "value is not a function or undefined")
 MSG_DEF(JSMSG_NOT_TRACKING_ALLOCATIONS, 1, JSEXN_ERR, "Cannot call {0} without setting trackingAllocationSites to true")
 MSG_DEF(JSMSG_NOT_TRACKING_TENURINGS,  1, JSEXN_ERR, "Cannot call {0} without setting trackingTenurePromotions to true")

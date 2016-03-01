@@ -416,7 +416,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(Promise)
 #ifndef SPIDERMONKEY_PROMISE
-  NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mResult)
+  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mResult)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mAllocationStack)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mRejectionStack)
   NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(mFullfillmentStack)
@@ -2905,7 +2905,7 @@ PromiseWorkerProxy::RunCallback(JSContext* aCx,
   RefPtr<PromiseWorkerProxyRunnable> runnable =
     new PromiseWorkerProxyRunnable(this, aFunc);
 
-  runnable->Dispatch(aCx);
+  runnable->Dispatch();
 }
 
 void

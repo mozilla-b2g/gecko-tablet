@@ -9,6 +9,7 @@
 #include "nsStreamUtils.h"
 #include "nsStringStream.h"
 #include "mozilla/dom/FetchUtil.h"
+#include "mozilla/dom/IndexedDatabaseManager.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -162,9 +163,7 @@ ServiceWorkerPrivate::CheckScriptEvaluation(LifeCycleEventCallback* aCallback)
   RefPtr<WorkerRunnable> r = new CheckScriptEvaluationWithCallback(mWorkerPrivate,
                                                                    mKeepAliveToken,
                                                                    aCallback);
-  AutoJSAPI jsapi;
-  jsapi.Init();
-  if (NS_WARN_IF(!r->Dispatch(jsapi.cx()))) {
+  if (NS_WARN_IF(!r->Dispatch())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -264,7 +263,7 @@ public:
     MOZ_ASSERT(aWorkerScope);
     MOZ_ASSERT(aEvent);
     nsCOMPtr<nsIGlobalObject> sgo = aWorkerScope;
-    WidgetEvent* internalEvent = aEvent->GetInternalNSEvent();
+    WidgetEvent* internalEvent = aEvent->WidgetEventPtr();
 
     ErrorResult result;
     result = aWorkerScope->DispatchDOMEvent(nullptr, aEvent, nullptr, nullptr);
@@ -318,6 +317,8 @@ public:
     nsCOMPtr<nsIRunnable> runnable =
       new RegistrationUpdateRunnable(mRegistration, true /* time check */);
     NS_DispatchToMainThread(runnable.forget());
+
+    ExtendableEventWorkerRunnable::PostRun(aCx, aWorkerPrivate, aRunResult);
   }
 };
 
@@ -545,9 +546,7 @@ ServiceWorkerPrivate::SendLifeCycleEvent(const nsAString& aEventType,
                                                                 mKeepAliveToken,
                                                                 aEventType,
                                                                 aCallback);
-  AutoJSAPI jsapi;
-  jsapi.Init();
-  if (NS_WARN_IF(!r->Dispatch(jsapi.cx()))) {
+  if (NS_WARN_IF(!r->Dispatch())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -677,9 +676,7 @@ ServiceWorkerPrivate::SendPushEvent(const Maybe<nsTArray<uint8_t>>& aData,
 
   MOZ_ASSERT(mInfo->State() == ServiceWorkerState::Activated);
 
-  AutoJSAPI jsapi;
-  jsapi.Init();
-  if (NS_WARN_IF(!r->Dispatch(jsapi.cx()))) {
+  if (NS_WARN_IF(!r->Dispatch())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -699,9 +696,7 @@ ServiceWorkerPrivate::SendPushSubscriptionChangeEvent()
   MOZ_ASSERT(mKeepAliveToken);
   RefPtr<WorkerRunnable> r =
     new SendPushSubscriptionChangeEventRunnable(mWorkerPrivate, mKeepAliveToken);
-  AutoJSAPI jsapi;
-  jsapi.Init();
-  if (NS_WARN_IF(!r->Dispatch(jsapi.cx()))) {
+  if (NS_WARN_IF(!r->Dispatch())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -730,7 +725,7 @@ public:
 
 private:
   bool
-  PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
+  PreDispatch(WorkerPrivate* aWorkerPrivate) override
   {
     // WorkerRunnable asserts that the dispatch is from parent thread if
     // the busy count modification is WorkerThreadUnchangedBusyCount.
@@ -740,8 +735,7 @@ private:
   }
 
   void
-  PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
-               bool aDispatchResult) override
+  PostDispatch(WorkerPrivate* aWorkerPrivate, bool aDispatchResult) override
   {
     // Silence bad assertions.
   }
@@ -782,8 +776,7 @@ class AllowWindowInteractionHandler final : public PromiseNativeHandler
     globalScope->ConsumeWindowInteraction();
     mTimer->Cancel();
     mTimer = nullptr;
-    MOZ_ALWAYS_TRUE(aWorkerPrivate->ModifyBusyCountFromWorker(aWorkerPrivate->GetJSContext(),
-                                                              false));
+    MOZ_ALWAYS_TRUE(aWorkerPrivate->ModifyBusyCountFromWorker(false));
   }
 
   void
@@ -811,7 +804,7 @@ class AllowWindowInteractionHandler final : public PromiseNativeHandler
     }
 
     // The important stuff that *has* to be reversed.
-    if (NS_WARN_IF(!aWorkerPrivate->ModifyBusyCountFromWorker(aWorkerPrivate->GetJSContext(), true))) {
+    if (NS_WARN_IF(!aWorkerPrivate->ModifyBusyCountFromWorker(true))) {
       return;
     }
     aWorkerPrivate->GlobalScope()->AllowWindowInteraction();
@@ -975,9 +968,7 @@ ServiceWorkerPrivate::SendNotificationClickEvent(const nsAString& aID,
                                            aID, aTitle, aDir, aLang,
                                            aBody, aTag, aIcon, aData,
                                            aBehavior, aScope);
-  AutoJSAPI jsapi;
-  jsapi.Init();
-  if (NS_WARN_IF(!r->Dispatch(jsapi.cx()))) {
+  if (NS_WARN_IF(!r->Dispatch())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1223,7 +1214,7 @@ private:
       nsCOMPtr<nsIRunnable> runnable;
       if (event->DefaultPrevented(aCx)) {
         event->ReportCanceled();
-      } else if (event->GetInternalNSEvent()->mFlags.mExceptionHasBeenRisen) {
+      } else if (event->WidgetEventPtr()->mFlags.mExceptionHasBeenRisen) {
         // Exception logged via the WorkerPrivate ErrorReporter
       } else {
         runnable = new ResumeRequest(mInterceptedChannel);
@@ -1350,9 +1341,7 @@ ServiceWorkerPrivate::SendFetchEvent(nsIInterceptedChannel* aChannel,
 
   MOZ_ASSERT(mInfo->State() == ServiceWorkerState::Activated);
 
-  AutoJSAPI jsapi;
-  jsapi.Init();
-  if (NS_WARN_IF(!r->Dispatch(jsapi.cx()))) {
+  if (NS_WARN_IF(!r->Dispatch())) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1391,7 +1380,7 @@ ServiceWorkerPrivate::SpawnWorkerIfNeeded(WakeUpReason aWhy,
   // TODO(catalinb): Bug 1192138 - Add telemetry for service worker wake-ups.
 
   // Ensure that the IndexedDatabaseManager is initialized
-  NS_WARN_IF(!indexedDB::IndexedDatabaseManager::GetOrCreate());
+  NS_WARN_IF(!IndexedDatabaseManager::GetOrCreate());
 
   WorkerLoadInfo info;
   nsresult rv = NS_NewURI(getter_AddRefs(info.mBaseURI), mInfo->ScriptSpec(),
@@ -1542,9 +1531,7 @@ ServiceWorkerPrivate::Activated()
 
   for (uint32_t i = 0; i < pendingEvents.Length(); ++i) {
     RefPtr<WorkerRunnable> r = pendingEvents[i].forget();
-    AutoJSAPI jsapi;
-    jsapi.Init();
-    if (NS_WARN_IF(!r->Dispatch(jsapi.cx()))) {
+    if (NS_WARN_IF(!r->Dispatch())) {
       NS_WARNING("Failed to dispatch pending functional event!");
     }
   }

@@ -25,6 +25,7 @@
 #include "mozilla/AutoRestore.h"        // for AutoRestore
 #include "mozilla/ClearOnShutdown.h"    // for ClearOnShutdown
 #include "mozilla/DebugOnly.h"          // for DebugOnly
+#include "mozilla/dom/ContentParent.h"
 #include "mozilla/gfx/2D.h"          // for DrawTarget
 #include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/gfx/Rect.h"          // for IntSize
@@ -43,7 +44,9 @@
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/PLayerTransactionParent.h"
+#include "mozilla/layers/RemoteContentController.h"
 #include "mozilla/layers/ShadowLayersManager.h" // for ShadowLayersManager
+#include "mozilla/layout/RenderFrameParent.h"
 #include "mozilla/media/MediaSystemResourceService.h" // for MediaSystemResourceService
 #include "mozilla/mozalloc.h"           // for operator new, etc
 #include "mozilla/Telemetry.h"
@@ -76,6 +79,10 @@
 #ifdef MOZ_WIDGET_GONK
 #include "GeckoTouchDispatcher.h"
 #include "nsScreenManagerGonk.h"
+#endif
+
+#ifdef MOZ_ANDROID_APZ
+#include "AndroidBridge.h"
 #endif
 
 #include "LayerScope.h"
@@ -866,6 +873,16 @@ CompositorParent::RecvFlushRendering()
 }
 
 bool
+CompositorParent::RecvForcePresent()
+{
+  // During the shutdown sequence mLayerManager may be null
+  if (mLayerManager) {
+    mLayerManager->ForcePresent();
+  }
+  return true;
+}
+
+bool
 CompositorParent::RecvGetTileSize(int32_t* aWidth, int32_t* aHeight)
 {
   *aWidth = gfxPlatform::GetPlatform()->GetTileWidth();
@@ -887,7 +904,7 @@ CompositorParent::Invalidate()
 {
   if (mLayerManager && mLayerManager->GetRoot()) {
     mLayerManager->AddInvalidRegion(
-                                    mLayerManager->GetRoot()->GetVisibleRegion().ToUnknownRegion().GetBounds());
+                                    mLayerManager->GetRoot()->GetLocalVisibleRegion().ToUnknownRegion().GetBounds());
   }
 }
 
@@ -1136,7 +1153,7 @@ CompositorParent::SetShadowProperties(Layer* aLayer)
   // FIXME: Bug 717688 -- Do these updates in LayerTransactionParent::RecvUpdate.
   LayerComposite* layerComposite = aLayer->AsLayerComposite();
   // Set the layerComposite's base transform to the layer's base transform.
-  layerComposite->SetShadowTransform(aLayer->GetBaseTransform());
+  layerComposite->SetShadowBaseTransform(aLayer->GetBaseTransform());
   layerComposite->SetShadowTransformSetByAnimation(false);
   layerComposite->SetShadowVisibleRegion(aLayer->GetVisibleRegion());
   layerComposite->SetShadowClipRect(aLayer->GetClipRect());
@@ -1654,23 +1671,57 @@ CompositorParent::RecvNotifyChildCreated(const uint64_t& child)
 }
 
 void
-CompositorParent::NotifyChildCreated(const uint64_t& aChild)
+CompositorParent::NotifyChildCreated(uint64_t aChild)
 {
   sIndirectLayerTreesLock->AssertCurrentThreadOwns();
   sIndirectLayerTrees[aChild].mParent = this;
   sIndirectLayerTrees[aChild].mLayerManager = mLayerManager;
 }
 
+/* static */ bool
+CompositorParent::UpdateRemoteContentController(uint64_t aLayersId,
+                                                dom::ContentParent* aContent,
+                                                const dom::TabId& aTabId,
+                                                dom::TabParent* aTopLevel)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  MonitorAutoLock lock(*sIndirectLayerTreesLock);
+  LayerTreeState& state = sIndirectLayerTrees[aLayersId];
+  // RemoteContentController needs to know the layers id and the top level
+  // TabParent, so we pass that to its constructor here and then set up the
+  // PAPZ protocol by calling SendPAPZConstructor (and pass in the tab id for
+  // the PBrowser that it corresponds to).
+  RefPtr<RemoteContentController> controller =
+    new RemoteContentController(aLayersId, aTopLevel);
+  if (!aContent->SendPAPZConstructor(controller, aTabId)) {
+    return false;
+  }
+  state.mController = controller;
+  return true;
+}
+
 bool
 CompositorParent::RecvAdoptChild(const uint64_t& child)
 {
-  MonitorAutoLock lock(*sIndirectLayerTreesLock);
-  NotifyChildCreated(child);
-  if (sIndirectLayerTrees[child].mLayerTree) {
-    sIndirectLayerTrees[child].mLayerTree->mLayerManager = mLayerManager;
+  RefPtr<GeckoContentController> controller;
+  {
+    MonitorAutoLock lock(*sIndirectLayerTreesLock);
+    NotifyChildCreated(child);
+    if (sIndirectLayerTrees[child].mLayerTree) {
+      sIndirectLayerTrees[child].mLayerTree->mLayerManager = mLayerManager;
+    }
+    if (sIndirectLayerTrees[child].mRoot) {
+      sIndirectLayerTrees[child].mRoot->AsLayerComposite()->SetLayerManager(mLayerManager);
+    }
+    controller = sIndirectLayerTrees[child].mController;
   }
-  if (sIndirectLayerTrees[child].mRoot) {
-    sIndirectLayerTrees[child].mRoot->AsLayerComposite()->SetLayerManager(mLayerManager);
+
+  // Calling ChildAdopted on controller will acquire a lock, to avoid a
+  // potential deadlock between that lock and sIndirectLayerTreesLock we
+  // release sIndirectLayerTreesLock first before calling ChildAdopted.
+  if (mApzcTreeManager && controller) {
+    controller->ChildAdopted();
   }
   return true;
 }
@@ -1864,6 +1915,7 @@ public:
   virtual bool RecvMakeWidgetSnapshot(const SurfaceDescriptor& aInSnapshot) override
   { return true; }
   virtual bool RecvFlushRendering() override { return true; }
+  virtual bool RecvForcePresent() override { return true; }
   virtual bool RecvNotifyRegionInvalidated(const nsIntRegion& aRegion) override { return true; }
   virtual bool RecvStartFrameTimeRecording(const int32_t& aBufferSize, uint32_t* aOutStartIndex) override { return true; }
   virtual bool RecvStopFrameTimeRecording(const uint32_t& aStartIndex, InfallibleTArray<float>* intervals) override  { return true; }
@@ -2180,8 +2232,15 @@ CompositorParent::UpdatePluginWindowState(uint64_t aId)
 
   // Check if this layer tree has received any shadow layer updates
   if (!lts.mUpdatedPluginDataAvailable) {
-    PLUGINS_LOG("[%" PRIu64 "] no plugin data", aId);
-    return false;
+    if (mLastPluginUpdateLayerTreeId != aId) {
+      lts.mUpdatedPluginDataAvailable = true;
+      mPluginsLayerOffset = nsIntPoint(0,0);
+      mPluginsLayerVisibleRegion.SetEmpty();
+      PLUGINS_LOG("[%" PRIu64 "] new layer id, refreshing", aId);
+    } else {
+      PLUGINS_LOG("[%" PRIu64 "] no plugin data", aId);
+      return false;
+    }
   }
 
   // pluginMetricsChanged tracks whether we need to send plugin update

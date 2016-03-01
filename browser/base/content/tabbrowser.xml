@@ -1026,11 +1026,16 @@
 
             if (!aForceUpdate) {
               TelemetryStopwatch.start("FX_TAB_SWITCH_UPDATE_MS");
-              if (!Services.appinfo.browserTabsRemoteAutostart) {
-                // old way of measuring tab paint which is not
-                // valid with e10s.
-                window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils)
-                                                               .beginTabSwitch();
+              if (!gMultiProcessBrowser) {
+                // old way of measuring tab paint which is not valid with e10s.
+                // Waiting until the next MozAfterPaint ensures that we capture
+                // the time it takes to paint, upload the textures to the compositor,
+                // and then composite.
+                TelemetryStopwatch.start("FX_TAB_SWITCH_TOTAL_MS");
+                window.addEventListener("MozAfterPaint", function onMozAfterPaint() {
+                  TelemetryStopwatch.finish("FX_TAB_SWITCH_TOTAL_MS");
+                  window.removeEventListener("MozAfterPaint", onMozAfterPaint);
+                });
               }
             }
 
@@ -1398,6 +1403,11 @@
 
                 crop = "center";
 
+              } else if (aTab.hasAttribute("customizemode")) {
+                let brandBundle = document.getElementById("bundle_brand");
+                let brandShortName = brandBundle.getString("brandShortName");
+                title = gNavigatorBundle.getFormattedString("customizeMode.tabTitle",
+                                                            [ brandShortName ]);
               } else // Still no title?  Fall back to our untitled string.
                 title = this.mStringBundle.getString("tabs.emptyTabTitle");
             }
@@ -1726,8 +1736,9 @@
             b.setAttribute("contextmenu", this.getAttribute("contentcontextmenu"));
             b.setAttribute("tooltip", this.getAttribute("contenttooltip"));
 
-            if (userContextId)
+            if (userContextId) {
               b.setAttribute("usercontextid", userContextId);
+            }
 
             if (remote)
               b.setAttribute("remote", "true");
@@ -1828,6 +1839,13 @@
 
             var uriIsAboutBlank = !aURI || aURI == "about:blank";
 
+            if (!aURI || isBlankPageURL(aURI)) {
+              t.setAttribute("label", this.mStringBundle.getString("tabs.emptyTabTitle"));
+            } else if (aURI.toLowerCase().startsWith("javascript:")) {
+              // This can go away when bug 672618 or bug 55696 are fixed.
+              t.setAttribute("label", aURI);
+            }
+
             if (aUserContextId)
               t.setAttribute("usercontextid", aUserContextId);
             t.setAttribute("crop", "end");
@@ -1855,8 +1873,7 @@
               }, 0, this.tabContainer);
             }
 
-            // invalidate caches
-            this._browsers = null;
+            // invalidate cache
             this._visibleTabs = null;
 
             this.tabContainer.appendChild(t);
@@ -1906,15 +1923,6 @@
               this.mPanelContainer.appendChild(notificationbox);
             }
 
-            // We've waited until the tab is in the DOM to set the label. This
-            // allows the TabLabelModified event to be properly dispatched.
-            if (!aURI || isBlankPageURL(aURI)) {
-              t.label = this.mStringBundle.getString("tabs.emptyTabTitle");
-            } else if (aURI.toLowerCase().startsWith("javascript:")) {
-              // This can go away when bug 672618 or bug 55696 are fixed.
-              t.label = aURI;
-            }
-
             this.tabContainer.updateVisibility();
 
             // wire up a progress listener for the new browser object.
@@ -1927,11 +1935,6 @@
             this._tabFilters.set(t, filter);
 
             b.droppedLinkHandler = handleDroppedLink;
-
-            // Swap in a preloaded customize tab, if available.
-            if (aURI == "about:customizing") {
-              usingPreloadedContent = gCustomizationTabPreloader.newTab(t);
-            }
 
             // Dispatch a new tab notification.  We do this once we're
             // entirely done, so that things are in a consistent state
@@ -2380,10 +2383,6 @@
 
             var wasPinned = aTab.pinned;
 
-            // Invalidate browsers cache, as the tab is removed from the
-            // tab container.
-            this._browsers = null;
-
             // Remove the tab ...
             this.tabContainer.removeChild(aTab);
 
@@ -2476,33 +2475,6 @@
             }
 
             this.selectedTab = tab;
-          ]]>
-        </body>
-      </method>
-
-      <method name="swapNewTabWithBrowser">
-        <parameter name="aNewTab"/>
-        <parameter name="aBrowser"/>
-        <body>
-          <![CDATA[
-            // The browser must be standalone.
-            if (aBrowser.getTabBrowser())
-              throw Cr.NS_ERROR_INVALID_ARG;
-
-            // The tab is definitely not loading.
-            aNewTab.removeAttribute("busy");
-            if (aNewTab.selected) {
-              this.mIsBusy = false;
-            }
-
-            this._swapBrowserDocShells(aNewTab, aBrowser);
-
-            // Update the new tab's title.
-            this.setTabTitle(aNewTab);
-
-            if (aNewTab.selected) {
-              this.updateCurrentBrowser(true);
-            }
           ]]>
         </body>
       </method>
@@ -2861,15 +2833,32 @@
                 onget="return this.mCurrentBrowser;"
                 readonly="true"/>
 
-      <property name="browsers" readonly="true">
-       <getter>
-          <![CDATA[
-            return this._browsers ||
-                   (this._browsers = Array.map(this.tabs, tab => tab.linkedBrowser));
-          ]]>
-        </getter>
-      </property>
-      <field name="_browsers">null</field>
+      <field name="browsers" readonly="true">
+        <![CDATA[
+          // This defines a proxy which allows us to access browsers by
+          // index without actually creating a full array of browsers.
+          new Proxy([], {
+            has: (target, name) => {
+              if (typeof name == "string" && Number.isInteger(parseInt(name))) {
+                return (name in this.tabs);
+              }
+              return false;
+            },
+            get: (target, name) => {
+              if (name == "length") {
+                return this.tabs.length;
+              }
+              if (typeof name == "string" && Number.isInteger(parseInt(name))) {
+                if (!(name in this.tabs)) {
+                  return undefined;
+                }
+                return this.tabs[name].linkedBrowser;
+              }
+              return target[name];
+            }
+          });
+        ]]>
+      </field>
 
       <!-- Moves a tab to a new browser window, unless it's already the only tab
            in the current window, in which case this will do nothing. -->
@@ -2930,8 +2919,7 @@
           this.mCurrentTab._logicallySelected = false;
           this.mCurrentTab._visuallySelected = false;
 
-          // invalidate caches
-          this._browsers = null;
+          // invalidate cache
           this._visibleTabs = null;
 
           // use .item() instead of [] because dragging to the end of the strip goes out of
@@ -5908,7 +5896,7 @@
             bgLoad = !bgLoad;
 
           let tab = this._getDragTargetTab(event, true);
-          if (!tab || dropEffect == "copy") {
+          if (!tab) {
             // We're adding a new tab.
             let newIndex = this._getDropIndex(event, true);
             let newTab = this.tabbrowser.loadOneTab(url, {inBackground: bgLoad, allowThirdPartyFixup: true});
@@ -6073,8 +6061,7 @@
                      class="tab-icon-overlay"
                      role="presentation"/>
           <xul:label flex="1"
-                     anonid="tab-label"
-                     xbl:inherits="value=visibleLabel,crop,accesskey,fadein,pinned,selected,visuallyselected,attention"
+                     xbl:inherits="value=label,crop,accesskey,fadein,pinned,selected,visuallyselected,attention"
                      class="tab-text tab-label"
                      role="presentation"/>
           <xul:image xbl:inherits="soundplaying,pinned,muted,visuallyselected"
@@ -6140,32 +6127,6 @@
         </setter>
       </property>
 
-      <property name="label">
-        <getter>
-          return this.getAttribute("label");
-        </getter>
-        <setter>
-          this.setAttribute("label", val);
-          let event = new CustomEvent("TabLabelModified", {
-            bubbles: true,
-            cancelable: true
-          });
-          this.dispatchEvent(event);
-
-          // Let listeners prevent synchronizing the actual label to the
-          // visible label (allowing them to override the visible label).
-          if (!event.defaultPrevented)
-            this.visibleLabel = val;
-        </setter>
-      </property>
-      <property name="visibleLabel">
-        <getter>
-          return this.getAttribute("visibleLabel");
-        </getter>
-        <setter>
-          this.setAttribute("visibleLabel", val);
-        </setter>
-      </property>
       <property name="pinned" readonly="true">
         <getter>
           return this.getAttribute("pinned") == "true";
@@ -6287,9 +6248,11 @@
           if (browser.audioMuted) {
             browser.unmute();
             this.removeAttribute("muted");
+            BrowserUITelemetry.countTabMutingEvent("unmute", aMuteReason);
           } else {
             browser.mute();
             this.setAttribute("muted", "true");
+            BrowserUITelemetry.countTabMutingEvent("mute", aMuteReason);
           }
           this.muteReason = aMuteReason || null;
           tabContainer.tabbrowser._tabAttrModified(this, ["muted"]);
@@ -6301,8 +6264,13 @@
         <parameter name="aUserContextId"/>
         <body>
         <![CDATA[
-          this.linkedBrowser.setAttribute("usercontextid", aUserContextId);
-          this.setAttribute("usercontextid", aUserContextId);
+          if (aUserContextId) {
+            this.linkedBrowser.setAttribute("usercontextid", aUserContextId);
+            this.setAttribute("usercontextid", aUserContextId);
+          } else {
+            this.linkedBrowser.removeAttribute("usercontextid");
+            this.removeAttribute("usercontextid");
+          }
         ]]>
         </body>
       </method>

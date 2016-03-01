@@ -1578,6 +1578,12 @@ ReloadPrefsCallback(const char* pref, void* data)
 
     bool useAsyncStack = Preferences::GetBool(JS_OPTIONS_DOT_STR "asyncstack");
 
+    bool throwOnDebuggeeWouldRun = Preferences::GetBool(JS_OPTIONS_DOT_STR
+                                                        "throw_on_debuggee_would_run");
+
+    bool dumpStackOnDebuggeeWouldRun = Preferences::GetBool(JS_OPTIONS_DOT_STR
+                                                            "dump_stack_on_debuggee_would_run");
+
     bool werror = Preferences::GetBool(JS_OPTIONS_DOT_STR "werror");
 
     bool extraWarnings = Preferences::GetBool(JS_OPTIONS_DOT_STR "strict");
@@ -1594,6 +1600,8 @@ ReloadPrefsCallback(const char* pref, void* data)
                              .setThrowOnAsmJSValidationFailure(throwOnAsmJSValidationFailure)
                              .setNativeRegExp(useNativeRegExp)
                              .setAsyncStack(useAsyncStack)
+                             .setThrowOnDebuggeeWouldRun(throwOnDebuggeeWouldRun)
+                             .setDumpStackOnDebuggeeWouldRun(dumpStackOnDebuggeeWouldRun)
                              .setWerror(werror)
                              .setExtraWarnings(extraWarnings);
 
@@ -3148,6 +3156,9 @@ AccumulateTelemetryCallback(int id, uint32_t sample, const char* key)
       case JS_TELEMETRY_GC_SWEEP_MS:
         Telemetry::Accumulate(Telemetry::GC_SWEEP_MS, sample);
         break;
+      case JS_TELEMETRY_GC_COMPACT_MS:
+        Telemetry::Accumulate(Telemetry::GC_COMPACT_MS, sample);
+        break;
       case JS_TELEMETRY_GC_MARK_ROOTS_MS:
         Telemetry::Accumulate(Telemetry::GC_MARK_ROOTS_MS, sample);
         break;
@@ -3195,6 +3206,10 @@ AccumulateTelemetryCallback(int id, uint32_t sample, const char* key)
         break;
       case JS_TELEMETRY_ADDON_EXCEPTIONS:
         Telemetry::Accumulate(Telemetry::JS_TELEMETRY_ADDON_EXCEPTIONS, nsDependentCString(key), sample);
+        break;
+      case JS_TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED:
+        MOZ_ASSERT(sample == 0 || sample == 1);
+        Telemetry::Accumulate(Telemetry::JS_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED, sample);
         break;
       default:
         MOZ_ASSERT_UNREACHABLE("Unexpected JS_TELEMETRY id");
@@ -3339,9 +3354,8 @@ static const JSWrapObjectCallbacks WrapObjectCallbacks = {
     xpc::WrapperFactory::PrepareForWrapping
 };
 
-XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
-   : CycleCollectedJSRuntime(nullptr, JS::DefaultHeapMaxBytes, JS::DefaultNurseryBytes),
-   mJSContextStack(new XPCJSContextStack(this)),
+XPCJSRuntime::XPCJSRuntime()
+ : mJSContextStack(new XPCJSContextStack(this)),
    mCallContext(nullptr),
    mAutoRoots(nullptr),
    mResolveName(JSID_VOID),
@@ -3362,17 +3376,30 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
    mWrappedJSRoots(nullptr),
    mObjectHolderRoots(nullptr),
    mWatchdogManager(new WatchdogManager(this)),
-   mUnprivilegedJunkScope(this->Runtime(), nullptr),
-   mPrivilegedJunkScope(this->Runtime(), nullptr),
-   mCompilationScope(this->Runtime(), nullptr),
    mAsyncSnowWhiteFreer(new AsyncFreeSnowWhite()),
    mSlowScriptSecondHalf(false)
 {
-    // these jsids filled in later when we have a JSContext to work with.
-    mStrIDs[0] = JSID_VOID;
+}
+
+nsresult
+XPCJSRuntime::Initialize()
+{
+    nsresult rv = CycleCollectedJSRuntime::Initialize(nullptr,
+                                                      JS::DefaultHeapMaxBytes,
+                                                      JS::DefaultNurseryBytes);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
 
     MOZ_ASSERT(Runtime());
     JSRuntime* runtime = Runtime();
+
+    mUnprivilegedJunkScope.init(runtime, nullptr);
+    mPrivilegedJunkScope.init(runtime, nullptr);
+    mCompilationScope.init(runtime, nullptr);
+
+    // these jsids filled in later when we have a JSContext to work with.
+    mStrIDs[0] = JSID_VOID;
 
     auto rtPrivate = new PerThreadAtomCache();
     memset(rtPrivate, 0, sizeof(PerThreadAtomCache));
@@ -3520,18 +3547,23 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
     // Watch for the JS boolean options.
     ReloadPrefsCallback(nullptr, this);
     Preferences::RegisterCallback(ReloadPrefsCallback, JS_OPTIONS_DOT_STR, this);
+
+    return NS_OK;
 }
 
 // static
 XPCJSRuntime*
-XPCJSRuntime::newXPCJSRuntime(nsXPConnect* aXPConnect)
+XPCJSRuntime::newXPCJSRuntime()
 {
-    NS_PRECONDITION(aXPConnect,"bad param");
+    XPCJSRuntime* self = new XPCJSRuntime();
+    nsresult rv = self->Initialize();
+    if (NS_FAILED(rv)) {
+        NS_RUNTIMEABORT("new XPCJSRuntime failed to initialize.");
+        delete self;
+        return nullptr;
+    }
 
-    XPCJSRuntime* self = new XPCJSRuntime(aXPConnect);
-
-    if (self                                    &&
-        self->Runtime()                         &&
+    if (self->Runtime()                         &&
         self->GetMultiCompartmentWrappedJSMap() &&
         self->GetWrappedJSClassMap()            &&
         self->GetIID2NativeInterfaceMap()       &&

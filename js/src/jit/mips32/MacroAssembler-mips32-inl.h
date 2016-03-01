@@ -15,6 +15,21 @@ namespace js {
 namespace jit {
 
 //{{{ check_macroassembler_style
+
+void
+MacroAssembler::move64(Register64 src, Register64 dest)
+{
+    move32(src.low, dest.low);
+    move32(src.high, dest.high);
+}
+
+void
+MacroAssembler::move64(Imm64 imm, Register64 dest)
+{
+    move32(Imm32(imm.value & 0xFFFFFFFFL), dest.low);
+    move32(Imm32((imm.value >> 32) & 0xFFFFFFFFL), dest.high);
+}
+
 // ===============================================================
 // Logical instructions
 
@@ -35,6 +50,20 @@ MacroAssembler::and64(Imm64 imm, Register64 dest)
 {
     and32(Imm32(imm.value & LOW_32_MASK), dest.low);
     and32(Imm32((imm.value >> 32) & LOW_32_MASK), dest.high);
+}
+
+void
+MacroAssembler::or64(Imm64 imm, Register64 dest)
+{
+    or32(Imm32(imm.value & LOW_32_MASK), dest.low);
+    or32(Imm32((imm.value >> 32) & LOW_32_MASK), dest.high);
+}
+
+void
+MacroAssembler::xor64(Imm64 imm, Register64 dest)
+{
+    xor32(Imm32(imm.value & LOW_32_MASK), dest.low);
+    xor32(Imm32((imm.value >> 32) & LOW_32_MASK), dest.high);
 }
 
 void
@@ -236,6 +265,44 @@ MacroAssembler::rshift64(Imm32 imm, Register64 dest)
     as_srl(dest.high, dest.high, imm.value);
 }
 
+// ===============================================================
+// Branch functions
+
+void
+MacroAssembler::branchPrivatePtr(Condition cond, const Address& lhs, Register rhs, Label* label)
+{
+    branchPtr(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchTest64(Condition cond, Register64 lhs, Register64 rhs, Register temp,
+                             Label* label)
+{
+    if (cond == Assembler::Zero) {
+        MOZ_ASSERT(lhs.low == rhs.low);
+        MOZ_ASSERT(lhs.high == rhs.high);
+        as_or(ScratchRegister, lhs.low, lhs.high);
+        branchTestPtr(cond, ScratchRegister, ScratchRegister, label);
+    } else {
+        MOZ_CRASH("Unsupported condition");
+    }
+}
+
+void
+MacroAssembler::branchTestInt32(Condition cond, const ValueOperand& value, Label* label)
+{
+    MOZ_ASSERT(cond == Equal || cond == NotEqual);
+    ma_b(value.typeReg(), ImmType(JSVAL_TYPE_INT32), label, cond);
+}
+
+
+void
+MacroAssembler::branchTestInt32Truthy(bool b, const ValueOperand& value, Label* label)
+{
+    as_and(ScratchRegister, value.payloadReg(), value.payloadReg());
+    ma_b(ScratchRegister, ScratchRegister, label, b ? NonZero : Zero);
+}
+
 //}}} check_macroassembler_style
 // ===============================================================
 
@@ -260,13 +327,6 @@ MacroAssemblerMIPSCompat::retn(Imm32 n) {
     asMasm().addPtr(n, StackPointer);
     as_jr(ra);
     as_nop();
-}
-
-void
-MacroAssemblerMIPSCompat::decBranchPtr(Condition cond, Register lhs, Imm32 imm, Label* label)
-{
-    asMasm().subPtr(imm, lhs);
-    branchPtr(cond, lhs, Imm32(0), label);
 }
 
 } // namespace jit

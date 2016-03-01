@@ -19,6 +19,7 @@ namespace dom {
 
 class Console;
 class Function;
+class IDBFactory;
 class Promise;
 class RequestOrUSVString;
 class ServiceWorkerRegistrationWorkerThread;
@@ -28,13 +29,6 @@ namespace cache {
 class CacheStorage;
 
 } // namespace cache
-
-namespace indexedDB {
-
-class IDBFactory;
-
-} // namespace indexedDB
-
 } // namespace dom
 } // namespace mozilla
 
@@ -50,7 +44,7 @@ class WorkerGlobalScope : public DOMEventTargetHelper,
                           public nsIGlobalObject,
                           public nsSupportsWeakReference
 {
-  typedef mozilla::dom::indexedDB::IDBFactory IDBFactory;
+  typedef mozilla::dom::IDBFactory IDBFactory;
 
   RefPtr<Console> mConsole;
   RefPtr<WorkerLocation> mLocation;
@@ -331,7 +325,7 @@ public:
   IMPL_EVENT_HANDLER(message)
 
   void
-  SetImmediate(JSContext* aCx, Function& aHandler, ErrorResult& aRv);
+  SetImmediate(Function& aHandler, ErrorResult& aRv);
 
   void
   ReportError(JSContext* aCx, const nsAString& aMessage);

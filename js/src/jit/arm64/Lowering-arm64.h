@@ -20,10 +20,9 @@ class LIRGeneratorARM64 : public LIRGeneratorShared
     { }
 
   protected:
-    // Adds a box input to an instruction, setting operand |n| to the type and
-    // |n+1| to the payload.
-    void useBoxFixed(LInstruction* lir, size_t n, MDefinition* mir, Register reg1, Register reg2,
-                     bool useAtStart = false);
+    // Returns a box allocation. reg2 is ignored on 64-bit platforms.
+    LBoxAllocation useBoxFixed(MDefinition* mir, Register reg1, Register reg2,
+                               bool useAtStart = false);
 
     LAllocation useByteOpRegister(MDefinition* mir);
     LAllocation useByteOpRegisterOrNonDoubleConstant(MDefinition* mir);
@@ -48,6 +47,11 @@ class LIRGeneratorARM64 : public LIRGeneratorShared
     void lowerForALU(LInstructionHelper<1, 1, 0>* ins, MDefinition* mir, MDefinition* input);
     void lowerForALU(LInstructionHelper<1, 2, 0>* ins, MDefinition* mir,
                      MDefinition* lhs, MDefinition* rhs);
+
+    void lowerForALUInt64(LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins, MDefinition* mir,
+                          MDefinition* lhs, MDefinition* rhs);
+    void lowerForShiftInt64(LInstructionHelper<INT64_PIECES, INT64_PIECES + 1, 0>* ins,
+                            MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
 
     void lowerForFPU(LInstructionHelper<1, 1, 0>* ins, MDefinition* mir, MDefinition* input);
 

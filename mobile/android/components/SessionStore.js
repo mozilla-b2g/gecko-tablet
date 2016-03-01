@@ -681,7 +681,7 @@ SessionStore.prototype = {
     // Convert buffer to an encoded string and sync write to disk
     let bytes = String.fromCharCode.apply(null, new Uint16Array(aBuffer));
     let stream = Cc["@mozilla.org/network/file-output-stream;1"].createInstance(Ci.nsIFileOutputStream);
-    stream.init(aFile, 0x02 | 0x08 | 0x20, 0666, 0);
+    stream.init(aFile, 0x02 | 0x08 | 0x20, 0o666, 0);
     stream.write(bytes, bytes.length);
     stream.close();
 
@@ -750,6 +750,10 @@ SessionStore.prototype = {
 
     if (aEntry.referrerURI) {
       entry.referrer = aEntry.referrerURI.spec;
+    }
+
+    if (aEntry.originalURI) {
+      entry.originalURI = aEntry.originalURI.spec;
     }
 
     if (aEntry.contentType) {
@@ -834,6 +838,10 @@ SessionStore.prototype = {
     }
     if (aEntry.referrer) {
       shEntry.referrerURI = Services.io.newURI(aEntry.referrer, null, null);
+    }
+
+    if (aEntry.originalURI) {
+      shEntry.originalURI =  Services.io.newURI(aEntry.originalURI, null, null);
     }
 
     if (aEntry.cacheKey) {

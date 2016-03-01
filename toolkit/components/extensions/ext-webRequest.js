@@ -1,6 +1,6 @@
 "use strict";
 
-var { classes: Cc, interfaces: Ci, utils: Cu } = Components;
+var {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
@@ -33,6 +33,7 @@ function WebRequestEventManager(context, eventName) {
       }
 
       let data2 = {
+        requestId: data.requestId,
         url: data.url,
         method: data.method,
         type: data.type,

@@ -15,6 +15,19 @@ namespace js {
 namespace jit {
 
 //{{{ check_macroassembler_style
+
+void
+MacroAssembler::move64(Register64 src, Register64 dest)
+{
+    movePtr(src.reg, dest.reg);
+}
+
+void
+MacroAssembler::move64(Imm64 imm, Register64 dest)
+{
+    movePtr(ImmWord(imm.value), dest.reg);
+}
+
 // ===============================================================
 // Logical instructions
 
@@ -35,6 +48,20 @@ MacroAssembler::and64(Imm64 imm, Register64 dest)
 {
     ma_li(ScratchRegister, ImmWord(imm.value));
     ma_and(dest.reg, ScratchRegister);
+}
+
+void
+MacroAssembler::or64(Imm64 imm, Register64 dest)
+{
+    ma_li(ScratchRegister, ImmWord(imm.value));
+    ma_or(dest.reg, ScratchRegister);
+}
+
+void
+MacroAssembler::xor64(Imm64 imm, Register64 dest)
+{
+    ma_li(ScratchRegister, ImmWord(imm.value));
+    ma_xor(dest.reg, ScratchRegister);
 }
 
 void
@@ -177,6 +204,41 @@ MacroAssembler::rshift64(Imm32 imm, Register64 dest)
     ma_dsrl(dest.reg, dest.reg, imm);
 }
 
+// ===============================================================
+// Branch functions
+
+void
+MacroAssembler::branchPrivatePtr(Condition cond, const Address& lhs, Register rhs, Label* label)
+{
+    if (rhs != ScratchRegister)
+        movePtr(rhs, ScratchRegister);
+    // Instead of unboxing lhs, box rhs and do direct comparison with lhs.
+    rshiftPtr(Imm32(1), ScratchRegister);
+    branchPtr(cond, lhs, ScratchRegister, label);
+}
+
+void
+MacroAssembler::branchTest64(Condition cond, Register64 lhs, Register64 rhs, Register temp,
+                             Label* label)
+{
+    branchTestPtr(cond, lhs.reg, rhs.reg, label);
+}
+
+void
+MacroAssembler::branchTestInt32(Condition cond, const ValueOperand& value, Label* label)
+{
+    MOZ_ASSERT(cond == Equal || cond == NotEqual);
+    splitTag(value, SecondScratchReg);
+    ma_b(SecondScratchReg, ImmTag(JSVAL_TAG_INT32), label, cond);
+}
+
+void
+MacroAssembler::branchTestInt32Truthy(bool b, const ValueOperand& value, Label* label)
+{
+    ma_dext(ScratchRegister, value.valueReg(), Imm32(0), Imm32(32));
+    ma_b(ScratchRegister, ScratchRegister, label, b ? NonZero : Zero);
+}
+
 //}}} check_macroassembler_style
 // ===============================================================
 
@@ -202,13 +264,6 @@ MacroAssemblerMIPS64Compat::retn(Imm32 n)
     asMasm().addPtr(n, StackPointer);
     as_jr(ra);
     as_nop();
-}
-
-void
-MacroAssemblerMIPS64Compat::decBranchPtr(Condition cond, Register lhs, Imm32 imm, Label* label)
-{
-    asMasm().subPtr(imm, lhs);
-    branchPtr(cond, lhs, Imm32(0), label);
 }
 
 } // namespace jit

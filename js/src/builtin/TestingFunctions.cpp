@@ -7,6 +7,7 @@
 #include "builtin/TestingFunctions.h"
 
 #include "mozilla/Move.h"
+#include "mozilla/unused.h"
 
 #include <cmath>
 
@@ -20,6 +21,7 @@
 
 #include "asmjs/AsmJS.h"
 #include "asmjs/Wasm.h"
+#include "asmjs/WasmText.h"
 #include "jit/InlinableNatives.h"
 #include "jit/JitFrameIterator.h"
 #include "js/Debug.h"
@@ -27,6 +29,7 @@
 #include "js/StructuredClone.h"
 #include "js/UbiNode.h"
 #include "js/UbiNodeBreadthFirst.h"
+#include "js/UbiNodeShortestPaths.h"
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
 #include "vm/GlobalObject.h"
@@ -495,6 +498,87 @@ IsProxy(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+WasmIsSupported(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    args.rval().setBoolean(wasm::HasCompilerSupport(cx));
+    return true;
+}
+
+static bool
+WasmEval(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    RootedObject callee(cx, &args.callee());
+
+    if (args.length() < 1 || args.length() > 2) {
+        ReportUsageError(cx, callee, "Wrong number of arguments");
+        return false;
+    }
+
+    if (!args[0].isObject() || !args[0].toObject().is<ArrayBufferObject>()) {
+        ReportUsageError(cx, callee, "First argument must be an ArrayBuffer");
+        return false;
+    }
+
+    RootedObject importObj(cx);
+    if (!args.get(1).isUndefined()) {
+        if (!args.get(1).isObject()) {
+            ReportUsageError(cx, callee, "Second argument, if present, must be an Object");
+            return false;
+        }
+        importObj = &args[1].toObject();
+    }
+
+    Rooted<ArrayBufferObject*> code(cx, &args[0].toObject().as<ArrayBufferObject>());
+
+    RootedObject exportObj(cx);
+    if (!wasm::Eval(cx, code, importObj, &exportObj))
+        return false;
+
+    args.rval().setObject(*exportObj);
+    return true;
+}
+
+static bool
+WasmTextToBinary(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    RootedObject callee(cx, &args.callee());
+
+    if (args.length() != 1) {
+        ReportUsageError(cx, callee, "Wrong number of arguments");
+        return false;
+    }
+
+    if (!args[0].isString()) {
+        ReportUsageError(cx, callee, "First argument must be a String");
+        return false;
+    }
+
+    AutoStableStringChars twoByteChars(cx);
+    if (!twoByteChars.initTwoByte(cx, args[0].toString()))
+        return false;
+
+    UniqueChars error;
+    wasm::UniqueBytecode bytes = wasm::TextToBinary(twoByteChars.twoByteChars(), &error);
+    if (!bytes) {
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_WASM_TEXT_FAIL,
+                             error.get() ? error.get() : "out of memory");
+        return false;
+    }
+
+    Rooted<ArrayBufferObject*> buffer(cx, ArrayBufferObject::create(cx, bytes->length()));
+    if (!buffer)
+        return false;
+
+    memcpy(buffer->dataPointer(), bytes->begin(), bytes->length());
+
+    args.rval().setObject(*buffer);
+    return true;
+}
+
+static bool
 IsLazyFunction(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -710,6 +794,8 @@ GCState(JSContext* cx, unsigned argc, Value* vp)
         state = "mark";
     else if (globalState == gc::SWEEP)
         state = "sweep";
+    else if (globalState == gc::FINALIZE)
+        state = "finalize";
     else if (globalState == gc::COMPACT)
         state = "compact";
     else
@@ -1566,7 +1652,7 @@ DisplayName(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static JSObject*
-ShellObjectMetadataCallback(JSContext* cx, JSObject*)
+ShellObjectMetadataCallback(JSContext* cx, HandleObject)
 {
     AutoEnterOOMUnsafeRegion oomUnsafe;
 
@@ -2529,7 +2615,7 @@ FindPath(JSContext* cx, unsigned argc, Value* vp)
         RootedString edgeStr(cx, NewString<CanGC>(cx, edgeName.get(), js_strlen(edgeName.get())));
         if (!edgeStr)
             return false;
-        edgeName.release(); // edgeStr acquired ownership
+        mozilla::Unused << edgeName.release(); // edgeStr acquired ownership
 
         if (!JS_DefineProperty(cx, obj, "edge", edgeStr, JSPROP_ENUMERATE, nullptr, nullptr))
             return false;
@@ -2538,6 +2624,177 @@ FindPath(JSContext* cx, unsigned argc, Value* vp)
     }
 
     args.rval().setObject(*result);
+    return true;
+}
+
+static bool
+ShortestPaths(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (!args.requireAtLeast(cx, "shortestPaths", 3))
+        return false;
+
+    // We don't ToString non-objects given as 'start' or 'target', because this
+    // test is all about object identity, and ToString doesn't preserve that.
+    // Non-GCThing endpoints don't make much sense.
+    if (!args[0].isObject() && !args[0].isString() && !args[0].isSymbol()) {
+        ReportValueErrorFlags(cx, JSREPORT_ERROR, JSMSG_UNEXPECTED_TYPE,
+                              JSDVG_SEARCH_STACK, args[0], nullptr,
+                              "not an object, string, or symbol", nullptr);
+        return false;
+    }
+
+    if (!args[1].isObject() || !args[1].toObject().is<ArrayObject>()) {
+        ReportValueErrorFlags(cx, JSREPORT_ERROR, JSMSG_UNEXPECTED_TYPE,
+                              JSDVG_SEARCH_STACK, args[1], nullptr,
+                              "not an array object", nullptr);
+        return false;
+    }
+
+    RootedArrayObject objs(cx, &args[1].toObject().as<ArrayObject>());
+    size_t length = objs->getDenseInitializedLength();
+    if (length == 0) {
+        ReportValueErrorFlags(cx, JSREPORT_ERROR, JSMSG_UNEXPECTED_TYPE,
+                              JSDVG_SEARCH_STACK, args[1], nullptr,
+                              "not a dense array object with one or more elements", nullptr);
+        return false;
+    }
+
+    for (size_t i = 0; i < length; i++) {
+        RootedValue el(cx, objs->getDenseElement(i));
+        if (!el.isObject() && !el.isString() && !el.isSymbol()) {
+            ReportValueErrorFlags(cx, JSREPORT_ERROR, JSMSG_UNEXPECTED_TYPE,
+                                  JSDVG_SEARCH_STACK, el, nullptr,
+                                  "not an object, string, or symbol", nullptr);
+            return false;
+        }
+    }
+
+    int32_t maxNumPaths;
+    if (!JS::ToInt32(cx, args[2], &maxNumPaths))
+        return false;
+    if (maxNumPaths <= 0) {
+        ReportValueErrorFlags(cx, JSREPORT_ERROR, JSMSG_UNEXPECTED_TYPE,
+                              JSDVG_SEARCH_STACK, args[2], nullptr,
+                              "not greater than 0", nullptr);
+        return false;
+    }
+
+    // We accumulate the results into a GC-stable form, due to the fact that the
+    // JS::ubi::ShortestPaths lifetime (when operating on the live heap graph)
+    // is bounded within an AutoCheckCannotGC.
+    Rooted<GCVector<GCVector<GCVector<Value>>>> values(cx, GCVector<GCVector<GCVector<Value>>>(cx));
+    Vector<Vector<Vector<JS::ubi::EdgeName>>> names(cx);
+
+    {
+        JS::AutoCheckCannotGC noGC(cx->runtime());
+
+        JS::ubi::NodeSet targets;
+        if (!targets.init()) {
+            ReportOutOfMemory(cx);
+            return false;
+        }
+
+        for (size_t i = 0; i < length; i++) {
+            RootedValue val(cx, objs->getDenseElement(i));
+            JS::ubi::Node node(val);
+            if (!targets.put(node)) {
+                ReportOutOfMemory(cx);
+                return false;
+            }
+        }
+
+        JS::ubi::Node root(args[0]);
+        auto maybeShortestPaths = JS::ubi::ShortestPaths::Create(cx->runtime(), noGC, maxNumPaths,
+                                                                 root, mozilla::Move(targets));
+        if (maybeShortestPaths.isNothing()) {
+            ReportOutOfMemory(cx);
+            return false;
+        }
+        auto& shortestPaths = *maybeShortestPaths;
+
+        for (size_t i = 0; i < length; i++) {
+            if (!values.append(GCVector<GCVector<Value>>(cx)) ||
+                !names.append(Vector<Vector<JS::ubi::EdgeName>>(cx)))
+            {
+                return false;
+            }
+
+            RootedValue val(cx, objs->getDenseElement(i));
+            JS::ubi::Node target(val);
+
+            bool ok = shortestPaths.forEachPath(target, [&](JS::ubi::Path& path) {
+                Rooted<GCVector<Value>> pathVals(cx, GCVector<Value>(cx));
+                Vector<JS::ubi::EdgeName> pathNames(cx);
+
+                for (auto& part : path) {
+                    if (!pathVals.append(part->predecessor().exposeToJS()) ||
+                        !pathNames.append(mozilla::Move(part->name())))
+                    {
+                        return false;
+                    }
+                }
+
+                return values.back().append(mozilla::Move(pathVals.get())) &&
+                       names.back().append(mozilla::Move(pathNames));
+            });
+
+            if (!ok)
+                return false;
+        }
+    }
+
+    MOZ_ASSERT(values.length() == names.length());
+    MOZ_ASSERT(values.length() == length);
+
+    RootedArrayObject results(cx, NewDenseFullyAllocatedArray(cx, length));
+    if (!results)
+        return false;
+    results->ensureDenseInitializedLength(cx, 0, length);
+
+    for (size_t i = 0; i < length; i++) {
+        size_t numPaths = values[i].length();
+        MOZ_ASSERT(names[i].length() == numPaths);
+
+        RootedArrayObject pathsArray(cx, NewDenseFullyAllocatedArray(cx, numPaths));
+        if (!pathsArray)
+            return false;
+        pathsArray->ensureDenseInitializedLength(cx, 0, numPaths);
+
+        for (size_t j = 0; j < numPaths; j++) {
+            size_t pathLength = values[i][j].length();
+            MOZ_ASSERT(names[i][j].length() == pathLength);
+
+            RootedArrayObject path(cx, NewDenseFullyAllocatedArray(cx, pathLength));
+            if (!path)
+                return false;
+            path->ensureDenseInitializedLength(cx, 0, pathLength);
+
+            for (size_t k = 0; k < pathLength; k++) {
+                RootedPlainObject part(cx, NewBuiltinClassInstance<PlainObject>(cx));
+                if (!part)
+                    return false;
+
+                RootedValue predecessor(cx, values[i][j][k]);
+                if (!JS_DefineProperty(cx, part, "predecessor", predecessor, JSPROP_ENUMERATE))
+                    return false;
+
+                if (names[i][j][k]) {
+                    RootedString edge(cx, NewStringCopyZ<CanGC>(cx, names[i][j][k].get()));
+                    if (!edge || !JS_DefineProperty(cx, part, "edge", edge, JSPROP_ENUMERATE))
+                        return false;
+                }
+
+                path->setDenseElement(k, ObjectValue(*part));
+            }
+
+            pathsArray->setDenseElement(j, ObjectValue(*path));
+        }
+
+        results->setDenseElement(i, ObjectValue(*pathsArray));
+    }
+
+    args.rval().setObject(*results);
     return true;
 }
 
@@ -3447,6 +3704,19 @@ gc::ZealModeHelpText),
 "  Returns whether the given value is a nested function in an asm.js module that has been\n"
 "  both compile- and link-time validated."),
 
+    JS_FN_HELP("wasmIsSupported", WasmIsSupported, 0, 0,
+"wasmIsSupported()",
+"  Returns a boolean indicating whether WebAssembly is supported on the current device."),
+
+    JS_FN_HELP("wasmEval", WasmEval, 2, 0,
+"wasmEval(buffer, imports)",
+"  Compiles the given binary wasm module given by 'buffer' (which must be an ArrayBuffer)\n"
+"  and links the module's imports with the given 'imports' object."),
+
+    JS_FN_HELP("wasmTextToBinary", WasmTextToBinary, 1, 0,
+"wasmTextToBinary(str)",
+"  Translates the given text wasm module into its binary encoding."),
+
     JS_FN_HELP("isLazyFunction", IsLazyFunction, 1, 0,
 "isLazyFunction(fun)",
 "  True if fun is a lazy JSFunction."),
@@ -3549,6 +3819,13 @@ gc::ZealModeHelpText),
 "  (like a shape or a scope chain element). The destination of the i'th array\n"
 "  element's edge is the node of the i+1'th array element; the destination of\n"
 "  the last array element is implicitly |target|.\n"),
+
+    JS_FN_HELP("shortestPaths", ShortestPaths, 3, 0,
+"shortestPaths(start, targets, maxNumPaths)",
+"  Return an array of arrays of shortest retaining paths. There is an array of\n"
+"  shortest retaining paths for each object in |targets|. The maximum number of\n"
+"  paths in each of those arrays is bounded by |maxNumPaths|. Each element in a\n"
+"  path is of the form |{ predecessor, edge }|."),
 
 #ifdef DEBUG
     JS_FN_HELP("dumpObject", DumpObject, 1, 0,
@@ -3692,9 +3969,6 @@ js::DefineTestingFunctions(JSContext* cx, HandleObject obj, bool fuzzingSafe_,
         fuzzingSafe = true;
 
     disableOOMFunctions = disableOOMFunctions_;
-
-    if (!wasm::DefineTestingFunctions(cx, obj))
-        return false;
 
     if (!JS_DefineProperties(cx, obj, TestingProperties))
         return false;

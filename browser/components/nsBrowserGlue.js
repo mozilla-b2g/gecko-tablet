@@ -58,9 +58,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "WebappManager",
 XPCOMUtils.defineLazyModuleGetter(this, "PageThumbs",
                                   "resource://gre/modules/PageThumbs.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "CustomizationTabPreloader",
-                                  "resource:///modules/CustomizationTabPreloader.jsm");
-
 XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
                                   "resource://pdf.js/PdfJs.jsm");
 
@@ -543,13 +540,13 @@ BrowserGlue.prototype = {
     os.addObserver(this, "autocomplete-did-enter-text", false);
 
     if (AppConstants.NIGHTLY_BUILD) {
-      AddonWatcher.init();
       os.addObserver(this, AddonWatcher.TOPIC_SLOW_ADDON_DETECTED, false);
     }
 
     ExtensionManagement.registerScript("chrome://browser/content/ext-utils.js");
     ExtensionManagement.registerScript("chrome://browser/content/ext-browserAction.js");
     ExtensionManagement.registerScript("chrome://browser/content/ext-pageAction.js");
+    ExtensionManagement.registerScript("chrome://browser/content/ext-commands.js");
     ExtensionManagement.registerScript("chrome://browser/content/ext-contextMenus.js");
     ExtensionManagement.registerScript("chrome://browser/content/ext-desktop-runtime.js");
     ExtensionManagement.registerScript("chrome://browser/content/ext-tabs.js");
@@ -558,6 +555,7 @@ BrowserGlue.prototype = {
 
     ExtensionManagement.registerSchema("chrome://browser/content/schemas/bookmarks.json");
     ExtensionManagement.registerSchema("chrome://browser/content/schemas/browser_action.json");
+    ExtensionManagement.registerSchema("chrome://browser/content/schemas/commands.json");
     ExtensionManagement.registerSchema("chrome://browser/content/schemas/context_menus.json");
     ExtensionManagement.registerSchema("chrome://browser/content/schemas/context_menus_internal.json");
     ExtensionManagement.registerSchema("chrome://browser/content/schemas/page_action.json");
@@ -1072,7 +1070,6 @@ BrowserGlue.prototype = {
 
     SelfSupportBackend.uninit();
 
-    CustomizationTabPreloader.uninit();
     WebappManager.uninit();
 
     NewTabPrefsProvider.prefs.uninit();
@@ -1812,10 +1809,16 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     const UI_VERSION = 36;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul";
-    let currentUIVersion = 0;
-    try {
+
+    let currentUIVersion;
+    if (Services.prefs.prefHasUserValue("browser.migration.version")) {
       currentUIVersion = Services.prefs.getIntPref("browser.migration.version");
-    } catch(ex) {}
+    } else {
+      // This is a new profile, nothing to migrate.
+      Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
+      return;
+    }
+
     if (currentUIVersion >= UI_VERSION)
       return;
 
@@ -2680,7 +2683,7 @@ ContentPermissionPrompt.prototype = {
     options.removeOnDismissal = autoAllow;
     options.eventCallback = type => {
       if (type == "removed") {
-        notification.browser.removeEventListener("mozfullscreenchange", onFullScreen, true);
+        notification.browser.removeEventListener("fullscreenchange", onFullScreen, true);
         if (autoAllow) {
           aRequest.allow();
         }
@@ -2695,7 +2698,7 @@ ContentPermissionPrompt.prototype = {
     // upon exit), so if the page enters fullscreen mode after requesting
     // pointerLock (but before the user has granted permission), we should
     // remove the now-impotent notification.
-    notification.browser.addEventListener("mozfullscreenchange", onFullScreen, true);
+    notification.browser.addEventListener("fullscreenchange", onFullScreen, true);
   },
 
   prompt: function CPP_prompt(request) {

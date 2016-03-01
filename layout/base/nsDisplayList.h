@@ -27,6 +27,7 @@
 #include "DisplayListClipState.h"
 #include "LayerState.h"
 #include "FrameMetrics.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/gfx/UserData.h"
 
@@ -1163,6 +1164,13 @@ private:
 
   nsDataHashtable<nsPtrHashKey<nsIFrame>, AnimatedGeometryRoot*> mFrameToAnimatedGeometryRootMap;
 
+  /**
+   * Add the current frame to the AGR budget if possible and remember
+   * the outcome. Subsequent calls will return the same value as
+   * returned here.
+   */
+  bool AddToAGRBudget(nsIFrame* aFrame);
+
   struct PresShellState {
     nsIPresShell* mPresShell;
     nsIFrame*     mCaretFrame;
@@ -1216,7 +1224,12 @@ private:
 
   // Any frame listed in this set is already counted in the budget
   // and thus is in-budget.
-  nsTHashtable<nsPtrHashKey<nsIFrame> > mBudgetSet;
+  nsTHashtable<nsPtrHashKey<nsIFrame> > mWillChangeBudgetSet;
+
+  // Area of animated geometry root budget already allocated
+  uint32_t mUsedAGRBudget;
+  // Set of frames already counted in budget
+  nsTHashtable<nsPtrHashKey<nsIFrame> > mAGRBudgetSet;
 
   // rects are relative to the frame's reference frame
   nsDataHashtable<nsPtrHashKey<nsIFrame>, nsRect> mDirtyRectForScrolledContents;
@@ -4375,6 +4388,8 @@ public:
   // regardless of bidi directionality; top and bottom in vertical modes).
   nscoord mVisIStartEdge;
   nscoord mVisIEndEdge;
+  // Cached result of mFrame->IsSelected().  Only initialized when needed.
+  mutable mozilla::Maybe<bool> mIsFrameSelected;
 };
 
 /**

@@ -665,7 +665,7 @@ class IntegerType extends Type {
     }
 
     // Ensure it's between -2**31 and 2**31-1
-    if ((value | 0) !== value) {
+    if (!Number.isSafeInteger(value)) {
       return context.error("Integer is out of range");
     }
 
@@ -1319,7 +1319,9 @@ this.Schemas = {
     for (let [namespace, ns] of this.namespaces) {
       let obj = Cu.createObjectIn(dest, {defineAs: namespace});
       for (let [name, entry] of ns) {
-        entry.inject([namespace], name, obj, new Context(wrapperFuncs));
+        if (wrapperFuncs.shouldInject([namespace], name)) {
+          entry.inject([namespace], name, obj, new Context(wrapperFuncs));
+        }
       }
 
       if (!Object.keys(obj).length) {

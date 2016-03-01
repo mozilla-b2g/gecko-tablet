@@ -156,11 +156,13 @@ MacroAssemblerCompat::handleFailureWithHandlerTail(void* handler)
     MOZ_ASSERT(GetStackPointer64().Is(x28)); // Lets the code below be a little cleaner.
 
     loadPtr(Address(r28, offsetof(ResumeFromException, kind)), r0);
-    branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_ENTRY_FRAME), &entryFrame);
-    branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_CATCH), &catch_);
-    branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_FINALLY), &finally);
-    branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_FORCED_RETURN), &return_);
-    branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_BAILOUT), &bailout);
+    asMasm().branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_ENTRY_FRAME),
+                      &entryFrame);
+    asMasm().branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_CATCH), &catch_);
+    asMasm().branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_FINALLY), &finally);
+    asMasm().branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_FORCED_RETURN),
+                      &return_);
+    asMasm().branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_BAILOUT), &bailout);
 
     breakpoint(); // Invalid kind.
 
@@ -213,44 +215,6 @@ MacroAssemblerCompat::handleFailureWithHandlerTail(void* handler)
     Ldr(x1, MemOperand(GetStackPointer64(), offsetof(ResumeFromException, target)));
     Mov(x0, BAILOUT_RETURN_OK);
     Br(x1);
-}
-
-void
-MacroAssemblerCompat::branchPtrInNurseryRange(Condition cond, Register ptr, Register temp,
-                                              Label* label)
-{
-    MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
-    MOZ_ASSERT(ptr != temp);
-    MOZ_ASSERT(ptr != ScratchReg && ptr != ScratchReg2); // Both may be used internally.
-    MOZ_ASSERT(temp != ScratchReg && temp != ScratchReg2);
-
-    const Nursery& nursery = GetJitContext()->runtime->gcNursery();
-    movePtr(ImmWord(-ptrdiff_t(nursery.start())), temp);
-    asMasm().addPtr(ptr, temp);
-    branchPtr(cond == Assembler::Equal ? Assembler::Below : Assembler::AboveOrEqual,
-              temp, ImmWord(nursery.nurserySize()), label);
-}
-
-void
-MacroAssemblerCompat::branchValueIsNurseryObject(Condition cond, ValueOperand value, Register temp,
-                                                 Label* label)
-{
-    MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
-    MOZ_ASSERT(temp != ScratchReg && temp != ScratchReg2); // Both may be used internally.
-
-    const Nursery& nursery = GetJitContext()->runtime->gcNursery();
-
-    // Avoid creating a bogus ObjectValue below.
-    if (!nursery.exists())
-        return;
-
-    // 'Value' representing the start of the nursery tagged as a JSObject
-    Value start = ObjectValue(*reinterpret_cast<JSObject*>(nursery.start()));
-
-    movePtr(ImmWord(-ptrdiff_t(start.asRawBits())), temp);
-    asMasm().addPtr(value.valueReg(), temp);
-    branchPtr(cond == Assembler::Equal ? Assembler::Below : Assembler::AboveOrEqual,
-              temp, ImmWord(nursery.nurserySize()), label);
 }
 
 void
@@ -716,6 +680,47 @@ MacroAssembler::pushFakeReturnAddress(Register scratch)
 
     leaveNoPool();
     return pseudoReturnOffset;
+}
+
+// ===============================================================
+// Branch functions
+
+void
+MacroAssembler::branchPtrInNurseryRange(Condition cond, Register ptr, Register temp,
+                                        Label* label)
+{
+    MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
+    MOZ_ASSERT(ptr != temp);
+    MOZ_ASSERT(ptr != ScratchReg && ptr != ScratchReg2); // Both may be used internally.
+    MOZ_ASSERT(temp != ScratchReg && temp != ScratchReg2);
+
+    const Nursery& nursery = GetJitContext()->runtime->gcNursery();
+    movePtr(ImmWord(-ptrdiff_t(nursery.start())), temp);
+    addPtr(ptr, temp);
+    branchPtr(cond == Assembler::Equal ? Assembler::Below : Assembler::AboveOrEqual,
+              temp, ImmWord(nursery.nurserySize()), label);
+}
+
+void
+MacroAssembler::branchValueIsNurseryObject(Condition cond, ValueOperand value, Register temp,
+                                           Label* label)
+{
+    MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
+    MOZ_ASSERT(temp != ScratchReg && temp != ScratchReg2); // Both may be used internally.
+
+    const Nursery& nursery = GetJitContext()->runtime->gcNursery();
+
+    // Avoid creating a bogus ObjectValue below.
+    if (!nursery.exists())
+        return;
+
+    // 'Value' representing the start of the nursery tagged as a JSObject
+    Value start = ObjectValue(*reinterpret_cast<JSObject*>(nursery.start()));
+
+    movePtr(ImmWord(-ptrdiff_t(start.asRawBits())), temp);
+    addPtr(value.valueReg(), temp);
+    branchPtr(cond == Assembler::Equal ? Assembler::Below : Assembler::AboveOrEqual,
+              temp, ImmWord(nursery.nurserySize()), label);
 }
 
 //}}} check_macroassembler_style

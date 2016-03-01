@@ -743,7 +743,7 @@ DispatchErrorEvent(IDBRequest* aRequest,
   MOZ_ASSERT(!transaction || transaction->IsOpen() || transaction->IsAborted());
 
   if (transaction && transaction->IsOpen()) {
-    WidgetEvent* internalEvent = aEvent->GetInternalNSEvent();
+    WidgetEvent* internalEvent = aEvent->WidgetEventPtr();
     MOZ_ASSERT(internalEvent);
 
     if (internalEvent->mFlags.mExceptionHasBeenRisen) {
@@ -816,7 +816,7 @@ DispatchSuccessEvent(ResultHelper* aResultHelper,
   MOZ_ASSERT_IF(transaction,
                 transaction->IsOpen() || transaction->IsAborted());
 
-  WidgetEvent* internalEvent = aEvent->GetInternalNSEvent();
+  WidgetEvent* internalEvent = aEvent->WidgetEventPtr();
   MOZ_ASSERT(internalEvent);
 
   if (transaction &&
@@ -943,7 +943,7 @@ public:
       RefPtr<WorkerPermissionOperationCompleted> runnable =
         new WorkerPermissionOperationCompleted(mWorkerPrivate, this);
 
-      MOZ_ALWAYS_TRUE(runnable->Dispatch(nullptr));
+      MOZ_ALWAYS_TRUE(runnable->Dispatch());
       return;
     }
 

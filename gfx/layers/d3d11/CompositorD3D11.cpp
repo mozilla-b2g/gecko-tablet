@@ -67,6 +67,7 @@ struct DeviceAttachmentsD3D11
   {}
 
   bool CreateShaders();
+  bool InitBlendShaders();
   bool InitSyncObject();
 
   typedef EnumeratedArray<MaskType, MaskType::NumMaskTypes, RefPtr<ID3D11VertexShader>>
@@ -460,7 +461,6 @@ CompositorD3D11::GetTextureFactoryIdentifier()
   ident.mParentProcessId = XRE_GetProcessType();
   ident.mParentBackend = LayersBackend::LAYERS_D3D11;
   ident.mSyncHandle = mAttachments->mSyncHandle;
-  ident.mSwapChain = mSwapChain;
   for (uint8_t op = 0; op < uint8_t(gfx::CompositionOp::OP_COUNT); op++) {
     if (BlendOpIsMixBlendMode(gfx::CompositionOp(op))) {
       ident.mSupportedBlendModes += gfx::CompositionOp(op);
@@ -971,7 +971,9 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
       gfx::IntRect rect = ComputeBackdropCopyRect(aRect, aClipRect, aTransform, &backdropTransform);
 
       RefPtr<ID3D11ShaderResourceView> srv;
-      if (CopyBackdrop(rect, &mixBlendBackdrop, &srv)) {
+      if (CopyBackdrop(rect, &mixBlendBackdrop, &srv) &&
+          mAttachments->InitBlendShaders())
+      {
         vertexShader = mAttachments->mVSQuadBlendShader[maskType];
         pixelShader = mAttachments->mBlendShader[MaskType::MaskNone];
 
@@ -1132,6 +1134,7 @@ void
 CompositorD3D11::BeginFrame(const nsIntRegion& aInvalidRegion,
                             const Rect* aClipRectIn,
                             const Rect& aRenderBounds,
+                            bool aOpaque,
                             Rect* aClipRectOut,
                             Rect* aRenderBoundsOut)
 {
@@ -1492,14 +1495,25 @@ DeviceAttachmentsD3D11::InitSyncObject()
 }
 
 bool
+DeviceAttachmentsD3D11::InitBlendShaders()
+{
+  if (!mVSQuadBlendShader[MaskType::MaskNone]) {
+    InitVertexShader(sLayerQuadBlendVS, mVSQuadBlendShader, MaskType::MaskNone);
+    InitVertexShader(sLayerQuadBlendMaskVS, mVSQuadBlendShader, MaskType::Mask2d);
+    InitVertexShader(sLayerQuadBlendMask3DVS, mVSQuadBlendShader, MaskType::Mask3d);
+  }
+  if (!mBlendShader[MaskType::MaskNone]) {
+    InitPixelShader(sBlendShader, mBlendShader, MaskType::MaskNone);
+  }
+  return mInitOkay;
+}
+
+bool
 DeviceAttachmentsD3D11::CreateShaders()
 {
   InitVertexShader(sLayerQuadVS, mVSQuadShader, MaskType::MaskNone);
   InitVertexShader(sLayerQuadMaskVS, mVSQuadShader, MaskType::Mask2d);
   InitVertexShader(sLayerQuadMask3DVS, mVSQuadShader, MaskType::Mask3d);
-  InitVertexShader(sLayerQuadBlendVS, mVSQuadBlendShader, MaskType::MaskNone);
-  InitVertexShader(sLayerQuadBlendMaskVS, mVSQuadBlendShader, MaskType::Mask2d);
-  InitVertexShader(sLayerQuadBlendMask3DVS, mVSQuadBlendShader, MaskType::Mask3d);
 
   InitPixelShader(sSolidColorShader, mSolidColorShader, MaskType::MaskNone);
   InitPixelShader(sSolidColorShaderMask, mSolidColorShader, MaskType::Mask2d);
@@ -1510,7 +1524,6 @@ DeviceAttachmentsD3D11::CreateShaders()
   InitPixelShader(sRGBAShaderMask3D, mRGBAShader, MaskType::Mask3d);
   InitPixelShader(sYCbCrShader, mYCbCrShader, MaskType::MaskNone);
   InitPixelShader(sYCbCrShaderMask, mYCbCrShader, MaskType::Mask2d);
-  InitPixelShader(sBlendShader, mBlendShader, MaskType::MaskNone);
   if (gfxPrefs::ComponentAlphaEnabled()) {
     InitPixelShader(sComponentAlphaShader, mComponentAlphaShader, MaskType::MaskNone);
     InitPixelShader(sComponentAlphaShaderMask, mComponentAlphaShader, MaskType::Mask2d);

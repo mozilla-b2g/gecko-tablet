@@ -836,6 +836,36 @@ intrinsic_IsInt8TypedArray(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+intrinsic_IsUint16TypedArray(JSContext* cx, unsigned argc, Value* vp)
+{
+    return intrinsic_IsSpecificTypedArray(cx, argc, vp, Scalar::Uint16);
+}
+
+static bool
+intrinsic_IsInt16TypedArray(JSContext* cx, unsigned argc, Value* vp)
+{
+    return intrinsic_IsSpecificTypedArray(cx, argc, vp, Scalar::Int16);
+}
+
+static bool
+intrinsic_IsUint32TypedArray(JSContext* cx, unsigned argc, Value* vp)
+{
+    return intrinsic_IsSpecificTypedArray(cx, argc, vp, Scalar::Uint32);
+}
+
+static bool
+intrinsic_IsInt32TypedArray(JSContext* cx, unsigned argc, Value* vp)
+{
+    return intrinsic_IsSpecificTypedArray(cx, argc, vp, Scalar::Int32);
+}
+
+static bool
+intrinsic_IsFloat32TypedArray(JSContext* cx, unsigned argc, Value* vp)
+{
+    return intrinsic_IsSpecificTypedArray(cx, argc, vp, Scalar::Float32);
+}
+
+static bool
 intrinsic_IsPossiblyWrappedTypedArray(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1444,6 +1474,23 @@ intrinsic_LocalTZA(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
+intrinsic_AddContentTelemetry(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(args.length() == 2);
+
+    int id = args[0].toInt32();
+    MOZ_ASSERT(id < JS_TELEMETRY_END);
+    MOZ_ASSERT(id >= 0);
+
+    if (!cx->compartment()->isProbablySystemOrAddonCode())
+        cx->runtime()->addTelemetry(id, args[1].toInt32());
+
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
 intrinsic_ConstructFunction(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1634,7 +1681,7 @@ intrinsic_NewModuleNamespace(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
     MOZ_ASSERT(args.length() == 2);
     RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
-    RootedArrayObject exports(cx, &args[1].toObject().as<ArrayObject>());
+    RootedObject exports(cx, &args[1].toObject());
     RootedObject namespace_(cx, ModuleObject::createNamespace(cx, module, exports));
     if (!namespace_)
         return false;
@@ -1774,6 +1821,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("_FinishBoundFunctionInit", intrinsic_FinishBoundFunctionInit, 4,0),
     JS_FN("RuntimeDefaultLocale",    intrinsic_RuntimeDefaultLocale,    0,0),
     JS_FN("LocalTZA",                intrinsic_LocalTZA,                0,0),
+    JS_FN("AddContentTelemetry",     intrinsic_AddContentTelemetry,     2,0),
 
     JS_INLINABLE_FN("_IsConstructing", intrinsic_IsConstructing,        0,0,
                     IntrinsicIsConstructing),
@@ -1855,6 +1903,11 @@ static const JSFunctionSpec intrinsic_functions[] = {
 
     JS_FN("IsUint8TypedArray",        intrinsic_IsUint8TypedArray,      1,0),
     JS_FN("IsInt8TypedArray",         intrinsic_IsInt8TypedArray,       1,0),
+    JS_FN("IsUint16TypedArray",       intrinsic_IsUint16TypedArray,     1,0),
+    JS_FN("IsInt16TypedArray",        intrinsic_IsInt16TypedArray,      1,0),
+    JS_FN("IsUint32TypedArray",       intrinsic_IsUint32TypedArray,     1,0),
+    JS_FN("IsInt32TypedArray",        intrinsic_IsInt32TypedArray,      1,0),
+    JS_FN("IsFloat32TypedArray",      intrinsic_IsFloat32TypedArray,    1,0),
     JS_INLINABLE_FN("IsTypedArray",
                     intrinsic_IsInstanceOfBuiltin<TypedArrayObject>,    1,0,
                     IntrinsicIsTypedArray),
@@ -2277,10 +2330,9 @@ CloneObject(JSContext* cx, HandleNativeObject selfHostedObject)
                                  : selfHostedFunction->getAllocKind();
         MOZ_ASSERT(!CanReuseScriptForClone(cx->compartment(), selfHostedFunction, cx->global()));
         Rooted<ClonedBlockObject*> globalLexical(cx, &cx->global()->lexicalScope());
-        Rooted<StaticScope*> staticGlobalLexical(cx, &globalLexical->staticBlock());
+        RootedObject staticGlobalLexical(cx, &globalLexical->staticBlock());
         clone = CloneFunctionAndScript(cx, selfHostedFunction, globalLexical,
                                        staticGlobalLexical, kind);
-
         // To be able to re-lazify the cloned function, its name in the
         // self-hosting compartment has to be stored on the clone.
         if (clone && hasName) {

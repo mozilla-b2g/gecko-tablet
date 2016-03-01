@@ -68,6 +68,7 @@
 #include "nsDocument.h"
 #include "nsAttrValueOrString.h"
 #include "nsAttrValueInlines.h"
+#include "nsCSSPseudoElements.h"
 #ifdef MOZ_XUL
 #include "nsXULElement.h"
 #endif /* MOZ_XUL */
@@ -918,7 +919,7 @@ already_AddRefed<DOMRect>
 Element::GetBoundingClientRect()
 {
   RefPtr<DOMRect> rect = new DOMRect(this);
-  
+
   nsIFrame* frame = GetPrimaryFrame(Flush_Layout);
   if (!frame) {
     // display:none, perhaps? Return the empty rect
@@ -1462,7 +1463,7 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   if (xulElem) {
     xulElem->SetXULBindingParent(aBindingParent);
   }
-  else 
+  else
 #endif
   {
     if (aBindingParent) {
@@ -1522,7 +1523,7 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     // XXXbz ordering issues here?  Probably not, since ChangeDocumentFor is
     // just pretty broken anyway....  Need to get it working.
     // XXXbz XBL doesn't handle this (asserts), and we don't really want
-    // to be doing this during parsing anyway... sort this out.    
+    // to be doing this during parsing anyway... sort this out.
     //    aDocument->BindingManager()->ChangeDocumentFor(this, nullptr,
     //                                                   aDocument);
 
@@ -1714,7 +1715,8 @@ RemoveFromBindingManagerRunnable::Run()
   // down the old binding if the element is inserted back into the
   // DOM and loads a different binding.
   if (!mContent->IsInComposedDoc()) {
-    mManager->RemovedFromDocumentInternal(mContent, mDoc);
+    mManager->RemovedFromDocumentInternal(mContent, mDoc,
+                                          nsBindingManager::eRunDtor);
   }
 
   return NS_OK;
@@ -1744,7 +1746,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
       nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
                                       NS_LITERAL_CSTRING("DOM"), OwnerDoc(),
                                       nsContentUtils::eDOM_PROPERTIES,
-                                      "RemovedFullScreenElement");
+                                      "RemovedFullscreenElement");
       // Fully exit full-screen.
       nsIDocument::ExitFullscreenInDocTree(OwnerDoc());
     }
@@ -1846,7 +1848,7 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
     }
   }
 
-  // This has to be here, rather than in nsGenericHTMLElement::UnbindFromTree, 
+  // This has to be here, rather than in nsGenericHTMLElement::UnbindFromTree,
   //  because it has to happen after unsetting the parent pointer, but before
   //  recursively unbinding the kids.
   if (IsHTMLElement()) {
@@ -2538,7 +2540,7 @@ Element::GetAttrInfo(int32_t aNamespaceID, nsIAtom* aName) const
 
   return nsAttrInfo(nullptr, nullptr);
 }
-  
+
 
 bool
 Element::GetAttr(int32_t aNameSpaceID, nsIAtom* aName,
@@ -2559,7 +2561,7 @@ Element::FindAttrValueIn(int32_t aNameSpaceID,
   NS_ASSERTION(aName, "Must have attr name");
   NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown, "Must have namespace");
   NS_ASSERTION(aValues, "Null value array");
-  
+
   const nsAttrValue* val = mAttrsAndChildren.GetAttr(aName, aNameSpaceID);
   if (val) {
     for (int32_t i = 0; aValues[i]; ++i) {
@@ -2763,7 +2765,7 @@ Element::List(FILE* out, int32_t aIndent,
   nsIContent* child = GetFirstChild();
   if (child) {
     fputs("\n", out);
-    
+
     for (; child; child = child->GetNextSibling()) {
       child->List(out, aIndent + 1);
     }
@@ -2772,7 +2774,7 @@ Element::List(FILE* out, int32_t aIndent,
   }
 
   fputs(">\n", out);
-  
+
   Element* nonConstThis = const_cast<Element*>(this);
 
   // XXX sXBL/XBL2 issue! Owner or current document?
@@ -3241,15 +3243,15 @@ GetFullScreenError(nsIDocument* aDoc)
   }
 
   if (!nsContentUtils::IsRequestFullScreenAllowed()) {
-    return "FullScreenDeniedNotInputDriven";
+    return "FullscreenDeniedNotInputDriven";
   }
 
   return nullptr;
 }
 
 void
-Element::MozRequestFullScreen(JSContext* aCx, JS::Handle<JS::Value> aOptions,
-                              ErrorResult& aError)
+Element::RequestFullscreen(JSContext* aCx, JS::Handle<JS::Value> aOptions,
+                           ErrorResult& aError)
 {
   MOZ_ASSERT_IF(!aCx, aOptions.isNullOrUndefined());
   // Only grant full-screen requests if this is called from inside a trusted
@@ -3259,18 +3261,8 @@ Element::MozRequestFullScreen(JSContext* aCx, JS::Handle<JS::Value> aOptions,
   // spoof the browser chrome/window and phish logins etc.
   // Note that requests for fullscreen inside a web app's origin are exempt
   // from this restriction.
-  const char* error = GetFullScreenError(OwnerDoc());
-  if (error) {
-    nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                    NS_LITERAL_CSTRING("DOM"), OwnerDoc(),
-                                    nsContentUtils::eDOM_PROPERTIES,
-                                    error);
-    RefPtr<AsyncEventDispatcher> asyncDispatcher =
-      new AsyncEventDispatcher(OwnerDoc(),
-                               NS_LITERAL_STRING("mozfullscreenerror"),
-                               true,
-                               false);
-    asyncDispatcher->PostDOMEvent();
+  if (const char* error = GetFullScreenError(OwnerDoc())) {
+    OwnerDoc()->DispatchFullscreenError(error);
     return;
   }
 
@@ -3337,9 +3329,8 @@ Element::Animate(JSContext* aContext,
 
   Nullable<ElementOrCSSPseudoElement> target;
   target.SetValue().SetAsElement() = this;
-  // Bug 1211783: Use KeyframeEffect here (instead of KeyframeEffectReadOnly)
-  RefPtr<KeyframeEffectReadOnly> effect =
-    KeyframeEffectReadOnly::Constructor(global, target, frames,
+  RefPtr<KeyframeEffect> effect =
+    KeyframeEffect::Constructor(global, target, frames,
       TimingParams::FromOptionsUnion(aOptions, target), aError);
   if (aError.Failed()) {
     return nullptr;
@@ -3371,15 +3362,21 @@ Element::GetAnimations(nsTArray<RefPtr<Animation>>& aAnimations)
     doc->FlushPendingNotifications(Flush_Style);
   }
 
-  GetAnimationsUnsorted(aAnimations);
+  GetAnimationsUnsorted(this, CSSPseudoElementType::NotPseudo, aAnimations);
   aAnimations.Sort(AnimationPtrComparator<RefPtr<Animation>>());
 }
 
-void
-Element::GetAnimationsUnsorted(nsTArray<RefPtr<Animation>>& aAnimations)
+/* static */ void
+Element::GetAnimationsUnsorted(Element* aElement,
+                               CSSPseudoElementType aPseudoType,
+                               nsTArray<RefPtr<Animation>>& aAnimations)
 {
-  EffectSet* effects = EffectSet::GetEffectSet(this,
-                         nsCSSPseudoElements::ePseudo_NotPseudoElement);
+  MOZ_ASSERT(aPseudoType == CSSPseudoElementType::NotPseudo ||
+             aPseudoType == CSSPseudoElementType::after ||
+             aPseudoType == CSSPseudoElementType::before,
+             "Unsupported pseudo type");
+
+  EffectSet* effects = EffectSet::GetEffectSet(aElement, aPseudoType);
   if (!effects) {
     return;
   }
@@ -3521,7 +3518,7 @@ Element::InsertAdjacentHTML(const nsAString& aPosition, const nsAString& aText,
   // Needed when insertAdjacentHTML is used in combination with contenteditable
   mozAutoDocUpdate updateBatch(doc, UPDATE_CONTENT_MODEL, true);
   nsAutoScriptLoaderDisabler sld(doc);
-  
+
   // Batch possible DOMSubtreeModified events.
   mozAutoSubtreeModified subtree(doc, nullptr);
 

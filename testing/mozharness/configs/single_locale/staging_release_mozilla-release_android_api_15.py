@@ -28,7 +28,7 @@ config = {
         "output_dir": "%(abs_work_dir)s/" + MOZILLA_DIR,
     },
     "exes": {
-        'tooltool.py': '/tools/tooltool.py',
+        'tooltool.py': '/builds/tooltool.py',
     },
     "repos": [{
         "repo": "https://hg.mozilla.org/%(user_repo_override)s/mozilla-release",
@@ -65,7 +65,6 @@ config = {
     "ssh_key_dir": "~/.ssh",
     "base_post_upload_cmd": "post_upload.py -p mobile -n %(buildnum)s -v %(version)s --builddir android-api-15/%(locale)s --release-to-mobile-candidates-dir --nightly-dir=candidates",
     "merge_locales": True,
-    "make_dirs": ['config'],
     "mozilla_dir": MOZILLA_DIR,
     "mozconfig": "%s/mobile/android/config/mozconfigs/android-api-15/l10n-release" % MOZILLA_DIR,
     "signature_verification_script": "tools/release/signing/verify-android-signature.sh",
@@ -94,6 +93,9 @@ config = {
                       ],
     "mock_files": [
         ("/home/cltbld/.ssh", "/home/mock_mozilla/.ssh"),
+        ('/home/cltbld/.hgrc', '/builds/.hgrc'),
+        ('/builds/relengapi.tok', '/builds/relengapi.tok'),
+        ('/tools/tooltool.py', '/builds/tooltool.py'),
         ('/usr/local/lib/hgext', '/usr/local/lib/hgext'),
     ],
 }

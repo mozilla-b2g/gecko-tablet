@@ -329,6 +329,7 @@ pref("media.wmf.enabled", true);
 pref("media.wmf.decoder.thread-count", -1);
 pref("media.wmf.low-latency.enabled", false);
 pref("media.wmf.skip-blacklist", false);
+pref("media.windows-media-foundation.allow-d3d11-dxva", true);
 #endif
 #if defined(MOZ_FFMPEG)
 #if defined(XP_MACOSX)
@@ -349,6 +350,7 @@ pref("media.raw.enabled", true);
 pref("media.ogg.enabled", true);
 pref("media.opus.enabled", true);
 pref("media.wave.enabled", true);
+pref("media.wave.decoder.enabled", true);
 pref("media.webm.enabled", true);
 #if defined(MOZ_FMP4) && defined(MOZ_WMF)
 pref("media.webm.intel_decoder.enabled", false);
@@ -481,10 +483,10 @@ pref("media.getusermedia.screensharing.enabled", true);
 #endif
 
 #ifdef RELEASE_BUILD
-pref("media.getusermedia.screensharing.allowed_domains", "webex.com,*.webex.com,ciscospark.com,*.ciscospark.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,appear.in,*.appear.in,tokbox.com,*.tokbox.com,*.sso.francetelecom.fr,*.si.francetelecom.fr,*.sso.infra.ftgroup,*.multimedia-conference.orange-business.com,*.espacecollaboration.orange-business.com,free.gotomeeting.com,g2m.me,*.g2m.me,example.com,*.mypurecloud.com,*.mypurecloud.com.au,spreed.me,*.spreed.me,*.spreed.com,air.mozilla.org,*.circuit.com,*.yourcircuit.com,circuit.siemens.com,yourcircuit.siemens.com,circuitsandbox.net,*.unify.com,tandi.circuitsandbox.net");
+pref("media.getusermedia.screensharing.allowed_domains", "webex.com,*.webex.com,ciscospark.com,*.ciscospark.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,appear.in,*.appear.in,tokbox.com,*.tokbox.com,*.sso.francetelecom.fr,*.si.francetelecom.fr,*.sso.infra.ftgroup,*.multimedia-conference.orange-business.com,*.espacecollaboration.orange-business.com,free.gotomeeting.com,g2m.me,*.g2m.me,example.com,*.mypurecloud.com,*.mypurecloud.com.au,spreed.me,*.spreed.me,*.spreed.com,air.mozilla.org,*.circuit.com,*.yourcircuit.com,circuit.siemens.com,yourcircuit.siemens.com,circuitsandbox.net,*.unify.com,tandi.circuitsandbox.net,*.ericsson.net,*.cct.ericsson.net,*.opentok.com,*.conf.meetecho.com,meet.jit.si,*.meet.jit.si,web.stage.speakeasyapp.net,web.speakeasyapp.net,*.hipchat.me,*.beta-wspbx.com,*.wspbx.com,*.unifiedcloudit.com,*.smartboxuc.com,*.smartbox-uc.com,*.panterranetworks.com,pexipdemo.com,*.pexipdemo.com,pex.me,*.pex.me,*.rd.pexip.com,1click.io,*.1click.io,*.fuze.com,*.fuzemeeting.com,*.thinkingphones.com,gotomeeting.com,*.gotomeeting.com,gotowebinar.com,*.gotowebinar.com,gototraining.com,*.gototraining.com,citrix.com,*.citrix.com,expertcity.com,*.expertcity.com,citrixonline.com,*.citrixonline.com,g2m.me,*.g2m.me,gotomeet.me,*.gotomeet.me,gotomeet.at,*.gotomeet.at");
 #else
  // temporary value, not intended for release - bug 1049087
-pref("media.getusermedia.screensharing.allowed_domains", "mozilla.github.io,webex.com,*.webex.com,ciscospark.com,*.ciscospark.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,appear.in,*.appear.in,tokbox.com,*.tokbox.com,*.sso.francetelecom.fr,*.si.francetelecom.fr,*.sso.infra.ftgroup,*.multimedia-conference.orange-business.com,*.espacecollaboration.orange-business.com,free.gotomeeting.com,g2m.me,*.g2m.me,example.com,*.mypurecloud.com,*.mypurecloud.com.au,spreed.me,*.spreed.me,*.spreed.com,air.mozilla.org,*.circuit.com,*.yourcircuit.com,circuit.siemens.com,yourcircuit.siemens.com,circuitsandbox.net,*.unify.com,tandi.circuitsandbox.net");
+pref("media.getusermedia.screensharing.allowed_domains", "mozilla.github.io,webex.com,*.webex.com,ciscospark.com,*.ciscospark.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,appear.in,*.appear.in,tokbox.com,*.tokbox.com,*.sso.francetelecom.fr,*.si.francetelecom.fr,*.sso.infra.ftgroup,*.multimedia-conference.orange-business.com,*.espacecollaboration.orange-business.com,free.gotomeeting.com,g2m.me,*.g2m.me,example.com,*.mypurecloud.com,*.mypurecloud.com.au,spreed.me,*.spreed.me,*.spreed.com,air.mozilla.org,*.circuit.com,*.yourcircuit.com,circuit.siemens.com,yourcircuit.siemens.com,circuitsandbox.net,*.unify.com,tandi.circuitsandbox.net,*.ericsson.net,*.cct.ericsson.net,*.opentok.com,*.conf.meetecho.com,meet.jit.si,*.meet.jit.si,web.stage.speakeasyapp.net,web.speakeasyapp.net,*.hipchat.me,*.beta-wspbx.com,*.wspbx.com,*.unifiedcloudit.com,*.smartboxuc.com,*.smartbox-uc.com,*.panterranetworks.com,pexipdemo.com,*.pexipdemo.com,pex.me,*.pex.me,*.rd.pexip.com,1click.io,*.1click.io,*.fuze.com,*.fuzemeeting.com,*.thinkingphones.com,gotomeeting.com,*.gotomeeting.com,gotowebinar.com,*.gotowebinar.com,gototraining.com,*.gototraining.com,citrix.com,*.citrix.com,expertcity.com,*.expertcity.com,citrixonline.com,*.citrixonline.com,g2m.me,*.g2m.me,gotomeet.me,*.gotomeet.me,gotomeet.at,*.gotomeet.at");
 #endif
 // OS/X 10.6 and XP have screen/window sharing off by default due to various issues - Caveat emptor
 pref("media.getusermedia.screensharing.allow_on_old_platforms", false);
@@ -503,7 +505,7 @@ pref("media.mediasource.enabled", true);
 
 pref("media.mediasource.mp4.enabled", true);
 
-#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GONK) || defined(MOZ_WIDGET_ANDROID)
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GONK)
 pref("media.mediasource.webm.enabled", false);
 #else
 pref("media.mediasource.webm.enabled", true);
@@ -567,16 +569,7 @@ pref("apz.content_response_timeout", 300);
 pref("apz.drag.enabled", false);
 pref("apz.danger_zone_x", 50);
 pref("apz.danger_zone_y", 100);
-
-// See bug 1246676, we're experimenting to see what's best
-#if defined(XP_WIN)
-pref("apz.displayport_expiry_ms", 0);
-#elif defined(XP_MACOSX)
-pref("apz.displayport_expiry_ms", 30000);
-#else
 pref("apz.displayport_expiry_ms", 15000);
-#endif
-
 pref("apz.enlarge_displayport_when_clipped", false);
 pref("apz.fling_accel_base_mult", "1.0");
 pref("apz.fling_accel_interval_ms", 500);
@@ -617,9 +610,9 @@ pref("apz.velocity_bias", "1.0");
 pref("apz.velocity_relevance_time_ms", 150);
 pref("apz.x_skate_highmem_adjust", "0.0");
 pref("apz.y_skate_highmem_adjust", "0.0");
-pref("apz.x_skate_size_multiplier", "2.5");
+pref("apz.x_skate_size_multiplier", "1.25");
 pref("apz.y_skate_size_multiplier", "3.5");
-pref("apz.x_stationary_size_multiplier", "3.0");
+pref("apz.x_stationary_size_multiplier", "1.5");
 pref("apz.y_stationary_size_multiplier", "3.5");
 pref("apz.zoom_animation_duration_ms", 250);
 
@@ -627,9 +620,7 @@ pref("apz.zoom_animation_duration_ms", 250);
 // Mobile prefs
 pref("apz.allow_zooming", true);
 pref("apz.enlarge_displayport_when_clipped", true);
-pref("apz.x_skate_size_multiplier", "1.25");
 pref("apz.y_skate_size_multiplier", "1.5");
-pref("apz.x_stationary_size_multiplier", "1.5");
 pref("apz.y_stationary_size_multiplier", "1.8");
 #endif
 
@@ -713,8 +704,8 @@ pref("gfx.font_rendering.opentype_svg.enabled", true);
 #ifdef XP_WIN
 // comma separated list of backends to use in order of preference
 // e.g., pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
-pref("gfx.canvas.azure.backends", "direct2d1.1,direct2d,skia,cairo");
-pref("gfx.content.azure.backends", "direct2d1.1,direct2d,cairo");
+pref("gfx.canvas.azure.backends", "direct2d1.1,skia,cairo");
+pref("gfx.content.azure.backends", "direct2d1.1,cairo");
 #else
 #ifdef XP_MACOSX
 pref("gfx.content.azure.backends", "cg");
@@ -738,6 +729,9 @@ pref("gfx.work-around-driver-bugs", true);
 pref("gfx.prefer-mesa-llvmpipe", false);
 
 pref("gfx.draw-color-bars", false);
+
+pref("gfx.logging.texture-usage.enabled", false);
+pref("gfx.logging.peak-texture-usage.enabled", false);
 
 pref("accessibility.browsewithcaret", false);
 pref("accessibility.warn_on_browsewithcaret", true);
@@ -1209,6 +1203,9 @@ pref("javascript.options.shared_memory", true);
 #else
 pref("javascript.options.shared_memory", false);
 #endif
+
+pref("javascript.options.throw_on_debuggee_would_run", false);
+pref("javascript.options.dump_stack_on_debuggee_would_run", false);
 
 // advanced prefs
 pref("advanced.mailftp",                    false);
@@ -2350,8 +2347,8 @@ pref("layout.css.convertFromNode.enabled", false);
 pref("layout.css.convertFromNode.enabled", true);
 #endif
 
-// Is support for CSS "text-align: true X" enabled?
-pref("layout.css.text-align-true-value.enabled", false);
+// Is support for CSS "text-align: unsafe X" enabled?
+pref("layout.css.text-align-unsafe-value.enabled", false);
 
 // Is support for CSS "float: inline-{start,end}" and
 // "clear: inline-{start,end}" enabled?
@@ -3238,6 +3235,9 @@ pref("plugin.scan.WindowsMediaPlayer", "7.0");
 // Locate plugins by the directories specified in the Windows registry for PLIDs
 // Which is currently HKLM\Software\MozillaPlugins\xxxPLIDxxx\Path
 pref("plugin.scan.plid.all", true);
+
+// Whether sending WM_MOUSEWHEEL and WM_MOUSEHWHEEL to plugins on Windows.
+pref("plugin.mousewheel.enabled", true);
 
 // Help Windows NT, 2000, and XP dialup a RAS connection
 // when a network address is unreachable.
@@ -4379,6 +4379,7 @@ pref("layers.draw-tile-borders", false);
 pref("layers.draw-bigimage-borders", false);
 pref("layers.frame-counter", false);
 pref("layers.enable-tiles", false);
+pref("layers.single-tile.enabled", true);
 pref("layers.tiled-drawtarget.enabled", false);
 pref("layers.low-precision-buffer", false);
 pref("layers.progressive-paint", false);
@@ -4447,7 +4448,6 @@ pref("gfx.content.use-native-pushlayer", true);
 
 // Whether to disable the automatic detection and use of direct2d.
 pref("gfx.direct2d.disabled", false);
-pref("gfx.direct2d.use1_1", true);
 
 // Whether to attempt to enable Direct2D regardless of automatic detection or
 // blacklisting
@@ -4519,6 +4519,8 @@ pref("dom.webnotifications.serviceworker.enabled", true);
 
 // Alert animation effect, name is disableSlidingEffect for backwards-compat.
 pref("alerts.disableSlidingEffect", false);
+// Show favicons in web notifications.
+pref("alerts.showFavicons", false);
 
 // DOM full-screen API.
 pref("full-screen-api.enabled", false);
@@ -4642,6 +4644,7 @@ pref("dom.mozPermissionSettings.enabled", false);
 
 // W3C touch events
 // 0 - disabled, 1 - enabled, 2 - autodetect
+// Autodetection is currently only supported on Windows and GTK3
 #if defined(XP_MACOSX)
 pref("dom.w3c_touch_events.enabled", 0);
 #elif defined(XP_WIN) && !defined(NIGHTLY_BUILD)
@@ -4785,6 +4788,11 @@ pref("dom.vr.oculus050.enabled", true);
 pref("dom.vr.cardboard.enabled", false);
 // 0 = never; 1 = only if real devices aren't there; 2 = always
 pref("dom.vr.add-test-devices", 0);
+// Pose prediction reduces latency effects by returning future predicted HMD
+// poses to callers of the WebVR API.  This currently only has an effect for
+// Oculus Rift on SDK 0.8 or greater.  It is disabled by default for now due to
+// frame uniformity issues with e10s.
+pref("dom.vr.poseprediction.enabled", false);
 // true = show the VR textures in our compositing output; false = don't.
 // true might have performance impact
 pref("gfx.vr.mirror-textures", false);

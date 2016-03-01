@@ -138,8 +138,7 @@ JS_NewObjectWithUniqueType(JSContext* cx, const JSClass* clasp, HandleObject pro
 JS_FRIEND_API(JSObject*)
 JS_NewObjectWithoutMetadata(JSContext* cx, const JSClass* clasp, JS::Handle<JSObject*> proto)
 {
-    // Use an AutoEnterAnalysis to suppress invocation of the metadata callback.
-    AutoEnterAnalysis enter(cx);
+    AutoSuppressObjectMetadataCallback suppressMetadata(cx);
     return JS_NewObjectWithGivenProto(cx, clasp, proto);
 }
 
@@ -405,9 +404,9 @@ js::GetOutermostEnclosingFunctionOfScriptedCaller(JSContext* cx)
         return nullptr;
 
     RootedFunction curr(cx, iter.callee(cx));
-    for (StaticScopeIter<NoGC> i(curr->nonLazyScript()->staticScope()); !i.done(); i++) {
+    for (StaticScopeIter<NoGC> i(curr); !i.done(); i++) {
         if (i.type() == StaticScopeIter<NoGC>::Function)
-            curr = &i.fun().function();
+            curr = &i.fun();
     }
     return curr;
 }
@@ -760,10 +759,14 @@ FormatFrame(JSContext* cx, const ScriptFrameIter& iter, char* buf, int num,
                     }
                 }
             } else if (iter.hasUsableAbstractFramePtr()) {
-                if (script->argsObjAliasesFormals() && iter.hasArgsObj())
+                if (script->analyzedArgsUsage() &&
+                    script->argsObjAliasesFormals() &&
+                    iter.hasArgsObj())
+                {
                     arg = iter.argsObj().arg(i);
-                else
+                } else {
                     arg = iter.unaliasedActual(i, DONT_CHECK_ALIASING);
+                }
             } else {
                 arg = MagicValue(JS_OPTIMIZED_OUT);
             }

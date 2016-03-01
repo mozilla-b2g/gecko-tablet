@@ -151,7 +151,7 @@ CodeGeneratorX64::visitCompareB(LCompareB* lir)
     // Load boxed boolean in ScratchReg.
     ScratchRegisterScope scratch(masm);
     if (rhs->isConstant())
-        masm.moveValue(*rhs->toConstant(), scratch);
+        masm.moveValue(rhs->toConstant()->toJSValue(), scratch);
     else
         masm.boxValue(JSVAL_TYPE_BOOLEAN, ToRegister(rhs), scratch);
 
@@ -173,7 +173,7 @@ CodeGeneratorX64::visitCompareBAndBranch(LCompareBAndBranch* lir)
     // Load boxed boolean in ScratchReg.
     ScratchRegisterScope scratch(masm);
     if (rhs->isConstant())
-        masm.moveValue(*rhs->toConstant(), scratch);
+        masm.moveValue(rhs->toConstant()->toJSValue(), scratch);
     else
         masm.boxValue(JSVAL_TYPE_BOOLEAN, ToRegister(rhs), scratch);
 
@@ -209,6 +209,116 @@ CodeGeneratorX64::visitCompareBitwiseAndBranch(LCompareBitwiseAndBranch* lir)
 
     masm.cmpPtr(lhs.valueReg(), rhs.valueReg());
     emitBranch(JSOpToCondition(mir->compareType(), mir->jsop()), lir->ifTrue(), lir->ifFalse());
+}
+
+void
+CodeGeneratorX64::visitCompare64(LCompare64* lir)
+{
+    MCompare* mir = lir->mir();
+    MOZ_ASSERT(mir->compareType() == MCompare::Compare_Int64 ||
+               mir->compareType() == MCompare::Compare_UInt64);
+
+    Register lhs = ToRegister(lir->getOperand(0));
+    const LAllocation* rhs = lir->getOperand(1);
+
+    if (rhs->isConstant())
+        masm.cmpPtr(lhs, ImmWord(ToInt64(rhs)));
+    else
+        masm.cmpPtr(lhs, ToOperand(rhs));
+
+    bool isSigned = mir->compareType() == MCompare::Compare_Int64;
+    masm.emitSet(JSOpToCondition(lir->jsop(), isSigned), ToRegister(lir->output()));
+}
+
+void
+CodeGeneratorX64::visitCompare64AndBranch(LCompare64AndBranch* lir)
+{
+    MCompare* mir = lir->cmpMir();
+    MOZ_ASSERT(mir->compareType() == MCompare::Compare_Int64 ||
+               mir->compareType() == MCompare::Compare_UInt64);
+
+    Register lhs = ToRegister(lir->getOperand(0));
+    const LAllocation* rhs = lir->getOperand(1);
+
+    if (rhs->isConstant())
+        masm.cmpPtr(lhs, ImmWord(ToInt64(rhs)));
+    else
+        masm.cmpPtr(lhs, ToOperand(rhs));
+
+    bool isSigned = mir->compareType() == MCompare::Compare_Int64;
+    emitBranch(JSOpToCondition(lir->jsop(), isSigned), lir->ifTrue(), lir->ifFalse());
+}
+
+void
+CodeGeneratorX64::visitBitOpI64(LBitOpI64* lir)
+{
+    Register lhs = ToRegister(lir->getOperand(0));
+    const LAllocation* rhs = lir->getOperand(1);
+
+    switch (lir->bitop()) {
+      case JSOP_BITOR:
+        if (rhs->isConstant())
+            masm.or64(Imm64(ToInt64(rhs)), Register64(lhs));
+        else
+            masm.orq(ToOperand(rhs), lhs);
+        break;
+      case JSOP_BITXOR:
+        if (rhs->isConstant())
+            masm.xor64(Imm64(ToInt64(rhs)), Register64(lhs));
+        else
+            masm.xorq(ToOperand(rhs), lhs);
+        break;
+      case JSOP_BITAND:
+        if (rhs->isConstant())
+            masm.and64(Imm64(ToInt64(rhs)), Register64(lhs));
+        else
+            masm.andq(ToOperand(rhs), lhs);
+        break;
+      default:
+        MOZ_CRASH("unexpected binary opcode");
+    }
+}
+
+void
+CodeGeneratorX64::visitShiftI64(LShiftI64* lir)
+{
+    Register lhs = ToRegister(lir->getOperand(0));
+    const LAllocation* rhs = lir->getOperand(1);
+
+    if (rhs->isConstant()) {
+        int32_t shift = ToInt32(rhs) & 0x3F;
+        switch (lir->bitop()) {
+          case JSOP_LSH:
+            if (shift)
+                masm.shlq(Imm32(shift), lhs);
+            break;
+          case JSOP_RSH:
+            if (shift)
+                masm.sarq(Imm32(shift), lhs);
+            break;
+          case JSOP_URSH:
+            if (shift)
+                masm.shrq(Imm32(shift), lhs);
+            break;
+          default:
+            MOZ_CRASH("Unexpected shift op");
+        }
+    } else {
+        MOZ_ASSERT(ToRegister(rhs) == ecx);
+        switch (lir->bitop()) {
+          case JSOP_LSH:
+            masm.shlq_cl(lhs);
+            break;
+          case JSOP_RSH:
+            masm.sarq_cl(lhs);
+            break;
+          case JSOP_URSH:
+            masm.shrq_cl(lhs);
+            break;
+          default:
+            MOZ_CRASH("Unexpected shift op");
+        }
+    }
 }
 
 void
@@ -779,9 +889,18 @@ CodeGeneratorX64::visitAsmJSLoadFuncPtr(LAsmJSLoadFuncPtr* ins)
     Register tmp = ToRegister(ins->temp());
     Register out = ToRegister(ins->output());
 
-    CodeOffset label = masm.leaRipRelative(tmp);
-    masm.loadPtr(Operand(tmp, index, TimesEight, 0), out);
-    masm.append(AsmJSGlobalAccess(label, mir->globalDataOffset()));
+    if (mir->hasLimit()) {
+        masm.branch32(Assembler::Condition::AboveOrEqual, index, Imm32(mir->limit()),
+                      wasm::JumpTarget::OutOfBounds);
+    }
+
+    if (mir->alwaysThrow()) {
+        masm.jump(wasm::JumpTarget::BadIndirectCall);
+    } else {
+        CodeOffset label = masm.leaRipRelative(tmp);
+        masm.loadPtr(Operand(tmp, index, TimesEight, 0), out);
+        masm.append(AsmJSGlobalAccess(label, mir->globalDataOffset()));
+    }
 }
 
 void

@@ -238,14 +238,15 @@ writeTrustAnchors(trustAnchorsFile);
 gTrustAnchors.roots.sort(function(a, b) {
   // We need to work from the binary values, not the base64 values.
   let aBin = atob(a.sha256Fingerprint);
-  let bBin = atob(b.sha256Fingerprint)
+  let bBin = atob(b.sha256Fingerprint);
 
-  if (aBin < bBin)
-     return -1;
-  else if (aBin > bBin)
-     return 1;
-   else
-     return 0;
+  if (aBin < bBin) {
+    return -1;
+  }
+  if (aBin > bBin) {
+    return 1;
+  }
+  return 0;
 });
 
 // Write the output file.

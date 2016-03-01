@@ -3357,6 +3357,8 @@ ScrollFrameHelper::DecideScrollableLayer(nsDisplayListBuilder* aBuilder,
     wasUsingDisplayPort = nsLayoutUtils::HasDisplayPort(content);
 
     if (aAllowCreateDisplayPort) {
+      nsLayoutUtils::MaybeCreateDisplayPort(*aBuilder, mOuter);
+
       nsRect displayportBase = *aDirtyRect;
       nsPresContext* pc = mOuter->PresContext();
       if (mIsRoot && (pc->IsRootContentDocument() || !pc->GetParentPresContext())) {
@@ -3368,33 +3370,35 @@ ScrollFrameHelper::DecideScrollableLayer(nsDisplayListBuilder* aBuilder,
         // scrollport.
         displayportBase = aDirtyRect->Intersect(mScrollPort);
 
-        const nsPresContext* rootPresContext =
-          pc->GetToplevelContentDocumentPresContext();
-        if (!rootPresContext) {
-          rootPresContext = pc->GetRootPresContext();
-        }
-        if (rootPresContext) {
-          const nsIPresShell* const rootPresShell = rootPresContext->PresShell();
-          nsIFrame* rootFrame = rootPresShell->GetRootScrollFrame();
-          if (!rootFrame) {
-            rootFrame = rootPresShell->GetRootFrame();
+        // Only restrict to the root composition bounds if necessary,
+        // as the required coordinate transformation is expensive.
+        if (wasUsingDisplayPort) {
+          const nsPresContext* rootPresContext =
+            pc->GetToplevelContentDocumentPresContext();
+          if (!rootPresContext) {
+            rootPresContext = pc->GetRootPresContext();
           }
-          if (rootFrame) {
-            nsRect rootCompBounds =
-              nsRect(nsPoint(0, 0), nsLayoutUtils::CalculateCompositionSizeForFrame(rootFrame));
+          if (rootPresContext) {
+            const nsIPresShell* const rootPresShell = rootPresContext->PresShell();
+            nsIFrame* rootFrame = rootPresShell->GetRootScrollFrame();
+            if (!rootFrame) {
+              rootFrame = rootPresShell->GetRootFrame();
+            }
+            if (rootFrame) {
+              nsRect rootCompBounds =
+                nsRect(nsPoint(0, 0), nsLayoutUtils::CalculateCompositionSizeForFrame(rootFrame));
 
-            nsLayoutUtils::TransformRect(rootFrame, mOuter, rootCompBounds);
+              nsLayoutUtils::TransformRect(rootFrame, mOuter, rootCompBounds);
 
-            displayportBase = displayportBase.Intersect(rootCompBounds);
+              displayportBase = displayportBase.Intersect(rootCompBounds);
+            }
           }
         }
 
         displayportBase -= mScrollPort.TopLeft();
       }
 
-      // Provide the value of the display port base rect, and possibly create a
-      // display port if there isn't one already.
-      nsLayoutUtils::MaybeCreateDisplayPort(*aBuilder, mOuter, displayportBase);
+      nsLayoutUtils::SetDisplayPortBase(mOuter->GetContent(), displayportBase);
     }
 
     // If we don't have aAllowCreateDisplayPort == true then should have already
@@ -4381,13 +4385,17 @@ ScrollFrameHelper::ScrollEvent::ScrollEvent(ScrollFrameHelper* aHelper)
 
 ScrollFrameHelper::ScrollEvent::~ScrollEvent()
 {
-  mDriver->RemoveRefreshObserver(this, Flush_Style);
-  mDriver = nullptr;
+  if (mDriver) {
+    mDriver->RemoveRefreshObserver(this, Flush_Style);
+    mDriver = nullptr;
+  }
 }
 
 void
 ScrollFrameHelper::ScrollEvent::WillRefresh(mozilla::TimeStamp aTime)
 {
+  mDriver->RemoveRefreshObserver(this, Flush_Style);
+  mDriver = nullptr;
   mHelper->FireScrollEvent();
 }
 

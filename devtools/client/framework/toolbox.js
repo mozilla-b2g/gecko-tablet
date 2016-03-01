@@ -1,3 +1,5 @@
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -16,6 +18,7 @@ const SCREENSIZE_HISTOGRAM = "DEVTOOLS_SCREEN_RESOLUTION_ENUMERATED_PER_USER";
 
 var {Cc, Ci, Cu} = require("chrome");
 var promise = require("promise");
+var Services = require("Services");
 var {gDevTools} = require("devtools/client/framework/devtools");
 var EventEmitter = require("devtools/shared/event-emitter");
 var Telemetry = require("devtools/client/shared/telemetry");
@@ -23,13 +26,10 @@ var HUDService = require("devtools/client/webconsole/hudservice");
 var viewSource = require("devtools/client/shared/view-source");
 var { attachThread, detachThread } = require("./attach-thread");
 
-Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://devtools/client/scratchpad/scratchpad-manager.jsm");
 Cu.import("resource://devtools/client/shared/DOMHelpers.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 
-loader.lazyImporter(this, "CommandUtils",
-  "resource://devtools/client/shared/DeveloperToolbar.jsm");
 loader.lazyGetter(this, "toolboxStrings", () => {
   const properties = "chrome://devtools/locale/toolbox.properties";
   const bundle = Services.strings.createBundle(properties);
@@ -45,6 +45,8 @@ loader.lazyGetter(this, "toolboxStrings", () => {
     }
   };
 });
+loader.lazyRequireGetter(this, "CommandUtils",
+  "devtools/client/shared/developer-toolbar", true);
 loader.lazyRequireGetter(this, "getHighlighterUtils",
   "devtools/client/framework/toolbox-highlighter-utils", true);
 loader.lazyRequireGetter(this, "Hosts",
@@ -560,11 +562,6 @@ Toolbox.prototype = {
 
     let toggleKey = this.doc.getElementById("toolbox-toggle-host-key");
     toggleKey.addEventListener("command", this.switchToPreviousHost.bind(this), true);
-
-    if (Services.prefs.prefHasUserValue("devtools.loader.srcdir")) {
-      let reloadKey = this.doc.getElementById("tools-reload-key");
-      reloadKey.addEventListener("command", this.reload.bind(this), true);
-    }
 
     // Split console uses keypress instead of command so the event can be
     // cancelled with stopPropagation on the keypress, and not preventDefault.
@@ -1698,11 +1695,6 @@ Toolbox.prototype = {
     let newHost = new Hosts[hostType](this.target.tab, options);
     newHost.on("window-closed", this.destroy);
     return newHost;
-  },
-
-  reload: function () {
-    const {devtools} = Cu.import("resource://devtools/shared/Loader.jsm", {});
-    devtools.reload(true);
   },
 
   /**

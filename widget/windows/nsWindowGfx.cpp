@@ -43,6 +43,7 @@ using mozilla::plugins::PluginInstanceParent;
 #include "nsIXULRuntime.h"
 
 #include "mozilla/layers/CompositorParent.h"
+#include "mozilla/layers/CompositorChild.h"
 #include "ClientLayerManager.h"
 
 #include "nsUXThemeData.h"
@@ -164,6 +165,13 @@ nsIWidgetListener* nsWindow::GetPaintListener()
   if (mDestroyCalled)
     return nullptr;
   return mAttachedWidgetListener ? mAttachedWidgetListener : mWidgetListener;
+}
+
+void nsWindow::ForcePresent()
+{
+  if (CompositorChild* remoteRenderer = GetRemoteRenderer()) {
+    remoteRenderer->SendForcePresent();
+  }
 }
 
 bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
@@ -519,14 +527,9 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
         {
           result = listener->PaintWindow(
             this, LayoutDeviceIntRegion::FromUnknownRegion(region));
-          ClientLayerManager* clientLM =
-            static_cast<ClientLayerManager*>(GetLayerManager());
-          IDXGISwapChain* swapChain = clientLM->GetTextureFactoryIdentifier().mSwapChain.get();
-          if (swapChain) {
-            // Workaround for bug 1232042. On some devices artifacts will occur
-            // is we don't do a main thread present call from the WM_PAINT event.
-            swapChain->Present(0, 0);
-          }
+          nsCOMPtr<nsIRunnable> event =
+            NS_NewRunnableMethod(this, &nsWindow::ForcePresent);
+          NS_DispatchToMainThread(event);
         }
         break;
       default:

@@ -90,6 +90,7 @@ struct CharacterDataChangeInfo;
 
 namespace mozilla {
 
+enum class CSSPseudoElementType : uint8_t;
 class EventStates;
 
 namespace layers {
@@ -1275,6 +1276,13 @@ public:
    * transform.
    */
   bool Combines3DTransformWithAncestors() const;
+
+  /**
+   * Returns whether this frame has a hidden backface and has a parent that
+   * Extend3DContext(). This is useful because in some cases the hidden
+   * backface can safely be ignored if it could not be visible anyway.
+   */
+  bool In3DContextAndBackfaceIsHidden() const;
 
   bool IsPreserve3DLeaf() const {
     return Combines3DTransformWithAncestors() && !Extend3DContext();
@@ -3087,7 +3095,8 @@ public:
    * generated and which corresponds to the specified pseudo-element type,
    * or nullptr if there is no such anonymous content.
    */
-  virtual mozilla::dom::Element* GetPseudoElement(nsCSSPseudoElements::Type aType);
+  virtual mozilla::dom::Element*
+  GetPseudoElement(mozilla::CSSPseudoElementType aType);
 
   bool BackfaceIsHidden() {
     return StyleDisplay()->BackfaceIsHidden();

@@ -14,8 +14,14 @@ const Cr = Components.results;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
+                                  "resource://gre/modules/AppConstants.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "LanguageDetector",
+                                  "resource:///modules/translation/LanguageDetector.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Locale",
                                   "resource://gre/modules/Locale.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
+                                  "resource://gre/modules/Preferences.jsm");
 
 function filterStack(error) {
   return String(error.stack).replace(/(^.*(Task\.jsm|Promise-backend\.js).*\n)+/gm, "<Promise Chain>\n");
@@ -144,6 +150,9 @@ class BaseContext {
     if (!options.allowInheritsPrincipal) {
       flags |= ssm.DISALLOW_INHERIT_PRINCIPAL;
     }
+    if (options.dontReportErrors) {
+      flags |= ssm.DONT_REPORT_ERRORS;
+    }
 
     try {
       ssm.checkLoadURIStrWithPrincipal(this.principal, url, flags);
@@ -204,7 +213,7 @@ class BaseContext {
    * function for the promise, and no promise is returned. In this case,
    * the callback is called when the promise resolves or rejects. In the
    * latter case, `lastError` is set to the rejection value, and the
-   * callback funciton must check `browser.runtime.lastError` or
+   * callback function must check `browser.runtime.lastError` or
    * `extension.runtime.lastError` in order to prevent it being reported
    * to the console.
    *
@@ -333,9 +342,7 @@ LocaleData.prototype = {
 
     // Check for certain pre-defined messages.
     if (message == "@@ui_locale") {
-      // Return the browser locale, but convert it to a Chrome-style
-      // locale code.
-      return Locale.getLocale().replace(/-/g, "_");
+      return this.uiLocale;
     } else if (message.startsWith("@@bidi_")) {
       let registry = Cc["@mozilla.org/chrome/chrome-registry;1"].getService(Ci.nsIXULChromeRegistry);
       let rtl = registry.isLocaleRTL("global");
@@ -425,6 +432,18 @@ LocaleData.prototype = {
 
     this.messages.set(locale, result);
     return result;
+  },
+
+  get acceptLanguages() {
+    let result = Preferences.get("intl.accept_languages", "", Ci.nsIPrefLocalizedString);
+    return result.split(/\s*,\s*/g);
+  },
+
+
+  get uiLocale() {
+    // Return the browser locale, but convert it to a Chrome-style
+    // locale code.
+    return Locale.getLocale().replace(/-/g, "_");
   },
 };
 
@@ -933,6 +952,38 @@ function flushJarCache(jarFile) {
   Services.obs.notifyObservers(jarFile, "flush-cache-entry", null);
 }
 
+const PlatformInfo = Object.freeze({
+  os: (function() {
+    let os = AppConstants.platform;
+    if (os == "macosx") {
+      os = "mac";
+    }
+    return os;
+  })(),
+  arch: (function() {
+    let abi = Services.appinfo.XPCOMABI;
+    let [arch] = abi.split("-");
+    if (arch == "x86") {
+      arch = "x86-32";
+    } else if (arch == "x86_64") {
+      arch = "x86-64";
+    }
+    return arch;
+  })(),
+});
+
+function detectLanguage(text) {
+  return LanguageDetector.detectLanguage(text).then(result => ({
+    isReliable: result.confident,
+    languages: result.languages.map(lang => {
+      return {
+        language: lang.languageCode,
+        percentage: lang.percent,
+      };
+    }),
+  }));
+}
+
 this.ExtensionUtils = {
   runSafeWithoutClone,
   runSafeSyncWithoutClone,
@@ -947,8 +998,10 @@ this.ExtensionUtils = {
   injectAPI,
   MessageBroker,
   Messenger,
+  PlatformInfo,
   SpreadArgs,
   extend,
   flushJarCache,
   instanceOf,
+  detectLanguage,
 };

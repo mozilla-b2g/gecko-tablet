@@ -19,8 +19,7 @@ using mozilla::Swap;
 
 MIRGenerator::MIRGenerator(CompileCompartment* compartment, const JitCompileOptions& options,
                            TempAllocator* alloc, MIRGraph* graph, const CompileInfo* info,
-                           const OptimizationInfo* optimizationInfo,
-                           bool usesSignalHandlersForAsmJSOOB)
+                           const OptimizationInfo* optimizationInfo)
   : compartment(compartment),
     info_(info),
     optimizationInfo_(optimizationInfo),
@@ -41,8 +40,9 @@ MIRGenerator::MIRGenerator(CompileCompartment* compartment, const JitCompileOpti
     instrumentedProfilingIsCached_(false),
     safeForMinorGC_(true),
 #if defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
-    usesSignalHandlersForAsmJSOOB_(usesSignalHandlersForAsmJSOOB),
+    usesSignalHandlersForAsmJSOOB_(false),
 #endif
+    minAsmJSHeapLength_(0),
     options(options),
     gs_(alloc)
 { }
@@ -603,8 +603,6 @@ MBasicBlock::shimmySlots(int discardDepth)
 bool
 MBasicBlock::linkOsrValues(MStart* start)
 {
-    MOZ_ASSERT(start->startType() == MStart::StartType_Osr);
-
     MResumePoint* res = start->resumePoint();
 
     for (uint32_t i = 0; i < stackDepth(); i++) {
@@ -618,7 +616,7 @@ MBasicBlock::linkOsrValues(MStart* start)
                 cloneRp = def->toOsrReturnValue();
         } else if (info().hasArguments() && i == info().argsObjSlot()) {
             MOZ_ASSERT(def->isConstant() || def->isOsrArgumentsObject());
-            MOZ_ASSERT_IF(def->isConstant(), def->toConstant()->value() == UndefinedValue());
+            MOZ_ASSERT_IF(def->isConstant(), def->toConstant()->type() == MIRType_Undefined);
             if (def->isOsrArgumentsObject())
                 cloneRp = def->toOsrArgumentsObject();
         } else {
@@ -628,7 +626,7 @@ MBasicBlock::linkOsrValues(MStart* start)
             // A constant Undefined can show up here for an argument slot when
             // the function has an arguments object, but the argument in
             // question is stored on the scope chain.
-            MOZ_ASSERT_IF(def->isConstant(), def->toConstant()->value() == UndefinedValue());
+            MOZ_ASSERT_IF(def->isConstant(), def->toConstant()->type() == MIRType_Undefined);
 
             if (def->isOsrValue())
                 cloneRp = def->toOsrValue();

@@ -1316,6 +1316,13 @@ TabClient.prototype = {
   }),
 
   /**
+   * Bring the window to the front.
+   */
+  focus: DebuggerClient.requester({
+    type: "focus"
+  }, {}),
+
+  /**
    * Reload the page in this tab.
    *
    * @param [optional] object options
@@ -1409,6 +1416,9 @@ WorkerClient.prototype = {
 
   detach: DebuggerClient.requester({ type: "detach" }, {
     after: function (aResponse) {
+      if (this.thread) {
+        this.client.unregisterClient(this.thread);
+      }
       this.client.unregisterClient(this);
       return aResponse;
     },

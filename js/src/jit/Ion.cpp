@@ -1264,9 +1264,7 @@ void
 IonScript::Destroy(FreeOp* fop, IonScript* script)
 {
     script->unlinkFromRuntime(fop);
-    // Frees the potential event we have set.
-    script->traceLoggerScriptEvent_ = TraceLoggerEvent();
-    fop->free_(script);
+    fop->delete_(script);
 }
 
 void
@@ -1871,7 +1869,8 @@ OptimizeMIR(MIRGenerator* mir)
 
     if (!mir->compilingAsmJS()) {
         AutoTraceLog log(logger, TraceLogger_AddKeepAliveInstructions);
-        AddKeepAliveInstructions(graph);
+        if (!AddKeepAliveInstructions(graph))
+            return false;
         gs.spewPass("Add KeepAlive Instructions");
         AssertGraphCoherency(graph);
     }
@@ -2898,13 +2897,17 @@ jit::FastInvoke(JSContext* cx, HandleFunction fun, CallArgs& args)
 {
     JS_CHECK_RECURSION(cx, return JitExec_Error);
 
+    RootedScript script(cx, fun->nonLazyScript());
+
+    if (!Debugger::checkNoExecute(cx, script))
+        return JitExec_Error;
+
 #ifdef DEBUG
     // See comment in EnterBaseline.
     mozilla::Maybe<JS::AutoAssertOnGC> nogc;
     nogc.emplace(cx->runtime());
 #endif
 
-    RootedScript script(cx, fun->nonLazyScript());
     IonScript* ion = script->ionScript();
     JitCode* code = ion->method();
     void* jitcode = code->raw();

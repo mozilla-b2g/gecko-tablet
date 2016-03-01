@@ -25,10 +25,20 @@ ToInt32(const LAllocation* a)
     MOZ_CRASH("this is not a constant!");
 }
 
+static inline int64_t
+ToInt64(const LAllocation* a)
+{
+    if (a->isConstantValue())
+        return a->toConstant()->toInt64();
+    if (a->isConstantIndex())
+        return a->toConstantIndex()->index();
+    MOZ_CRASH("this is not a constant!");
+}
+
 static inline double
 ToDouble(const LAllocation* a)
 {
-    return a->toConstant()->toNumber();
+    return a->toConstant()->numberToDouble();
 }
 
 static inline Register
@@ -48,6 +58,18 @@ static inline Register
 ToRegister(const LDefinition* def)
 {
     return ToRegister(*def->output());
+}
+
+static inline Register64
+ToOutRegister64(LInstruction* ins)
+{
+#if JS_BITS_PER_WORD == 32
+    Register loReg = ToRegister(ins->getDef(0));
+    Register hiReg = ToRegister(ins->getDef(1));
+    return Register64(hiReg, loReg);
+#else
+    return Register64(ToRegister(ins->getDef(0)));
+#endif
 }
 
 static inline Register

@@ -12,6 +12,7 @@
 #include "mozilla/Atomics.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/Variant.h"
 
 #include "jsatom.h"
 #include "jslock.h"
@@ -50,7 +51,6 @@ class LazyScript;
 class ModuleObject;
 class NestedStaticScope;
 class StaticScope;
-class StaticFunctionScope;
 class RegExpObject;
 struct SourceCompressionTask;
 class Shape;
@@ -67,8 +67,7 @@ namespace detail {
 // Do not call this directly! It is exposed for the friend declarations in
 // this file.
 bool
-CopyScript(JSContext* cx, Handle<StaticScope*> scriptStaticScope, HandleScript src,
-           HandleScript dst);
+CopyScript(JSContext* cx, HandleObject scriptStaticScope, HandleScript src, HandleScript dst);
 
 } // namespace detail
 
@@ -148,7 +147,7 @@ struct BlockScopeArray {
 
 class YieldOffsetArray {
     friend bool
-    detail::CopyScript(JSContext* cx, Handle<StaticScope*> scriptStaticScope, HandleScript src,
+    detail::CopyScript(JSContext* cx, HandleObject scriptStaticScope, HandleScript src,
                        HandleScript dst);
 
     uint32_t*       vector_;   // Array of bytecode offsets.
@@ -608,27 +607,44 @@ class ScriptSource
     // on the main thread.
 
     // Indicate which field in the |data| union is active.
-    enum {
-        DataMissing,
-        DataUncompressed,
-        DataCompressed,
-        DataParent
-    } dataType;
 
-    union {
-        struct {
-            const char16_t* chars;
-            bool ownsChars;
-        } uncompressed;
+    struct Missing { };
 
-        struct {
-            void* raw;
-            size_t nbytes;
-            HashNumber hash;
-        } compressed;
+    struct Uncompressed
+    {
+        Uncompressed(const char16_t* chars, bool ownsChars)
+          : chars(chars)
+          , ownsChars(ownsChars)
+        { }
+
+        const char16_t* chars;
+        bool ownsChars;
+    };
+
+    struct Compressed
+    {
+        Compressed(void* raw, size_t nbytes, HashNumber hash)
+          : raw(raw)
+          , nbytes(nbytes)
+          , hash(hash)
+        { }
+
+        void* raw;
+        size_t nbytes;
+        HashNumber hash;
+    };
+
+    struct Parent
+    {
+        explicit Parent(ScriptSource* parent)
+          : parent(parent)
+        { }
 
         ScriptSource* parent;
-    } data;
+    };
+
+    using SourceType = mozilla::Variant<Missing, Uncompressed, Compressed, Parent>;
+    SourceType data;
 
     uint32_t length_;
 
@@ -682,7 +698,7 @@ class ScriptSource
   public:
     explicit ScriptSource()
       : refs(0),
-        dataType(DataMissing),
+        data(SourceType(Missing())),
         length_(0),
         filename_(nullptr),
         displayURL_(nullptr),
@@ -711,8 +727,8 @@ class ScriptSource
                        SourceCompressionTask* tok);
     void setSourceRetrievable() { sourceRetrievable_ = true; }
     bool sourceRetrievable() const { return sourceRetrievable_; }
-    bool hasSourceData() const { return dataType != DataMissing; }
-    bool hasCompressedSource() const { return dataType == DataCompressed; }
+    bool hasSourceData() const { return !data.is<Missing>(); }
+    bool hasCompressedSource() const { return data.is<Compressed>(); }
     size_t length() const {
         MOZ_ASSERT(hasSourceData());
         return length_;
@@ -728,33 +744,27 @@ class ScriptSource
                                 JS::ScriptSourceInfo* info) const;
 
     const char16_t* uncompressedChars() const {
-        MOZ_ASSERT(dataType == DataUncompressed);
-        return data.uncompressed.chars;
+        return data.as<Uncompressed>().chars;
     }
 
     bool ownsUncompressedChars() const {
-        MOZ_ASSERT(dataType == DataUncompressed);
-        return data.uncompressed.ownsChars;
+        return data.as<Uncompressed>().ownsChars;
     }
 
     void* compressedData() const {
-        MOZ_ASSERT(dataType == DataCompressed);
-        return data.compressed.raw;
+        return data.as<Compressed>().raw;
     }
 
     size_t compressedBytes() const {
-        MOZ_ASSERT(dataType == DataCompressed);
-        return data.compressed.nbytes;
+        return data.as<Compressed>().nbytes;
     }
 
     HashNumber compressedHash() const {
-        MOZ_ASSERT(dataType == DataCompressed);
-        return data.compressed.hash;
+        return data.as<Compressed>().hash;
     }
 
     ScriptSource* parent() const {
-        MOZ_ASSERT(dataType == DataParent);
-        return data.parent;
+        return data.as<Parent>().parent;
     }
 
     void setSource(const char16_t* chars, size_t length, bool ownsChars = true);
@@ -922,20 +932,20 @@ GeneratorKindFromBits(unsigned val) {
  * subsequent set-up of owning function or script object and then call
  * CallNewScriptHook.
  */
-template <XDRMode mode>
+template<XDRMode mode>
 bool
-XDRScript(XDRState<mode>* xdr, Handle<StaticScope*> enclosingScope,
-          HandleScript enclosingScript, HandleFunction fun, MutableHandleScript scriptp);
+XDRScript(XDRState<mode>* xdr, HandleObject enclosingScope, HandleScript enclosingScript,
+          HandleFunction fun, MutableHandleScript scriptp);
 
-template <XDRMode mode>
+template<XDRMode mode>
 bool
-XDRLazyScript(XDRState<mode>* xdr, Handle<StaticScope*> enclosingScope,
-              HandleScript enclosingScript, HandleFunction fun, MutableHandle<LazyScript*> lazy);
+XDRLazyScript(XDRState<mode>* xdr, HandleObject enclosingScope, HandleScript enclosingScript,
+              HandleFunction fun, MutableHandle<LazyScript*> lazy);
 
 /*
  * Code any constant value.
  */
-template <XDRMode mode>
+template<XDRMode mode>
 bool
 XDRScriptConst(XDRState<mode>* xdr, MutableHandleValue vp);
 
@@ -946,13 +956,13 @@ class JSScript : public js::gc::TenuredCell
     template <js::XDRMode mode>
     friend
     bool
-    js::XDRScript(js::XDRState<mode>* xdr, js::Handle<js::StaticScope*> enclosingScope,
+    js::XDRScript(js::XDRState<mode>* xdr, js::HandleObject enclosingScope,
                   js::HandleScript enclosingScript,
                   js::HandleFunction fun, js::MutableHandleScript scriptp);
 
     friend bool
-    js::detail::CopyScript(JSContext* cx, js::Handle<js::StaticScope*> scriptStaticScope,
-                           js::HandleScript src, js::HandleScript dst);
+    js::detail::CopyScript(JSContext* cx, js::HandleObject scriptStaticScope, js::HandleScript src,
+                           js::HandleScript dst);
 
   public:
     //
@@ -1006,22 +1016,7 @@ class JSScript : public js::gc::TenuredCell
 
     js::HeapPtrFunction function_;
     js::HeapPtr<js::ModuleObject*> module_;
-
-    // The static scope this script runs in.
-    //
-    // Specifically, it depends on the case:
-    //
-    // *   direct eval: staticScope_ is the StaticEvalScope for the eval call.
-    //
-    // *   function script: staticScope_ is function_'s StaticFunctionScope.
-    //
-    // *   module script: staticScope_ is module_'s StaticModuleScope.
-    //
-    // *   plain old global script or indirect eval: staticScope_ is the static
-    //     global lexical scope (regardless of whether the script uses any
-    //     global lexical bindings).
-    //
-    js::HeapPtr<js::StaticScope*> staticScope_;
+    js::HeapPtrObject   enclosingStaticScope_;
 
     /*
      * Information attached by Ion. Nexto a valid IonScript this could be
@@ -1229,7 +1224,7 @@ class JSScript : public js::gc::TenuredCell
 
   public:
     static JSScript* Create(js::ExclusiveContext* cx,
-                            js::Handle<js::StaticScope*> staticScope, bool savedCallerFun,
+                            js::HandleObject enclosingScope, bool savedCallerFun,
                             const JS::ReadOnlyCompileOptions& options,
                             js::HandleObject sourceObject, uint32_t sourceStart,
                             uint32_t sourceEnd);
@@ -1713,13 +1708,10 @@ class JSScript : public js::gc::TenuredCell
     inline js::GlobalObject& global() const;
     js::GlobalObject& uninlinedGlobal() const;
 
-    js::StaticScope* staticScope() const { return staticScope_; }
-
-    /*
-     * The static scope this script runs in, skipping the StaticFunctionScope
-     * if this is a non-eval function script.
-     */
-    inline js::StaticScope* enclosingStaticScope() const;
+    /* See StaticScopeIter comment. */
+    JSObject* enclosingStaticScope() const {
+        return enclosingStaticScope_;
+    }
 
     // Switch the script over from the off-thread compartment's static
     // global lexical scope to the main thread compartment's.
@@ -1883,13 +1875,13 @@ class JSScript : public js::gc::TenuredCell
 
     // Returns the innermost static scope at pc if it falls within the extent
     // of the script. Returns nullptr otherwise.
-    js::StaticScope* innermostStaticScopeInScript(jsbytecode* pc);
+    JSObject* innermostStaticScopeInScript(jsbytecode* pc);
 
     // As innermostStaticScopeInScript, but returns the enclosing static scope
     // if the innermost static scope falls without the extent of the script.
-    js::StaticScope* innermostStaticScope(jsbytecode* pc);
+    JSObject* innermostStaticScope(jsbytecode* pc);
 
-    js::StaticScope* innermostStaticScope() { return innermostStaticScope(main()); }
+    JSObject* innermostStaticScope() { return innermostStaticScope(main()); }
 
     /*
      * The isEmpty method tells whether this script has code that computes any
@@ -2152,9 +2144,8 @@ class LazyScript : public gc::TenuredCell
     // Original function with which the lazy script is associated.
     HeapPtrFunction function_;
 
-    // Static scope of this function. (All lazy scripts are for functions;
-    // global scripts and eval scripts are never lazified.)
-    HeapPtr<StaticFunctionScope*> staticScope_;
+    // Function or block chain in which the script is nested, or nullptr.
+    HeapPtrObject enclosingScope_;
 
     // ScriptSourceObject. We leave this set to nullptr until we generate
     // bytecode for our immediate parent. This is never a CCW; we don't clone
@@ -2206,14 +2197,13 @@ class LazyScript : public gc::TenuredCell
     uint32_t lineno_;
     uint32_t column_;
 
-    LazyScript(JSFunction* fun, StaticFunctionScope* funScope, void* table, uint64_t packedFields,
+    LazyScript(JSFunction* fun, void* table, uint64_t packedFields,
                uint32_t begin, uint32_t end, uint32_t lineno, uint32_t column);
 
     // Create a LazyScript without initializing the freeVariables and the
     // innerFunctions. To be GC-safe, the caller must initialize both vectors
     // with valid atoms and functions.
     static LazyScript* CreateRaw(ExclusiveContext* cx, HandleFunction fun,
-                                 Handle<StaticFunctionScope*> funScope,
                                  uint64_t packedData, uint32_t begin, uint32_t end,
                                  uint32_t lineno, uint32_t column);
 
@@ -2222,7 +2212,6 @@ class LazyScript : public gc::TenuredCell
     // innerFunctions. To be GC-safe, the caller must initialize both vectors
     // with valid atoms and functions.
     static LazyScript* CreateRaw(ExclusiveContext* cx, HandleFunction fun,
-                                 Handle<StaticFunctionScope*> funScope,
                                  uint32_t numFreeVariables, uint32_t numInnerFunctions,
                                  JSVersion version, uint32_t begin, uint32_t end,
                                  uint32_t lineno, uint32_t column);
@@ -2237,7 +2226,7 @@ class LazyScript : public gc::TenuredCell
     // The sourceObjectScript argument must be non-null and is the script that
     // should be used to get the sourceObject_ of this lazyScript.
     static LazyScript* Create(ExclusiveContext* cx, HandleFunction fun,
-                              HandleScript script, Handle<StaticFunctionScope*> funScope,
+                              HandleScript script, HandleObject enclosingScope,
                               HandleScript sourceObjectScript,
                               uint64_t packedData, uint32_t begin, uint32_t end,
                               uint32_t lineno, uint32_t column);
@@ -2262,8 +2251,9 @@ class LazyScript : public gc::TenuredCell
         return bool(script_);
     }
 
-    StaticFunctionScope* staticScope() const { return staticScope_; }
-    StaticScope* enclosingScope() const;
+    JSObject* enclosingScope() const {
+        return enclosingScope_;
+    }
 
     // Switch the script over from the off-thread compartment's static
     // global lexical scope to the main thread compartment's.
@@ -2282,7 +2272,7 @@ class LazyScript : public gc::TenuredCell
         return (p_.version == JS_BIT(8) - 1) ? JSVERSION_UNKNOWN : JSVersion(p_.version);
     }
 
-    void initSource(ScriptSourceObject* sourceObject);
+    void setParent(JSObject* enclosingScope, ScriptSourceObject* sourceObject);
 
     uint32_t numFreeVariables() const {
         return p_.numFreeVariables;
@@ -2542,7 +2532,7 @@ DescribeScriptedCallerForCompilation(JSContext* cx, MutableHandleScript maybeScr
                                      LineOption opt = NOT_CALLED_FROM_JSOP_EVAL);
 
 JSScript*
-CloneScriptIntoFunction(JSContext* cx, Handle<StaticScope*> enclosingScope, HandleFunction fun,
+CloneScriptIntoFunction(JSContext* cx, HandleObject enclosingScope, HandleFunction fun,
                         HandleScript src);
 
 JSScript*
@@ -2554,7 +2544,7 @@ CloneGlobalScript(JSContext* cx, Handle<StaticScope*> enclosingScope, HandleScri
 // with no associated compartment.
 namespace JS {
 namespace ubi {
-template <>
+template<>
 struct Concrete<js::LazyScript> : TracerConcrete<js::LazyScript> {
     CoarseType coarseType() const final { return CoarseType::Script; }
     Size size(mozilla::MallocSizeOf mallocSizeOf) const override;

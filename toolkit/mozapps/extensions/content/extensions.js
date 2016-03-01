@@ -4,6 +4,9 @@
 
 "use strict";
 
+/* import-globals-from ../../../content/contentAreaUtils.js */
+/*globals XMLStylesheetProcessingInstruction*/
+
 var Cc = Components.classes;
 var Ci = Components.interfaces;
 var Cu = Components.utils;
@@ -201,8 +204,6 @@ function isCorrectlySigned(aAddon) {
   if (aAddon.scope == AddonManager.SCOPE_TEMPORARY)
       return true;
   if (aAddon.signedState <= AddonManager.SIGNEDSTATE_MISSING)
-    return false;
-  if (aAddon.foreignInstall && aAddon.signedState < AddonManager.SIGNEDSTATE_SIGNED)
     return false;
   return true;
 }

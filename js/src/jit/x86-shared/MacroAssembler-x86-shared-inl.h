@@ -180,8 +180,276 @@ MacroAssembler::negateDouble(FloatRegister reg)
     vxorpd(scratch, reg, reg); // s ^ 0x80000000000000
 }
 
+// ===============================================================
+// Branch instructions
+
+void
+MacroAssembler::branch32(Condition cond, Register lhs, Register rhs, Label* label)
+{
+    cmp32(lhs, rhs);
+    j(cond, label);
+}
+
+template <class L>
+void
+MacroAssembler::branch32(Condition cond, Register lhs, Imm32 rhs, L label)
+{
+    cmp32(lhs, rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branch32(Condition cond, const Address& lhs, Register rhs, Label* label)
+{
+    cmp32(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branch32(Condition cond, const Address& lhs, Imm32 rhs, Label* label)
+{
+    cmp32(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branch32(Condition cond, const BaseIndex& lhs, Register rhs, Label* label)
+{
+    cmp32(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branch32(Condition cond, const BaseIndex& lhs, Imm32 rhs, Label* label)
+{
+    cmp32(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branch32(Condition cond, const Operand& lhs, Register rhs, Label* label)
+{
+    cmp32(lhs, rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branch32(Condition cond, const Operand& lhs, Imm32 rhs, Label* label)
+{
+    cmp32(lhs, rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, Register lhs, Register rhs, Label* label)
+{
+    cmpPtr(lhs, rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, Register lhs, Imm32 rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, Register lhs, ImmPtr rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, Register lhs, ImmGCPtr rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, Register lhs, ImmWord rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, const Address& lhs, Register rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, const Address& lhs, ImmPtr rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, const Address& lhs, ImmGCPtr rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+void
+MacroAssembler::branchPtr(Condition cond, const Address& lhs, ImmWord rhs, Label* label)
+{
+    branchPtrImpl(cond, lhs, rhs, label);
+}
+
+template <typename T>
+CodeOffsetJump
+MacroAssembler::branchPtrWithPatch(Condition cond, Register lhs, T rhs, RepatchLabel* label)
+{
+    cmpPtr(lhs, rhs);
+    return jumpWithPatch(label, cond);
+}
+
+template <typename T>
+CodeOffsetJump
+MacroAssembler::branchPtrWithPatch(Condition cond, Address lhs, T rhs, RepatchLabel* label)
+{
+    cmpPtr(lhs, rhs);
+    return jumpWithPatch(label, cond);
+}
+
+void
+MacroAssembler::branchFloat(DoubleCondition cond, FloatRegister lhs, FloatRegister rhs,
+                            Label* label)
+{
+    compareFloat(cond, lhs, rhs);
+
+    if (cond == DoubleEqual) {
+        Label unordered;
+        j(Parity, &unordered);
+        j(Equal, label);
+        bind(&unordered);
+        return;
+    }
+
+    if (cond == DoubleNotEqualOrUnordered) {
+        j(NotEqual, label);
+        j(Parity, label);
+        return;
+    }
+
+    MOZ_ASSERT(!(cond & DoubleConditionBitSpecial));
+    j(ConditionFromDoubleCondition(cond), label);
+}
+
+void
+MacroAssembler::branchDouble(DoubleCondition cond, FloatRegister lhs, FloatRegister rhs,
+                             Label* label)
+{
+    compareDouble(cond, lhs, rhs);
+
+    if (cond == DoubleEqual) {
+        Label unordered;
+        j(Parity, &unordered);
+        j(Equal, label);
+        bind(&unordered);
+        return;
+    }
+    if (cond == DoubleNotEqualOrUnordered) {
+        j(NotEqual, label);
+        j(Parity, label);
+        return;
+    }
+
+    MOZ_ASSERT(!(cond & DoubleConditionBitSpecial));
+    j(ConditionFromDoubleCondition(cond), label);
+}
+
+template <typename T>
+void
+MacroAssembler::branchAdd32(Condition cond, T src, Register dest, Label* label)
+{
+    addl(src, dest);
+    j(cond, label);
+}
+
+template <typename T>
+void
+MacroAssembler::branchSub32(Condition cond, T src, Register dest, Label* label)
+{
+    subl(src, dest);
+    j(cond, label);
+}
+
+void
+MacroAssembler::decBranchPtr(Condition cond, Register lhs, Imm32 rhs, Label* label)
+{
+    subPtr(rhs, lhs);
+    j(cond, label);
+}
+
+template <class L>
+void
+MacroAssembler::branchTest32(Condition cond, Register lhs, Register rhs, L label)
+{
+    MOZ_ASSERT(cond == Zero || cond == NonZero || cond == Signed || cond == NotSigned);
+    test32(lhs, rhs);
+    j(cond, label);
+}
+
+template <class L>
+void
+MacroAssembler::branchTest32(Condition cond, Register lhs, Imm32 rhs, L label)
+{
+    MOZ_ASSERT(cond == Zero || cond == NonZero || cond == Signed || cond == NotSigned);
+    test32(lhs, rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchTest32(Condition cond, const Address& lhs, Imm32 rhs, Label* label)
+{
+    MOZ_ASSERT(cond == Zero || cond == NonZero || cond == Signed || cond == NotSigned);
+    test32(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchTestPtr(Condition cond, Register lhs, Register rhs, Label* label)
+{
+    testPtr(lhs, rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchTestPtr(Condition cond, Register lhs, Imm32 rhs, Label* label)
+{
+    testPtr(lhs, rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchTestPtr(Condition cond, const Address& lhs, Imm32 rhs, Label* label)
+{
+    testPtr(Operand(lhs), rhs);
+    j(cond, label);
+}
+
+void
+MacroAssembler::branchTestInt32Truthy(bool truthy, const ValueOperand& operand, Label* label)
+{
+    Condition cond = testInt32Truthy(truthy, operand);
+    j(cond, label);
+}
+
 //}}} check_macroassembler_style
 // ===============================================================
+
+void
+MacroAssemblerX86Shared::clampIntToUint8(Register reg)
+{
+    Label inRange;
+    asMasm().branchTest32(Assembler::Zero, reg, Imm32(0xffffff00), &inRange);
+    {
+        sarl(Imm32(31), reg);
+        notl(reg);
+        andl(Imm32(255), reg);
+    }
+    bind(&inRange);
+}
 
 } // namespace jit
 } // namespace js

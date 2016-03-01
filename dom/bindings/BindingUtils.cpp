@@ -497,6 +497,22 @@ ErrorResult::SetPendingException(JSContext* cx)
   SetPendingGenericErrorException(cx);
 }
 
+void
+ErrorResult::StealExceptionFromJSContext(JSContext* cx)
+{
+  MOZ_ASSERT(mMightHaveUnreportedJSException,
+             "Why didn't you tell us you planned to throw a JS exception?");
+
+  JS::Rooted<JS::Value> exn(cx);
+  if (!JS_GetPendingException(cx, &exn)) {
+    ThrowUncatchableException();
+    return;
+  }
+
+  ThrowJSException(cx, exn);
+  JS_ClearPendingException(cx);
+}
+
 namespace dom {
 
 bool
@@ -3247,8 +3263,7 @@ UnprivilegedJunkScopeOrWorkerGlobal()
     return xpc::UnprivilegedJunkScope();
   }
 
-  return workers::GetCurrentThreadWorkerPrivate()->
-    GlobalScope()->GetGlobalJSObject();
+  return workers::GetCurrentThreadWorkerGlobal();
 }
 } // namespace binding_detail
 

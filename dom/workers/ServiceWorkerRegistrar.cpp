@@ -40,6 +40,7 @@ namespace {
 
 static const char* gSupportedRegistrarVersions[] = {
   SERVICEWORKERREGISTRAR_VERSION,
+  "3",
   "2"
 };
 
@@ -141,6 +142,29 @@ ServiceWorkerRegistrar::GetRegistrations(
   }
 }
 
+namespace {
+
+bool Equivalent(const ServiceWorkerRegistrationData& aLeft,
+                const ServiceWorkerRegistrationData& aRight)
+{
+  MOZ_ASSERT(aLeft.principal().type() ==
+             mozilla::ipc::PrincipalInfo::TContentPrincipalInfo);
+  MOZ_ASSERT(aRight.principal().type() ==
+             mozilla::ipc::PrincipalInfo::TContentPrincipalInfo);
+
+  const auto& leftPrincipal = aLeft.principal().get_ContentPrincipalInfo();
+  const auto& rightPrincipal = aRight.principal().get_ContentPrincipalInfo();
+
+  // Only compare the attributes, not the spec part of the principal.
+  // The scope comparison above already covers the origin and codebase
+  // principals include the full path in their spec which is not what
+  // we want here.
+  return aLeft.scope() == aRight.scope() &&
+         leftPrincipal.attrs() == rightPrincipal.attrs();
+}
+
+} // anonymous namespace
+
 void
 ServiceWorkerRegistrar::RegisterServiceWorker(
                                      const ServiceWorkerRegistrationData& aData)
@@ -156,26 +180,12 @@ ServiceWorkerRegistrar::RegisterServiceWorker(
     MonitorAutoLock lock(mMonitor);
     MOZ_ASSERT(mDataLoaded);
 
-    const mozilla::ipc::PrincipalInfo& newPrincipalInfo = aData.principal();
-    MOZ_ASSERT(newPrincipalInfo.type() ==
-               mozilla::ipc::PrincipalInfo::TContentPrincipalInfo);
-
-    const mozilla::ipc::ContentPrincipalInfo& newContentPrincipalInfo =
-      newPrincipalInfo.get_ContentPrincipalInfo();
-
     bool found = false;
     for (uint32_t i = 0, len = mData.Length(); i < len; ++i) {
-      if (mData[i].scope() == aData.scope()) {
-        const mozilla::ipc::PrincipalInfo& existingPrincipalInfo =
-          mData[i].principal();
-        const mozilla::ipc::ContentPrincipalInfo& existingContentPrincipalInfo =
-          existingPrincipalInfo.get_ContentPrincipalInfo();
-
-        if (newContentPrincipalInfo == existingContentPrincipalInfo) {
-          mData[i] = aData;
-          found = true;
-          break;
-        }
+      if (Equivalent(aData, mData[i])) {
+        mData[i] = aData;
+        found = true;
+        break;
       }
     }
 
@@ -205,9 +215,12 @@ ServiceWorkerRegistrar::UnregisterServiceWorker(
     MonitorAutoLock lock(mMonitor);
     MOZ_ASSERT(mDataLoaded);
 
+    ServiceWorkerRegistrationData tmp;
+    tmp.principal() = aPrincipalInfo;
+    tmp.scope() = aScope;
+
     for (uint32_t i = 0; i < mData.Length(); ++i) {
-      if (mData[i].principal() == aPrincipalInfo &&
-          mData[i].scope() == aScope) {
+      if (Equivalent(tmp, mData[i])) {
         mData.RemoveElementAt(i);
         deleted = true;
         break;
@@ -315,9 +328,12 @@ ServiceWorkerRegistrar::ReadData()
     return NS_ERROR_FAILURE;
   }
 
+  nsTArray<ServiceWorkerRegistrationData> tmpData;
+
   bool overwrite = false;
+  bool dedupe = false;
   while (hasMoreLines) {
-    ServiceWorkerRegistrationData* entry = mData.AppendElement();
+    ServiceWorkerRegistrationData* entry = tmpData.AppendElement();
 
 #define GET_LINE(x)                                   \
     rv = lineInputStream->ReadLine(x, &hasMoreLines); \
@@ -329,6 +345,7 @@ ServiceWorkerRegistrar::ReadData()
     }
 
     nsAutoCString line;
+    nsAutoCString unused;
     if (version.EqualsLiteral(SERVICEWORKERREGISTRAR_VERSION)) {
       nsAutoCString suffix;
       GET_LINE(suffix);
@@ -338,18 +355,19 @@ ServiceWorkerRegistrar::ReadData()
         return NS_ERROR_INVALID_ARG;
       }
 
-      GET_LINE(line);
-      entry->principal() =
-        mozilla::ipc::ContentPrincipalInfo(attrs, line);
-
       GET_LINE(entry->scope());
+
+      entry->principal() =
+        mozilla::ipc::ContentPrincipalInfo(attrs, entry->scope());
+
       GET_LINE(entry->currentWorkerURL());
 
       nsAutoCString cacheName;
       GET_LINE(cacheName);
       CopyUTF8toUTF16(cacheName, entry->cacheName());
-    } else if (version.EqualsLiteral("2")) {
+    } else if (version.EqualsLiteral("3")) {
       overwrite = true;
+      dedupe = true;
 
       nsAutoCString suffix;
       GET_LINE(suffix);
@@ -359,14 +377,40 @@ ServiceWorkerRegistrar::ReadData()
         return NS_ERROR_INVALID_ARG;
       }
 
-      GET_LINE(line);
-      entry->principal() =
-        mozilla::ipc::ContentPrincipalInfo(attrs, line);
+      // principal spec is no longer used; we use scope directly instead
+      GET_LINE(unused);
 
       GET_LINE(entry->scope());
 
+      entry->principal() =
+        mozilla::ipc::ContentPrincipalInfo(attrs, entry->scope());
+
+      GET_LINE(entry->currentWorkerURL());
+
+      nsAutoCString cacheName;
+      GET_LINE(cacheName);
+      CopyUTF8toUTF16(cacheName, entry->cacheName());
+    } else if (version.EqualsLiteral("2")) {
+      overwrite = true;
+      dedupe = true;
+
+      nsAutoCString suffix;
+      GET_LINE(suffix);
+
+      PrincipalOriginAttributes attrs;
+      if (!attrs.PopulateFromSuffix(suffix)) {
+        return NS_ERROR_INVALID_ARG;
+      }
+
+      // principal spec is no longer used; we use scope directly instead
+      GET_LINE(unused);
+
+      GET_LINE(entry->scope());
+
+      entry->principal() =
+        mozilla::ipc::ContentPrincipalInfo(attrs, entry->scope());
+
       // scriptSpec is no more used in latest version.
-      nsAutoCString unused;
       GET_LINE(unused);
 
       GET_LINE(entry->currentWorkerURL());
@@ -394,6 +438,38 @@ ServiceWorkerRegistrar::ReadData()
   }
 
   stream->Close();
+
+  // Copy data over to mData.
+  for (uint32_t i = 0; i < tmpData.Length(); ++i) {
+    bool match = false;
+    if (dedupe) {
+      MOZ_ASSERT(overwrite);
+      // If this is an old profile, then we might need to deduplicate.  In
+      // theory this can be removed in the future (Bug 1248449)
+      for (uint32_t j = 0; j < mData.Length(); ++j) {
+        // Use same comparison as RegisterServiceWorker. Scope contains
+        // basic origin information.  Combine with any principal attributes.
+        if (Equivalent(tmpData[i], mData[j])) {
+          // Last match wins, just like legacy loading used to do in
+          // the ServiceWorkerManager.
+          mData[j] = tmpData[i];
+          // Dupe found, so overwrite file with reduced list.
+          match = true;
+          break;
+        }
+      }
+    } else {
+#ifdef DEBUG
+      // Otherwise assert no duplications in debug builds.
+      for (uint32_t j = 0; j < mData.Length(); ++j) {
+        MOZ_ASSERT(!Equivalent(tmpData[i], mData[j]));
+      }
+#endif
+    }
+    if (!match) {
+      mData.AppendElement(tmpData[i]);
+    }
+  }
 
   // Overwrite previous version.
   // Cannot call SaveData directly because gtest uses main-thread.
@@ -609,9 +685,6 @@ ServiceWorkerRegistrar::WriteData()
 
     buffer.Truncate();
     buffer.Append(suffix.get());
-    buffer.Append('\n');
-
-    buffer.Append(cInfo.spec());
     buffer.Append('\n');
 
     buffer.Append(data[i].scope());

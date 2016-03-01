@@ -30,16 +30,6 @@ const nsIID kWorkerRunnableIID = {
   0x320cc0b5, 0xef12, 0x4084, { 0x88, 0x6e, 0xca, 0x6a, 0x81, 0xe4, 0x1d, 0x68 }
 };
 
-void
-MaybeReportMainThreadException(JSContext* aCx, bool aResult)
-{
-  AssertIsOnMainThread();
-
-  if (aCx && !aResult) {
-    JS_ReportPendingException(aCx);
-  }
-}
-
 } // namespace
 
 #ifdef DEBUG
@@ -69,7 +59,7 @@ WorkerRunnable::DefaultGlobalObject() const
 }
 
 bool
-WorkerRunnable::PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
+WorkerRunnable::PreDispatch(WorkerPrivate* aWorkerPrivate)
 {
 #ifdef DEBUG
   MOZ_ASSERT(aWorkerPrivate);
@@ -80,10 +70,6 @@ WorkerRunnable::PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
       break;
 
     case WorkerThreadModifyBusyCount:
-      aWorkerPrivate->AssertIsOnParentThread();
-      MOZ_ASSERT(aCx);
-      break;
-
     case WorkerThreadUnchangedBusyCount:
       aWorkerPrivate->AssertIsOnParentThread();
       break;
@@ -94,43 +80,20 @@ WorkerRunnable::PreDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
 #endif
 
   if (mBehavior == WorkerThreadModifyBusyCount) {
-    return aWorkerPrivate->ModifyBusyCount(aCx, true);
+    return aWorkerPrivate->ModifyBusyCount(true);
   }
 
   return true;
 }
 
 bool
-WorkerRunnable::Dispatch(JSContext* aCx)
+WorkerRunnable::Dispatch()
 {
-  bool ok;
-
-  if (!aCx) {
-    ok = PreDispatch(nullptr, mWorkerPrivate);
-    if (ok) {
-      ok = DispatchInternal();
-    }
-    PostDispatch(nullptr, mWorkerPrivate, ok);
-    return ok;
+  bool ok = PreDispatch(mWorkerPrivate);
+  if (ok) {
+    ok = DispatchInternal();
   }
-
-  JSAutoRequest ar(aCx);
-
-  JS::Rooted<JSObject*> global(aCx, JS::CurrentGlobalOrNull(aCx));
-
-  Maybe<JSAutoCompartment> ac;
-  if (global) {
-    ac.emplace(aCx, global);
-  }
-
-  ok = PreDispatch(aCx, mWorkerPrivate);
-
-  if (ok && !DispatchInternal()) {
-    ok = false;
-  }
-
-  PostDispatch(aCx, mWorkerPrivate, ok);
-
+  PostDispatch(mWorkerPrivate, ok);
   return ok;
 }
 
@@ -161,7 +124,7 @@ WorkerRunnable::DispatchInternal()
 }
 
 void
-WorkerRunnable::PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
+WorkerRunnable::PostDispatch(WorkerPrivate* aWorkerPrivate,
                              bool aDispatchResult)
 {
   MOZ_ASSERT(aWorkerPrivate);
@@ -174,7 +137,6 @@ WorkerRunnable::PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
 
     case WorkerThreadModifyBusyCount:
       aWorkerPrivate->AssertIsOnParentThread();
-      MOZ_ASSERT(aCx);
       break;
 
     case WorkerThreadUnchangedBusyCount:
@@ -188,10 +150,7 @@ WorkerRunnable::PostDispatch(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
 
   if (!aDispatchResult) {
     if (mBehavior == WorkerThreadModifyBusyCount) {
-      aWorkerPrivate->ModifyBusyCount(aCx, false);
-    }
-    if (aCx) {
-      JS_ReportPendingException(aCx);
+      aWorkerPrivate->ModifyBusyCount(false);
     }
   }
 }
@@ -223,9 +182,7 @@ WorkerRunnable::PostRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
 #endif
 
   if (mBehavior == WorkerThreadModifyBusyCount) {
-    if (!aWorkerPrivate->ModifyBusyCountFromWorker(aCx, false)) {
-      aRunResult = false;
-    }
+    aWorkerPrivate->ModifyBusyCountFromWorker(false);
   }
 
   if (!aRunResult) {
@@ -350,10 +307,44 @@ WorkerRunnable::Run()
     cx = jsapi.cx();
   }
 
-  // If we're not on the worker thread we'll either be in our parent's
-  // compartment or the null compartment, so we need to enter our own.
+  // Note that we can't assert anything about mWorkerPrivate->GetWrapper()
+  // existing, since it may in fact have been GCed (and we may be one of the
+  // runnables cleaning up the worker as a result).
+
+  // If we are on the parent thread and that thread is not the main thread,
+  // then we must be a dedicated worker (because there are no
+  // Shared/ServiceWorkers whose parent is itself a worker) and then we
+  // definitely have a globalObject.  If it _is_ the main thread, globalObject
+  // can be null for workers started from JSMs or other non-window contexts,
+  // sadly.
+  MOZ_ASSERT_IF(!targetIsWorkerThread && !isMainThread,
+                mWorkerPrivate->IsDedicatedWorker() && globalObject);
+
+  // If we're on the parent thread we might be in a null compartment in the
+  // situation described above when globalObject is null.  Make sure to enter
+  // the compartment of the worker's reflector if there is one.  There might
+  // not be one if we're just starting to compile the script for this worker.
   Maybe<JSAutoCompartment> ac;
   if (!targetIsWorkerThread && mWorkerPrivate->GetWrapper()) {
+    // If we're on the parent thread and have a reflector and a globalObject,
+    // then the compartments of cx, globalObject, and the worker's reflector
+    // should all match.
+    MOZ_ASSERT_IF(globalObject,
+                  js::GetObjectCompartment(mWorkerPrivate->GetWrapper()) ==
+                    js::GetContextCompartment(cx));
+    MOZ_ASSERT_IF(globalObject,
+                  js::GetObjectCompartment(mWorkerPrivate->GetWrapper()) ==
+                    js::GetObjectCompartment(globalObject->GetGlobalJSObject()));
+
+    // If we're on the parent thread and have a reflector, then our
+    // JSContext had better be either in the null compartment (and hence
+    // have no globalObject) or in the compartment of our reflector.
+    MOZ_ASSERT(!js::GetContextCompartment(cx) ||
+               js::GetObjectCompartment(mWorkerPrivate->GetWrapper()) ==
+                 js::GetContextCompartment(cx),
+               "Must either be in the null compartment or in our reflector "
+               "compartment");
+
     ac.emplace(cx, mWorkerPrivate->GetWrapper());
   }
 
@@ -385,11 +376,9 @@ WorkerRunnable::Cancel()
 }
 
 void
-WorkerDebuggerRunnable::PostDispatch(JSContext* aCx,
-                                     WorkerPrivate* aWorkerPrivate,
+WorkerDebuggerRunnable::PostDispatch(WorkerPrivate* aWorkerPrivate,
                                      bool aDispatchResult)
 {
-  MaybeReportMainThreadException(aCx, aDispatchResult);
 }
 
 WorkerSyncRunnable::WorkerSyncRunnable(WorkerPrivate* aWorkerPrivate,
@@ -433,11 +422,9 @@ WorkerSyncRunnable::DispatchInternal()
 }
 
 void
-MainThreadWorkerSyncRunnable::PostDispatch(JSContext* aCx,
-                                           WorkerPrivate* aWorkerPrivate,
+MainThreadWorkerSyncRunnable::PostDispatch(WorkerPrivate* aWorkerPrivate,
                                            bool aDispatchResult)
 {
-  MaybeReportMainThreadException(aCx, aDispatchResult);
 }
 
 StopSyncLoopRunnable::StopSyncLoopRunnable(
@@ -474,7 +461,7 @@ StopSyncLoopRunnable::WorkerRun(JSContext* aCx,
   mSyncLoopTarget.swap(syncLoopTarget);
 
   if (!mResult) {
-    MaybeSetException(aCx);
+    MaybeSetException();
   }
 
   aWorkerPrivate->StopSyncLoop(syncLoopTarget, mResult);
@@ -491,11 +478,9 @@ StopSyncLoopRunnable::DispatchInternal()
 }
 
 void
-MainThreadStopSyncLoopRunnable::PostDispatch(JSContext* aCx,
-                                             WorkerPrivate* aWorkerPrivate,
+MainThreadStopSyncLoopRunnable::PostDispatch(WorkerPrivate* aWorkerPrivate,
                                              bool aDispatchResult)
 {
-  MaybeReportMainThreadException(aCx, aDispatchResult);
 }
 
 #ifdef DEBUG
@@ -540,15 +525,10 @@ WorkerControlRunnable::DispatchInternal()
 }
 
 void
-MainThreadWorkerControlRunnable::PostDispatch(JSContext* aCx,
-                                              WorkerPrivate* aWorkerPrivate,
+MainThreadWorkerControlRunnable::PostDispatch(WorkerPrivate* aWorkerPrivate,
                                               bool aDispatchResult)
 {
   AssertIsOnMainThread();
-
-  if (aCx && !aDispatchResult) {
-    JS_ReportPendingException(aCx);
-  }
 }
 
 NS_IMPL_ISUPPORTS_INHERITED0(WorkerControlRunnable, WorkerRunnable)
@@ -591,7 +571,7 @@ WorkerMainThreadRunnable::Run()
                                        mSyncLoopTarget.forget(),
                                        runResult);
 
-  MOZ_ALWAYS_TRUE(response->Dispatch(nullptr));
+  MOZ_ALWAYS_TRUE(response->Dispatch());
 
   return NS_OK;
 }
@@ -607,41 +587,27 @@ WorkerCheckAPIExposureOnMainThreadRunnable::Dispatch()
 }
 
 bool
-WorkerSameThreadRunnable::PreDispatch(JSContext* aCx,
-                                      WorkerPrivate* aWorkerPrivate)
+WorkerSameThreadRunnable::PreDispatch(WorkerPrivate* aWorkerPrivate)
 {
+  // We don't call WorkerRunnable::PreDispatch, because we're using
+  // WorkerThreadModifyBusyCount for mBehavior, and WorkerRunnable will assert
+  // that PreDispatch is on the parent thread in that case.
   aWorkerPrivate->AssertIsOnWorkerThread();
   return true;
 }
 
 void
-WorkerSameThreadRunnable::PostDispatch(JSContext* aCx,
-                                       WorkerPrivate* aWorkerPrivate,
+WorkerSameThreadRunnable::PostDispatch(WorkerPrivate* aWorkerPrivate,
                                        bool aDispatchResult)
 {
+  // We don't call WorkerRunnable::PostDispatch, because we're using
+  // WorkerThreadModifyBusyCount for mBehavior, and WorkerRunnable will assert
+  // that PostDispatch is on the parent thread in that case.
   aWorkerPrivate->AssertIsOnWorkerThread();
   if (aDispatchResult) {
-    DebugOnly<bool> willIncrement = aWorkerPrivate->ModifyBusyCountFromWorker(aCx, true);
+    DebugOnly<bool> willIncrement = aWorkerPrivate->ModifyBusyCountFromWorker(true);
     // Should never fail since if this thread is still running, so should the
     // parent and it should be able to process a control runnable.
     MOZ_ASSERT(willIncrement);
   }
 }
-
-void
-WorkerSameThreadRunnable::PostRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
-                                  bool aRunResult)
-{
-  MOZ_ASSERT(aCx);
-  MOZ_ASSERT(aWorkerPrivate);
-
-  aWorkerPrivate->AssertIsOnWorkerThread();
-
-  DebugOnly<bool> willDecrement = aWorkerPrivate->ModifyBusyCountFromWorker(aCx, false);
-  MOZ_ASSERT(willDecrement);
-
-  if (!aRunResult) {
-    JS_ReportPendingException(aCx);
-  }
-}
-

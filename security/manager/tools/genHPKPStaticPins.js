@@ -238,7 +238,7 @@ function downloadAndParseChromeCerts(filename, certNameToSKD, certSKDToName) {
     if (line.length == 0 || line[0] == '#') {
       continue;
     }
-    switch(state) {
+    switch (state) {
       case PRE_NAME:
         chromeName = line;
         state = POST_NAME;
@@ -428,7 +428,7 @@ function nameToAlias(certName) {
   // remove  non-ascii characters
   certName = certName.replace(/[^[:ascii:]]/g, "_");
   // replace non word characters
-  certName = certName.replace(/[^A-Za-z0-9]/g ,"_");
+  certName = certName.replace(/[^A-Za-z0-9]/g, "_");
 
   return "k" + certName + "Fingerprint";
 }

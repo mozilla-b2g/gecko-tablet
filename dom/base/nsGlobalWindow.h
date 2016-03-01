@@ -106,7 +106,6 @@ class Crypto;
 class External;
 class Function;
 class Gamepad;
-class VRDevice;
 class MediaQueryList;
 class MozSelfSupport;
 class Navigator;
@@ -117,6 +116,8 @@ struct RequestInit;
 class RequestOrUSVString;
 class Selection;
 class SpeechSynthesis;
+class U2F;
+class VRDevice;
 class WakeLock;
 #if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
 class WindowOrientationObserver;
@@ -124,9 +125,7 @@ class WindowOrientationObserver;
 namespace cache {
 class CacheStorage;
 } // namespace cache
-namespace indexedDB {
 class IDBFactory;
-} // namespace indexedDB
 } // namespace dom
 namespace gfx {
 class VRDeviceProxy;
@@ -423,6 +422,7 @@ public:
   // Outer windows only.
   virtual void ActivateOrDeactivate(bool aActivate) override;
   virtual void SetActive(bool aActive) override;
+  virtual bool IsTopLevelWindowActive() override;
   virtual void SetIsBackground(bool aIsBackground) override;
   virtual void SetChromeEventHandler(mozilla::dom::EventTarget* aChromeEventHandler) override;
 
@@ -990,7 +990,7 @@ public:
   mozilla::dom::Selection* GetSelectionOuter();
   mozilla::dom::Selection* GetSelection(mozilla::ErrorResult& aError);
   already_AddRefed<nsISelection> GetSelection() override;
-  mozilla::dom::indexedDB::IDBFactory* GetIndexedDB(mozilla::ErrorResult& aError);
+  mozilla::dom::IDBFactory* GetIndexedDB(mozilla::ErrorResult& aError);
   already_AddRefed<nsICSSDeclaration>
     GetComputedStyle(mozilla::dom::Element& aElt, const nsAString& aPseudoElt,
                      mozilla::ErrorResult& aError) override;
@@ -1073,6 +1073,7 @@ public:
   void SizeToContentOuter(mozilla::ErrorResult& aError, bool aCallerIsChrome);
   void SizeToContent(mozilla::ErrorResult& aError);
   mozilla::dom::Crypto* GetCrypto(mozilla::ErrorResult& aError);
+  mozilla::dom::U2F* GetU2f(mozilla::ErrorResult& aError);
   nsIControllers* GetControllersOuter(mozilla::ErrorResult& aError);
   nsIControllers* GetControllers(mozilla::ErrorResult& aError);
   nsresult GetControllers(nsIControllers** aControllers) override;
@@ -1652,6 +1653,10 @@ protected:
   // show, in that case we show a separate dialog to ask this question.
   bool ConfirmDialogIfNeeded();
 
+  // Helper called after moving/resizing, to update docShell's presContext
+  // if we have caused a resolution change by moving across monitors.
+  void CheckForDPIChange();
+
 private:
   // Fire the JS engine's onNewGlobalObject hook.  Only used on inner windows.
   void FireOnNewGlobalObject();
@@ -1768,6 +1773,7 @@ protected:
   nsString                      mDefaultStatus;
   RefPtr<nsGlobalWindowObserver> mObserver; // Inner windows only.
   RefPtr<mozilla::dom::Crypto>  mCrypto;
+  RefPtr<mozilla::dom::U2F> mU2F;
   RefPtr<mozilla::dom::cache::CacheStorage> mCacheStorage;
   RefPtr<mozilla::dom::Console> mConsole;
   // We need to store an nsISupports pointer to this object because the
@@ -1834,7 +1840,7 @@ protected:
   // unsuspending it.
   nsCOMPtr<nsIDocument> mSuspendedDoc;
 
-  RefPtr<mozilla::dom::indexedDB::IDBFactory> mIndexedDB;
+  RefPtr<mozilla::dom::IDBFactory> mIndexedDB;
 
   // This counts the number of windows that have been opened in rapid succession
   // (i.e. within dom.successive_dialog_time_limit of each other). It is reset

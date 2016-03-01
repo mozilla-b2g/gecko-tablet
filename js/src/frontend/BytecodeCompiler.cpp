@@ -72,7 +72,7 @@ class MOZ_STACK_CLASS BytecodeCompiler
     bool canLazilyParse();
     bool createParser();
     bool createSourceAndParser();
-    bool createScript(Handle<StaticScope*> staticScope, bool savedCallerFun = false);
+    bool createScript(HandleObject staticScope, bool savedCallerFun = false);
     bool createEmitter(SharedContext* sharedContext, HandleScript evalCaller = nullptr,
                        bool insideNonGlobalEval = false);
     bool isEvalCompilationUnit();
@@ -255,7 +255,7 @@ BytecodeCompiler::createSourceAndParser()
 }
 
 bool
-BytecodeCompiler::createScript(Handle<StaticScope*> staticScope, bool savedCallerFun)
+BytecodeCompiler::createScript(HandleObject staticScope, bool savedCallerFun)
 {
     script = JSScript::Create(cx, staticScope, savedCallerFun, options,
                               sourceObject, /* sourceStart = */ 0, sourceBuffer.length());
@@ -284,8 +284,11 @@ BytecodeCompiler::isEvalCompilationUnit()
 bool
 BytecodeCompiler::isNonGlobalEvalCompilationUnit()
 {
-    return isEvalCompilationUnit() &&
-           !IsStaticGlobalLexicalScope(enclosingStaticScope->enclosingScope());
+    if (!isEvalCompilationUnit())
+        return false;
+    StaticEvalScope& eval = enclosingStaticScope->as<StaticEvalScope>();
+    JSObject* enclosing = eval.enclosingScopeForStaticScopeIter();
+    return !IsStaticGlobalLexicalScope(enclosing);
 }
 
 bool
@@ -559,8 +562,7 @@ BytecodeCompiler::compileScript(HandleObject scopeChain, HandleScript evalCaller
     return script;
 }
 
-ModuleObject*
-BytecodeCompiler::compileModule()
+ModuleObject* BytecodeCompiler::compileModule()
 {
     if (!createSourceAndParser())
         return nullptr;
@@ -569,13 +571,12 @@ BytecodeCompiler::compileModule()
     if (!module)
         return nullptr;
 
-    Rooted<StaticModuleScope*> moduleScope(cx, module->staticScope());
-    if (!createScript(moduleScope))
+    if (!createScript(module))
         return nullptr;
 
     module->init(script);
 
-    ModuleBuilder builder(cx->asJSContext(), module);
+    ModuleBuilder builder(cx, module);
     ParseNode* pn = parser->standaloneModule(module, builder);
     if (!pn)
         return nullptr;
@@ -650,8 +651,7 @@ BytecodeCompiler::compileFunctionBody(MutableHandleFunction fun,
     if (fn->pn_funbox->function()->isInterpreted()) {
         MOZ_ASSERT(fun == fn->pn_funbox->function());
 
-        Rooted<StaticScope*> scope(cx, fn->pn_funbox->staticScope());
-        if (!createScript(scope))
+        if (!createScript(enclosingStaticScope))
             return false;
 
         script->bindings = fn->pn_funbox->bindings;
@@ -759,20 +759,38 @@ frontend::CompileScript(ExclusiveContext* cx, LifoAlloc* alloc, HandleObject sco
 }
 
 ModuleObject*
-frontend::CompileModule(JSContext* cx, HandleObject obj,
-                        const ReadOnlyCompileOptions& optionsInput,
-                        SourceBufferHolder& srcBuf)
+frontend::CompileModule(ExclusiveContext* cx, const ReadOnlyCompileOptions& optionsInput,
+                        SourceBufferHolder& srcBuf, LifoAlloc* alloc,
+                        ScriptSourceObject** sourceObjectOut /* = nullptr */)
 {
     MOZ_ASSERT(srcBuf.get());
+    MOZ_ASSERT(cx->isJSContext() == (alloc == nullptr));
+
+    if (!alloc)
+        alloc = &cx->asJSContext()->tempLifoAlloc();
+    MOZ_ASSERT_IF(sourceObjectOut, *sourceObjectOut == nullptr);
 
     CompileOptions options(cx, optionsInput);
     options.maybeMakeStrictMode(true); // ES6 10.2.1 Module code is always strict mode code.
     options.setIsRunOnce(true);
 
     Rooted<StaticScope*> staticScope(cx, &cx->global()->lexicalScope().staticBlock());
-    BytecodeCompiler compiler(cx, &cx->tempLifoAlloc(), options, srcBuf, staticScope,
+    BytecodeCompiler compiler(cx, alloc, options, srcBuf, staticScope,
                               TraceLogger_ParserCompileModule);
-    return compiler.compileModule();
+    RootedModuleObject module(cx, compiler.compileModule());
+    if (!module)
+        return nullptr;
+
+    // This happens in GlobalHelperThreadState::finishModuleParseTask() when a
+    // module is compiled off main thread.
+    if (cx->isJSContext() && !ModuleObject::FreezeArrayProperties(cx->asJSContext(), module))
+        return nullptr;
+
+    // See the comment about sourceObjectOut above.
+    if (sourceObjectOut)
+        *sourceObjectOut = compiler.sourceObjectPtr();
+
+    return module;
 }
 
 bool
@@ -803,12 +821,11 @@ frontend::CompileLazyFunction(JSContext* cx, Handle<LazyScript*> lazy, const cha
     if (!NameFunctions(cx, pn))
         return false;
 
-    Rooted<StaticScope*> staticScope(cx, pn->pn_funbox->staticScope());
-    MOZ_ASSERT(staticScope);
+    RootedObject enclosingScope(cx, lazy->enclosingScope());
     RootedScriptSource sourceObject(cx, lazy->sourceObject());
     MOZ_ASSERT(sourceObject);
 
-    Rooted<JSScript*> script(cx, JSScript::Create(cx, staticScope, false, options,
+    Rooted<JSScript*> script(cx, JSScript::Create(cx, enclosingScope, false, options,
                                                   sourceObject, lazy->begin(), lazy->end()));
     if (!script)
         return false;

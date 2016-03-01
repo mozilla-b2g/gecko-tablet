@@ -1230,13 +1230,14 @@ nsFocusManager::SetFocusInner(nsIContent* aNewContent, int32_t aFlags,
   // to guard against phishing.
 #ifndef XP_MACOSX
   if (contentToFocus &&
-      nsContentUtils::GetRootDocument(contentToFocus->OwnerDoc())->IsFullScreenDoc() &&
+      nsContentUtils::
+        GetRootDocument(contentToFocus->OwnerDoc())->GetFullscreenElement() &&
       nsContentUtils::HasPluginWithUncontrolledEventDispatch(contentToFocus)) {
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
                                     NS_LITERAL_CSTRING("DOM"),
                                     contentToFocus->OwnerDoc(),
                                     nsContentUtils::eDOM_PROPERTIES,
-                                    "FocusedWindowedPluginWhileFullScreen");
+                                    "FocusedWindowedPluginWhileFullscreen");
     nsIDocument::AsyncExitFullscreen(contentToFocus->OwnerDoc());
   }
 #endif

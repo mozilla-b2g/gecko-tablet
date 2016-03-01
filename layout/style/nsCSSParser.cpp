@@ -56,6 +56,7 @@
 #include "gfxFontFamilyList.h"
 
 using namespace mozilla;
+using namespace mozilla::css;
 
 typedef nsCSSProps::KTableEntry KTableEntry;
 
@@ -118,9 +119,9 @@ struct CSSParserInputState {
   bool mHavePushBack;
 };
 
-static_assert(eAuthorSheetFeatures == 0 &&
-              eUserSheetFeatures == 1 &&
-              eAgentSheetFeatures == 2,
+static_assert(css::eAuthorSheetFeatures == 0 &&
+              css::eUserSheetFeatures == 1 &&
+              css::eAgentSheetFeatures == 2,
               "sheet parsing mode constants won't fit "
               "in CSSParserImpl::mParsingMode");
 
@@ -148,8 +149,8 @@ public:
                       nsIURI*          aBaseURI,
                       nsIPrincipal*    aSheetPrincipal,
                       uint32_t         aLineNumber,
-                      SheetParsingMode aParsingMode,
-                      LoaderReusableStyleSheets* aReusableSheets);
+                      css::SheetParsingMode aParsingMode,
+                      css::LoaderReusableStyleSheets* aReusableSheets);
 
   already_AddRefed<css::Declaration>
            ParseStyleAttribute(const nsAString&  aAttributeValue,
@@ -344,11 +345,11 @@ public:
                                            uint32_t aLineOffset);
 
   bool AgentRulesEnabled() const {
-    return mParsingMode == eAgentSheetFeatures;
+    return mParsingMode == css::eAgentSheetFeatures;
   }
   bool UserRulesEnabled() const {
-    return mParsingMode == eAgentSheetFeatures ||
-           mParsingMode == eUserSheetFeatures;
+    return mParsingMode == css::eAgentSheetFeatures ||
+           mParsingMode == css::eUserSheetFeatures;
   }
 
   nsCSSProps::EnabledState PropertyEnabledState() const {
@@ -753,7 +754,7 @@ protected:
                                               bool           aIsNegated,
                                               nsIAtom**      aPseudoElement,
                                               nsAtomList**   aPseudoElementArgs,
-                                              nsCSSPseudoElements::Type* aPseudoElementType);
+                                              CSSPseudoElementType* aPseudoElementType);
 
   nsSelectorParsingStatus ParseAttributeSelector(int32_t&       aDataMask,
                                                  nsCSSSelector& aSelector);
@@ -1356,10 +1357,10 @@ protected:
   RefPtr<CSSStyleSheet> mSheet;
 
   // Used for @import rules
-  mozilla::css::Loader* mChildLoader; // not ref counted, it owns us
+  css::Loader* mChildLoader; // not ref counted, it owns us
 
   // Any sheets we may reuse when parsing an @import.
-  LoaderReusableStyleSheets* mReusableSheets;
+  css::LoaderReusableStyleSheets* mReusableSheets;
 
   // Sheet section we're in.  This is used to enforce correct ordering of the
   // various rule types (eg the fact that a @charset rule must come before
@@ -1393,7 +1394,7 @@ protected:
   // useful in user sheets.  The only values stored in this field are
   // 0, 1, and 2; three bits are allocated to avoid issues should the
   // enum type be signed.
-  SheetParsingMode mParsingMode : 3;
+  css::SheetParsingMode mParsingMode : 3;
 
   // True if we are in parsing rules for the chrome.
   bool mIsChrome : 1;
@@ -1523,7 +1524,7 @@ CSSParserImpl::CSSParserImpl()
     mNavQuirkMode(false),
     mHashlessColorQuirk(false),
     mUnitlessLengthQuirk(false),
-    mParsingMode(eAuthorSheetFeatures),
+    mParsingMode(css::eAuthorSheetFeatures),
     mIsChrome(false),
     mViewportUnitsEnabled(true),
     mHTMLMediaMode(false),
@@ -1630,8 +1631,8 @@ CSSParserImpl::ParseSheet(const nsAString& aInput,
                           nsIURI*          aBaseURI,
                           nsIPrincipal*    aSheetPrincipal,
                           uint32_t         aLineNumber,
-                          SheetParsingMode aParsingMode,
-                          LoaderReusableStyleSheets* aReusableSheets)
+                          css::SheetParsingMode aParsingMode,
+                          css::LoaderReusableStyleSheets* aReusableSheets)
 {
   NS_PRECONDITION(aSheetPrincipal, "Must have principal here!");
   NS_PRECONDITION(aBaseURI, "need base URI");
@@ -1701,7 +1702,7 @@ CSSParserImpl::ParseSheet(const nsAString& aInput,
   }
   ReleaseScanner();
 
-  mParsingMode = eAuthorSheetFeatures;
+  mParsingMode = css::eAuthorSheetFeatures;
   mIsChrome = false;
   mReusableSheets = nullptr;
 
@@ -1853,7 +1854,7 @@ CSSParserImpl::ParseLonghandProperty(const nsCSSProperty aPropID,
   MOZ_ASSERT(aPropID < eCSSProperty_COUNT_no_shorthands,
              "ParseLonghandProperty must only take a longhand property");
 
-  RefPtr<Declaration> declaration = new Declaration;
+  RefPtr<css::Declaration> declaration = new css::Declaration;
   declaration->InitializeEmpty();
 
   bool changed;
@@ -1874,7 +1875,7 @@ CSSParserImpl::ParseTransformProperty(const nsAString& aPropValue,
                                       bool aDisallowRelativeValues,
                                       nsCSSValue& aValue)
 {
-  RefPtr<Declaration> declaration = new Declaration();
+  RefPtr<css::Declaration> declaration = new css::Declaration();
   declaration->InitializeEmpty();
 
   mData.AssertInitialState();
@@ -5827,7 +5828,7 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
                                    bool           aIsNegated,
                                    nsIAtom**      aPseudoElement,
                                    nsAtomList**   aPseudoElementArgs,
-                                   nsCSSPseudoElements::Type* aPseudoElementType)
+                                   CSSPseudoElementType* aPseudoElementType)
 {
   NS_ASSERTION(aIsNegated || (aPseudoElement && aPseudoElementArgs),
                "expected location to store pseudo element");
@@ -5867,7 +5868,7 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
 
   // stash away some info about this pseudo so we only have to get it once.
   bool isTreePseudo = false;
-  nsCSSPseudoElements::Type pseudoElementType =
+  CSSPseudoElementType pseudoElementType =
     nsCSSPseudoElements::GetPseudoType(pseudo);
   nsCSSPseudoClasses::Type pseudoClassType =
     nsCSSPseudoClasses::GetPseudoType(pseudo);
@@ -5875,7 +5876,7 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
     nsCSSPseudoClasses::IsUserActionPseudoClass(pseudoClassType);
 
   if (!AgentRulesEnabled() &&
-      ((pseudoElementType < nsCSSPseudoElements::ePseudo_PseudoElementCount &&
+      ((pseudoElementType < CSSPseudoElementType::Count &&
         nsCSSPseudoElements::PseudoElementIsUASheetOnly(pseudoElementType)) ||
        (pseudoClassType != nsCSSPseudoClasses::ePseudoClass_NotPseudoClass &&
         nsCSSPseudoClasses::PseudoClassIsUASheetOnly(pseudoClassType)))) {
@@ -5887,17 +5888,17 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
 
   // We currently allow :-moz-placeholder and ::-moz-placeholder. We have to
   // be a bit stricter regarding the pseudo-element parsing rules.
-  if (pseudoElementType == nsCSSPseudoElements::ePseudo_mozPlaceholder &&
+  if (pseudoElementType == CSSPseudoElementType::mozPlaceholder &&
       pseudoClassType == nsCSSPseudoClasses::ePseudoClass_mozPlaceholder) {
     if (parsingPseudoElement) {
       pseudoClassType = nsCSSPseudoClasses::ePseudoClass_NotPseudoClass;
     } else {
-      pseudoElementType = nsCSSPseudoElements::ePseudo_NotPseudoElement;
+      pseudoElementType = CSSPseudoElementType::NotPseudo;
     }
   }
 
 #ifdef MOZ_XUL
-  isTreePseudo = (pseudoElementType == nsCSSPseudoElements::ePseudo_XULTree);
+  isTreePseudo = (pseudoElementType == CSSPseudoElementType::XULTree);
   // If a tree pseudo-element is using the function syntax, it will
   // get isTree set here and will pass the check below that only
   // allows functions if they are in our list of things allowed to be
@@ -5907,18 +5908,17 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
   // desired.
   bool isTree = (eCSSToken_Function == mToken.mType) && isTreePseudo;
 #endif
-  bool isPseudoElement =
-    (pseudoElementType < nsCSSPseudoElements::ePseudo_PseudoElementCount);
+  bool isPseudoElement = (pseudoElementType < CSSPseudoElementType::Count);
   // anonymous boxes are only allowed if they're the tree boxes or we have
   // enabled agent rules
   bool isAnonBox = isTreePseudo ||
-    (pseudoElementType == nsCSSPseudoElements::ePseudo_AnonBox &&
+    (pseudoElementType == CSSPseudoElementType::AnonBox &&
      AgentRulesEnabled());
   bool isPseudoClass =
     (pseudoClassType != nsCSSPseudoClasses::ePseudoClass_NotPseudoClass);
 
   NS_ASSERTION(!isPseudoClass ||
-               pseudoElementType == nsCSSPseudoElements::ePseudo_NotPseudoElement,
+               pseudoElementType == CSSPseudoElementType::NotPseudo,
                "Why is this atom both a pseudo-class and a pseudo-element?");
   NS_ASSERTION(isPseudoClass + isPseudoElement + isAnonBox <= 1,
                "Shouldn't be more than one of these");
@@ -5972,7 +5972,7 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
   }
   else if (!parsingPseudoElement && isPseudoClass) {
     if (aSelector.IsPseudoElement()) {
-      nsCSSPseudoElements::Type type = aSelector.PseudoType();
+      CSSPseudoElementType type = aSelector.PseudoType();
       if (!nsCSSPseudoElements::PseudoElementSupportsUserActionState(type)) {
         // We only allow user action pseudo-classes on certain pseudo-elements.
         REPORT_UNEXPECTED_TOKEN(PEPseudoSelNoUserActionPC);
@@ -6413,8 +6413,7 @@ CSSParserImpl::ParseSelector(nsCSSSelectorList* aList,
   nsCSSSelector* selector = aList->AddSelector(aPrevCombinator);
   nsCOMPtr<nsIAtom> pseudoElement;
   nsAutoPtr<nsAtomList> pseudoElementArgs;
-  nsCSSPseudoElements::Type pseudoElementType =
-    nsCSSPseudoElements::ePseudo_NotPseudoElement;
+  CSSPseudoElementType pseudoElementType = CSSPseudoElementType::NotPseudo;
 
   int32_t dataMask = 0;
   nsSelectorParsingStatus parsingStatus =
@@ -6433,7 +6432,7 @@ CSSParserImpl::ParseSelector(nsCSSSelectorList* aList,
                                           getter_Transfers(pseudoElementArgs),
                                           &pseudoElementType);
       if (pseudoElement &&
-          pseudoElementType != nsCSSPseudoElements::ePseudo_AnonBox) {
+          pseudoElementType != CSSPseudoElementType::AnonBox) {
         // Pseudo-elements other than anonymous boxes are represented with
         // a special ':' combinator.
 
@@ -6481,7 +6480,7 @@ CSSParserImpl::ParseSelector(nsCSSSelectorList* aList,
     return false;
   }
 
-  if (pseudoElementType == nsCSSPseudoElements::ePseudo_AnonBox) {
+  if (pseudoElementType == CSSPseudoElementType::AnonBox) {
     // We got an anonymous box pseudo-element; it must be the only
     // thing in this selector group.
     if (selector->mNext || !IsUniversalSelector(*selector)) {
@@ -11862,7 +11861,7 @@ CSSParserImpl::ParseImageLayersItem(
   aState.mSize->mYValue.SetAutoValue();
   aState.mComposite->mValue.SetIntValue(NS_STYLE_MASK_COMPOSITE_ADD,
                                         eCSSUnit_Enumerated);
-  aState.mMode->mValue.SetIntValue(NS_STYLE_MASK_MODE_AUTO,
+  aState.mMode->mValue.SetIntValue(NS_STYLE_MASK_MODE_MATCH_SOURCE,
                                    eCSSUnit_Enumerated);
   bool haveColor = false,
        haveImage = false,
@@ -14889,7 +14888,7 @@ CSSParserImpl::ParseTextAlign(nsCSSValue& aValue, const KTableEntry aTable[])
     return false;
   }
 
-  if (!nsLayoutUtils::IsTextAlignTrueValueEnabled()) {
+  if (!nsLayoutUtils::IsTextAlignUnsafeValueEnabled()) {
     aValue = left;
     return true;
   }
@@ -14897,14 +14896,14 @@ CSSParserImpl::ParseTextAlign(nsCSSValue& aValue, const KTableEntry aTable[])
   nsCSSValue right;
   if (ParseSingleTokenVariant(right, VARIANT_KEYWORD, aTable)) {
     // 'true' must be combined with some other value than 'true'.
-    if (left.GetIntValue() == NS_STYLE_TEXT_ALIGN_TRUE &&
-        right.GetIntValue() == NS_STYLE_TEXT_ALIGN_TRUE) {
+    if (left.GetIntValue() == NS_STYLE_TEXT_ALIGN_UNSAFE &&
+        right.GetIntValue() == NS_STYLE_TEXT_ALIGN_UNSAFE) {
       return false;
     }
     aValue.SetPairValue(left, right);
   } else {
     // Single value 'true' is not allowed.
-    if (left.GetIntValue() == NS_STYLE_TEXT_ALIGN_TRUE) {
+    if (left.GetIntValue() == NS_STYLE_TEXT_ALIGN_UNSAFE) {
       return false;
     }
     aValue = left;
@@ -17215,8 +17214,8 @@ nsCSSParser::ParseSheet(const nsAString& aInput,
                         nsIURI*          aBaseURI,
                         nsIPrincipal*    aSheetPrincipal,
                         uint32_t         aLineNumber,
-                        SheetParsingMode aParsingMode,
-                        LoaderReusableStyleSheets* aReusableSheets)
+                        css::SheetParsingMode aParsingMode,
+                        css::LoaderReusableStyleSheets* aReusableSheets)
 {
   return static_cast<CSSParserImpl*>(mImpl)->
     ParseSheet(aInput, aSheetURI, aBaseURI, aSheetPrincipal, aLineNumber,

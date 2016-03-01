@@ -90,8 +90,6 @@ MediaEngineRemoteVideoSource::Shutdown()
     Deallocate();
   }
 
-  mozilla::camera::Shutdown();
-
   mState = kReleased;
   mInitDone = false;
   return;
@@ -100,7 +98,8 @@ MediaEngineRemoteVideoSource::Shutdown()
 nsresult
 MediaEngineRemoteVideoSource::Allocate(const dom::MediaTrackConstraints& aConstraints,
                                        const MediaEnginePrefs& aPrefs,
-                                       const nsString& aDeviceId)
+                                       const nsString& aDeviceId,
+                                       const nsACString& aOrigin)
 {
   LOG((__PRETTY_FUNCTION__));
   AssertIsOnOwningThread();
@@ -120,11 +119,12 @@ MediaEngineRemoteVideoSource::Allocate(const dom::MediaTrackConstraints& aConstr
 
     if (mozilla::camera::GetChildAndCall(
       &mozilla::camera::CamerasChild::AllocateCaptureDevice,
-      mCapEngine, GetUUID().get(), kMaxUniqueIdLength, mCaptureIndex)) {
+      mCapEngine, GetUUID().get(), kMaxUniqueIdLength, mCaptureIndex, aOrigin)) {
       return NS_ERROR_FAILURE;
     }
     mState = kAllocated;
-    LOG(("Video device %d allocated", mCaptureIndex));
+    LOG(("Video device %d allocated for %s", mCaptureIndex,
+         PromiseFlatCString(aOrigin).get()));
   } else if (MOZ_LOG_TEST(GetMediaManagerLog(), mozilla::LogLevel::Debug)) {
     MonitorAutoLock lock(mMonitor);
     if (mSources.IsEmpty()) {

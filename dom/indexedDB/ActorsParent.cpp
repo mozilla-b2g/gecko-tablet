@@ -308,7 +308,7 @@ struct FullObjectStoreMetadata
 
   // These two members are only ever touched on a transaction thread!
   int64_t mNextAutoIncrementId;
-  int64_t mComittedAutoIncrementId;
+  int64_t mCommittedAutoIncrementId;
 
   bool mDeleted;
 
@@ -316,7 +316,7 @@ public:
   FullObjectStoreMetadata()
     : mCommonMetadata(0, nsString(), KeyPath(0), false)
     , mNextAutoIncrementId(0)
-    , mComittedAutoIncrementId(0)
+    , mCommittedAutoIncrementId(0)
     , mDeleted(false)
   {
     // This can happen either on the QuotaManager IO thread or on a
@@ -3048,8 +3048,6 @@ UpgradeKeyFunction::OnFunctionCall(mozIStorageValueArray* aValues,
 
   nsCOMPtr<nsIVariant> result = new mozilla::storage::AdoptedBlobVariant(data);
 
-  upgradedBlobData.release();
-
   result.forget(_retval);
   return NS_OK;
 }
@@ -3999,11 +3997,9 @@ UpgradeIndexDataValuesFunction::OnFunctionCall(mozIStorageValueArray* aArguments
   uint32_t newIdvLength;
   rv = MakeCompressedIndexDataValues(oldIdv, newIdv, &newIdvLength);
 
-  std::pair<uint8_t*, int> data(newIdv.get(), newIdvLength);
+  std::pair<uint8_t*, int> data(newIdv.release(), newIdvLength);
   
   nsCOMPtr<nsIVariant> result = new storage::AdoptedBlobVariant(data);
-
-  newIdv.release();
 
   result.forget(aResult);
   return NS_OK;
@@ -12622,7 +12618,7 @@ FullDatabaseMetadata::Duplicate() const
 
     newOSMetadata->mCommonMetadata = value->mCommonMetadata;
     newOSMetadata->mNextAutoIncrementId = value->mNextAutoIncrementId;
-    newOSMetadata->mComittedAutoIncrementId = value->mComittedAutoIncrementId;
+    newOSMetadata->mCommittedAutoIncrementId = value->mCommittedAutoIncrementId;
 
     for (auto iter = value->mIndexes.ConstIter(); !iter.Done(); iter.Next()) {
       auto key = iter.Key();
@@ -15142,7 +15138,7 @@ VersionChangeTransaction::RecvCreateObjectStore(
   RefPtr<FullObjectStoreMetadata> newMetadata = new FullObjectStoreMetadata();
   newMetadata->mCommonMetadata = aMetadata;
   newMetadata->mNextAutoIncrementId = aMetadata.autoIncrement() ? 1 : 0;
-  newMetadata->mComittedAutoIncrementId = newMetadata->mNextAutoIncrementId;
+  newMetadata->mCommittedAutoIncrementId = newMetadata->mNextAutoIncrementId;
 
   if (NS_WARN_IF(!dbMetadata->mObjectStores.Put(aMetadata.id(), newMetadata,
                                                 fallible))) {
@@ -18849,13 +18845,11 @@ DatabaseOperationBase::UpdateIndexValues(
 
   if (indexDataValues) {
     rv = updateStmt->BindAdoptedBlobByName(indexDataValuesString,
-                                           indexDataValues.get(),
+                                           indexDataValues.release(),
                                            indexDataValuesLength);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
-
-    indexDataValues.release();
   } else {
     rv = updateStmt->BindNullByName(indexDataValuesString);
     if (NS_WARN_IF(NS_FAILED(rv))) {
@@ -20276,7 +20270,7 @@ OpenDatabaseOp::LoadDatabaseInformation(mozIStorageConnection* aConnection)
 
     metadata->mCommonMetadata.autoIncrement() = !!nextAutoIncrementId;
     metadata->mNextAutoIncrementId = nextAutoIncrementId;
-    metadata->mComittedAutoIncrementId = nextAutoIncrementId;
+    metadata->mCommittedAutoIncrementId = nextAutoIncrementId;
 
     if (NS_WARN_IF(!objectStores.Put(objectStoreId, metadata, fallible))) {
       return NS_ERROR_OUT_OF_MEMORY;
@@ -21068,13 +21062,16 @@ OpenDatabaseOp::AssertMetadataConsistency(const FullDatabaseMetadata* aMetadata)
                  otherObjectStore->mCommonMetadata.autoIncrement());
     MOZ_ASSERT(thisObjectStore->mCommonMetadata.keyPath() ==
                  otherObjectStore->mCommonMetadata.keyPath());
-    // mNextAutoIncrementId and mComittedAutoIncrementId may be modified
+    // mNextAutoIncrementId and mCommittedAutoIncrementId may be modified
     // concurrently with this OpenOp, so it is not possible to assert equality
-    // here.
+    // here. It's also possible that we've written the new ids to disk but not
+    // yet updated the in-memory count.
     MOZ_ASSERT(thisObjectStore->mNextAutoIncrementId <=
                  otherObjectStore->mNextAutoIncrementId);
-    MOZ_ASSERT(thisObjectStore->mComittedAutoIncrementId <=
-                 otherObjectStore->mComittedAutoIncrementId);
+    MOZ_ASSERT(thisObjectStore->mCommittedAutoIncrementId <=
+                 otherObjectStore->mCommittedAutoIncrementId ||
+               thisObjectStore->mCommittedAutoIncrementId ==
+                 otherObjectStore->mNextAutoIncrementId);
     MOZ_ASSERT(!otherObjectStore->mDeleted);
 
     MOZ_ASSERT(thisObjectStore->mIndexes.Count() ==
@@ -22157,9 +22154,9 @@ CommitOp::CommitOrRollbackAutoIncrementCounts()
       RefPtr<FullObjectStoreMetadata>& metadata = metadataArray[index];
 
       if (committed) {
-        metadata->mComittedAutoIncrementId = metadata->mNextAutoIncrementId;
+        metadata->mCommittedAutoIncrementId = metadata->mNextAutoIncrementId;
       } else {
-        metadata->mNextAutoIncrementId = metadata->mComittedAutoIncrementId;
+        metadata->mNextAutoIncrementId = metadata->mCommittedAutoIncrementId;
       }
     }
   }
@@ -23502,12 +23499,10 @@ UpdateIndexDataValuesFunction::OnFunctionCall(mozIStorageValueArray* aValues,
     return rv;
   }
 
-  std::pair<uint8_t *, int> copiedBlobDataPair(indexValuesBlob.get(),
+  std::pair<uint8_t *, int> copiedBlobDataPair(indexValuesBlob.release(),
                                                indexValuesBlobLength);
 
   value = new storage::AdoptedBlobVariant(copiedBlobDataPair);
-
-  indexValuesBlob.release();
 
   value.forget(_retval);
   return NS_OK;
@@ -24451,12 +24446,9 @@ ObjectStoreAddOrPutRequestOp::DoDatabaseWork(DatabaseConnection* aConnection)
     uint8_t* dataBuffer = reinterpret_cast<uint8_t*>(compressed);
     size_t dataBufferLength = compressedLength;
 
-    // If this call succeeds, | compressed | is now owned by the statement, and
-    // we are no longer responsible for it.
     rv = stmt->BindAdoptedBlobByName(NS_LITERAL_CSTRING("data"), dataBuffer,
                                      dataBufferLength);
     if (NS_WARN_IF(NS_FAILED(rv))) {
-      free(compressed);
       return rv;
     }
   }

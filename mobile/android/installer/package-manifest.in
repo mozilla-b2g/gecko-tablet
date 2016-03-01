@@ -1,3 +1,4 @@
+
 ; This Source Code Form is subject to the terms of the Mozilla Public
 ; License, v. 2.0. If a copy of the MPL was not distributed with this
 ; file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -127,7 +128,6 @@
 @BINPATH@/components/dom_html.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_json.xpt
-@BINPATH@/components/dom_payment.xpt
 @BINPATH@/components/dom_power.xpt
 @BINPATH@/components/dom_quota.xpt
 @BINPATH@/components/dom_range.xpt
@@ -228,9 +228,7 @@
 @BINPATH@/components/toolkit_formautofill.xpt
 @BINPATH@/components/toolkit_osfile.xpt
 @BINPATH@/components/toolkit_securityreporter.xpt
-#ifdef NIGHTLY_BUILD
 @BINPATH@/components/toolkit_perfmonitoring.xpt
-#endif
 @BINPATH@/components/toolkit_xulstore.xpt
 @BINPATH@/components/toolkitprofile.xpt
 #ifdef MOZ_ENABLE_XREMOTE
@@ -549,13 +547,6 @@
 @BINPATH@/components/SessionStore.js
 @BINPATH@/components/SiteSpecificUserAgent.js
 @BINPATH@/components/Snippets.js
-
-@BINPATH@/components/Payment.js
-@BINPATH@/components/PaymentFlowInfo.js
-@BINPATH@/components/PaymentProvider.js
-@BINPATH@/components/Payment.manifest
-@BINPATH@/components/PaymentsUI.js
-@BINPATH@/components/PaymentProviderStrategy.js
 
 @BINPATH@/components/XPIDialogService.js
 
