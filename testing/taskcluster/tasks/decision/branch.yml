@@ -66,9 +66,7 @@ tasks:
           - -cx
           - >
             mkdir -p /home/worker/artifacts &&
-            mkdir -p workspace &&
-            buildbot_step "Clone gecko" tc-vcs checkout workspace/gecko
-            '{{{url}}}' '{{{url}}}' '{{revision}}' '{{revision}}' --force-clone && 
+            checkout-gecko workspace &&
             cd workspace/gecko &&
             ./mach taskcluster-graph
             --pushlog-id='{{pushlog_id}}'
