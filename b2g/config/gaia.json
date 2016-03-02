@@ -1,5 +1,6 @@
 {
     "git": {
+        "git_revision": "",
         "remote": "https://github.com/mozilla-b2g/gaia",
         "branch": "kanikani"
     }
