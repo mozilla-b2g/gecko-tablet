@@ -3388,6 +3388,13 @@ ScrollFrameHelper::DecideScrollableLayer(nsDisplayListBuilder* aBuilder,
               nsRect rootCompBounds =
                 nsRect(nsPoint(0, 0), nsLayoutUtils::CalculateCompositionSizeForFrame(rootFrame));
 
+              // If rootFrame is the RCD-RSF then CalculateCompositionSizeForFrame
+              // did not take the document's resolution into account, so we must.
+              if (rootPresContext->IsRootContentDocument() &&
+                  rootFrame == rootPresShell->GetRootScrollFrame()) {
+                rootCompBounds = rootCompBounds.RemoveResolution(rootPresShell->GetResolution());
+              }
+
               nsLayoutUtils::TransformRect(rootFrame, mOuter, rootCompBounds);
 
               displayportBase = displayportBase.Intersect(rootCompBounds);
@@ -4380,13 +4387,13 @@ ScrollFrameHelper::ScrollEvent::ScrollEvent(ScrollFrameHelper* aHelper)
   : mHelper(aHelper)
 {
   mDriver = mHelper->mOuter->PresContext()->RefreshDriver();
-  mDriver->AddRefreshObserver(this, Flush_Style);
+  mDriver->AddRefreshObserver(this, Flush_Layout);
 }
 
 ScrollFrameHelper::ScrollEvent::~ScrollEvent()
 {
   if (mDriver) {
-    mDriver->RemoveRefreshObserver(this, Flush_Style);
+    mDriver->RemoveRefreshObserver(this, Flush_Layout);
     mDriver = nullptr;
   }
 }
@@ -4394,7 +4401,7 @@ ScrollFrameHelper::ScrollEvent::~ScrollEvent()
 void
 ScrollFrameHelper::ScrollEvent::WillRefresh(mozilla::TimeStamp aTime)
 {
-  mDriver->RemoveRefreshObserver(this, Flush_Style);
+  mDriver->RemoveRefreshObserver(this, Flush_Layout);
   mDriver = nullptr;
   mHelper->FireScrollEvent();
 }

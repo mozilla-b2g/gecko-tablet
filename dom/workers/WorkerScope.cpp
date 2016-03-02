@@ -213,12 +213,11 @@ WorkerGlobalScope::SetOnerror(OnErrorEventHandlerNonNull* aHandler)
 }
 
 void
-WorkerGlobalScope::ImportScripts(JSContext* aCx,
-                                 const Sequence<nsString>& aScriptURLs,
+WorkerGlobalScope::ImportScripts(const Sequence<nsString>& aScriptURLs,
                                  ErrorResult& aRv)
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
-  scriptloader::Load(aCx, mWorkerPrivate, aScriptURLs, WorkerScript, aRv);
+  scriptloader::Load(mWorkerPrivate, aScriptURLs, WorkerScript, aRv);
 }
 
 int32_t
@@ -560,7 +559,7 @@ public:
     promise->MaybeResolve(JS::UndefinedHandleValue);
 
     // Release the reference on the worker thread.
-    mPromiseProxy->CleanUp(aCx);
+    mPromiseProxy->CleanUp();
 
     return true;
   }
@@ -632,16 +631,6 @@ ServiceWorkerGlobalScope::SkipWaiting(ErrorResult& aRv)
 
   MOZ_ALWAYS_TRUE(NS_SUCCEEDED(NS_DispatchToMainThread(runnable)));
   return promise.forget();
-}
-
-// static
-bool
-ServiceWorkerGlobalScope::InterceptionEnabled(JSContext* aCx, JSObject* aObj)
-{
-  WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
-  MOZ_ASSERT(worker);
-  worker->AssertIsOnWorkerThread();
-  return worker->InterceptionEnabled();
 }
 
 bool
@@ -887,7 +876,7 @@ WorkerDebuggerGlobalScope::LoadSubScript(JSContext* aCx,
 
   nsTArray<nsString> urls;
   urls.AppendElement(aURL);
-  scriptloader::Load(aCx, mWorkerPrivate, urls, DebuggerScript, aRv);
+  scriptloader::Load(mWorkerPrivate, urls, DebuggerScript, aRv);
 }
 
 void

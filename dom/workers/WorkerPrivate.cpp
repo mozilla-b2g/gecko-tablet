@@ -504,7 +504,7 @@ private:
     aWorkerPrivate->AssertIsOnWorkerThread();
 
     ErrorResult rv;
-    scriptloader::LoadMainScript(aCx, mScriptURL, WorkerScript, rv);
+    scriptloader::LoadMainScript(aWorkerPrivate, mScriptURL, WorkerScript, rv);
     rv.WouldReportJSException();
     // Explicitly ignore NS_BINDING_ABORTED on rv.  Or more precisely, still
     // return false and don't SetWorkerScriptExecutedSuccessfully() in that
@@ -563,7 +563,8 @@ private:
 
     ErrorResult rv;
     JSAutoCompartment ac(aCx, global);
-    scriptloader::LoadMainScript(aCx, mScriptURL, DebuggerScript, rv);
+    scriptloader::LoadMainScript(aWorkerPrivate, mScriptURL,
+                                 DebuggerScript, rv);
     rv.WouldReportJSException();
     // Explicitly ignore NS_BINDING_ABORTED on rv.  Or more precisely, still
     // return false and don't SetWorkerScriptExecutedSuccessfully() in that
@@ -574,7 +575,7 @@ private:
       return false;
     }
     // Make sure to propagate exceptions from rv onto aCx, so that our PostRun
-    // can report it.  We do this for alll failures on rv, because now we're
+    // can report it.  We do this for all failures on rv, because now we're
     // using rv to track all the state we care about.
     if (rv.MaybeSetPendingException(aCx)) {
       return false;
@@ -607,9 +608,6 @@ private:
   virtual bool
   WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
   {
-    JS::Rooted<JSObject*> target(aCx, JS::CurrentGlobalOrNull(aCx));
-    NS_ASSERTION(target, "This must never be null!");
-
     aWorkerPrivate->CloseHandlerStarted();
 
     WorkerGlobalScope* globalScope = aWorkerPrivate->GlobalScope();
@@ -670,10 +668,23 @@ public:
   DispatchDOMEvent(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
                    DOMEventTargetHelper* aTarget, bool aIsMainThread)
   {
-    nsCOMPtr<nsPIDOMWindowInner> parent;
-    if (aIsMainThread) {
-      parent = do_QueryInterface(aTarget->GetParentObject());
+    nsCOMPtr<nsIGlobalObject> parent = do_QueryInterface(aTarget->GetParentObject());
+
+    // For some workers without window, parent is null and we try to find it
+    // from the JS Context.
+    if (!parent) {
+      JS::Rooted<JSObject*> globalObject(aCx, JS::CurrentGlobalOrNull(aCx));
+      if (NS_WARN_IF(!globalObject)) {
+        return false;
+      }
+
+      parent = xpc::NativeGlobal(globalObject);
+      if (NS_WARN_IF(!parent)) {
+        return false;
+      }
     }
+
+    MOZ_ASSERT(parent);
 
     JS::Rooted<JS::Value> messageData(aCx);
     ErrorResult rv;
@@ -903,7 +914,7 @@ private:
   virtual bool
   WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
   {
-    return aWorkerPrivate->FreezeInternal(aCx);
+    return aWorkerPrivate->FreezeInternal();
   }
 };
 
@@ -918,7 +929,7 @@ private:
   virtual bool
   WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
   {
-    return aWorkerPrivate->ThawInternal(aCx);
+    return aWorkerPrivate->ThawInternal();
   }
 };
 
@@ -4031,7 +4042,7 @@ WorkerPrivate::Constructor(JSContext* aCx,
                               aWorkerType, stackLoadInfo.ptr());
     aRv.MightThrowJSException();
     if (NS_FAILED(rv)) {
-      scriptloader::ReportLoadError(aCx, aRv, rv, aScriptURL);
+      scriptloader::ReportLoadError(aRv, rv, aScriptURL);
       return nullptr;
     }
 
@@ -5000,7 +5011,7 @@ WorkerPrivate::RemainingRunTimeMS() const
 }
 
 bool
-WorkerPrivate::FreezeInternal(JSContext* aCx)
+WorkerPrivate::FreezeInternal()
 {
   AssertIsOnWorkerThread();
 
@@ -5011,7 +5022,7 @@ WorkerPrivate::FreezeInternal(JSContext* aCx)
 }
 
 bool
-WorkerPrivate::ThawInternal(JSContext* aCx)
+WorkerPrivate::ThawInternal()
 {
   AssertIsOnWorkerThread();
 
@@ -5102,7 +5113,7 @@ WorkerPrivate::RemoveChildWorker(JSContext* aCx, ParentType* aChildWorker)
 }
 
 bool
-WorkerPrivate::AddFeature(JSContext* aCx, WorkerFeature* aFeature)
+WorkerPrivate::AddFeature(WorkerFeature* aFeature)
 {
   AssertIsOnWorkerThread();
 
@@ -5125,7 +5136,7 @@ WorkerPrivate::AddFeature(JSContext* aCx, WorkerFeature* aFeature)
 }
 
 void
-WorkerPrivate::RemoveFeature(JSContext* aCx, WorkerFeature* aFeature)
+WorkerPrivate::RemoveFeature(WorkerFeature* aFeature)
 {
   AssertIsOnWorkerThread();
 
@@ -6378,7 +6389,7 @@ WorkerPrivate::ConnectMessagePort(JSContext* aCx,
   // This MessagePortIdentifier is used to create a new port, still connected
   // with the other one, but in the worker thread.
   ErrorResult rv;
-  RefPtr<MessagePort> port = MessagePort::Create(nullptr, aIdentifier, rv);
+  RefPtr<MessagePort> port = MessagePort::Create(globalScope, aIdentifier, rv);
   if (NS_WARN_IF(rv.Failed())) {
     return false;
   }

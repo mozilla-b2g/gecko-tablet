@@ -1328,12 +1328,6 @@ pref("services.sync.prefs.sync.signon.rememberSignons", true);
 pref("services.sync.prefs.sync.spellchecker.dictionary", true);
 pref("services.sync.prefs.sync.xpinstall.whitelist.required", true);
 
-#ifdef NIGHTLY_BUILD
-pref("services.sync.syncedTabsUIRefresh", true);
-#else
-pref("services.sync.syncedTabsUIRefresh", false);
-#endif
-
 // A preference that controls whether we should show the icon for a remote tab.
 // This pref has no UI but exists because some people may be concerned that
 // fetching these icons to show remote tabs may leak information about that
@@ -1402,11 +1396,6 @@ pref("pdfjs.firstRun", true);
 // became the default.
 pref("pdfjs.previousHandler.preferredAction", 0);
 pref("pdfjs.previousHandler.alwaysAskBeforeHandling", false);
-
-// Shumway is only bundled in Nightly.
-#ifdef NIGHTLY_BUILD
-pref("shumway.disabled", true);
-#endif
 
 // The maximum amount of decoded image data we'll willingly keep around (we
 // might keep around more than this, but we'll try to get down to this value).
@@ -1646,7 +1635,6 @@ pref("reader.errors.includeURLs", true);
 pref("view_source.tab", true);
 
 pref("dom.serviceWorkers.enabled", true);
-pref("dom.serviceWorkers.interception.enabled", true);
 pref("dom.serviceWorkers.openWindow.enabled", true);
 pref("dom.webnotifications.serviceworker.enabled", true);
 
