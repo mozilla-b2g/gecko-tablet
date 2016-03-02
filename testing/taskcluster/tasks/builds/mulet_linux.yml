@@ -37,7 +37,9 @@ task:
       - /bin/bash
       - -c
       - >
-        checkout-gecko workspace &&
+        mkdir -p workspace &&
+        buildbot_step "Clone gecko" tc-vcs checkout workspace/gecko
+        '{{{url}}}' '{{{url}}}' '{{revision}}' '{{revision}}' --force-clone && 
         cd ./workspace/gecko/testing/taskcluster/scripts/builder &&
         buildbot_step 'Build' ./build-mulet-linux.sh $HOME/workspace
 
