@@ -294,6 +294,8 @@ private:
     nsDocShell*, const char*, const TimeStamp&, MarkerTracingType);
   friend void mozilla::TimelineConsumers::AddMarkerForDocShell(
     nsDocShell*, UniquePtr<AbstractTimelineMarker>&&);
+  friend void mozilla::TimelineConsumers::PopMarkers(nsDocShell*,
+    JSContext*, nsTArray<dom::ProfileTimelineMarker>&);
 
 public:
   // Tell the favicon service that aNewURI has the same favicon as aOldURI.
@@ -936,6 +938,7 @@ protected:
   bool mAllowKeywordFixup;
   bool mIsOffScreenBrowser;
   bool mIsActive;
+  bool mDisableMetaRefreshWhenInactive;
   bool mIsPrerendered;
   bool mIsAppTab;
   bool mUseGlobalHistory;
@@ -997,6 +1000,9 @@ protected:
 
   // Are we a regular frame, a browser frame, or an app frame?
   FrameType mFrameType;
+
+  // Whether we are in an isolated mozbrowser frame.
+  bool mIsInIsolatedMozBrowser;
 
   // We only expect mOwnOrContainingAppId to be something other than
   // UNKNOWN_APP_ID if mFrameType != eFrameTypeRegular. For vanilla iframes
