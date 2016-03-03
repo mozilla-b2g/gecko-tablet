@@ -59,3 +59,16 @@ chrome.jar:
   content/images/exitfullscreen-hdpi.png (content/images/exitfullscreen-hdpi.png)
   content/images/throbber.png          (content/images/throbber.png)
   content/images/error.png             (content/images/error.png)
+
+# B2G Tablet
+  content/css/shell.css                (content/css/shell.css)
+  content/images/back-light.png        (content/images/back-light.png)
+  content/images/home-light.png        (content/images/home-light.png)
+  content/images/menu-light.png        (content/images/menu-light.png)
+  content/images/windows-light.png     (content/images/windows-light.png)
+  content/js/BrowserWindow.js          (content/js/BrowserWindow.js)
+  content/js/HomeScreen.js             (content/js/HomeScreen.js)
+  content/js/Shell.js                  (content/js/Shell.js)
+  content/js/StatusBar.js              (content/js/StatusBar.js)
+  content/js/SystemToolbar.js          (content/js/SystemToolbar.js)
+  content/js/WindowManager.js          (content/js/WindowManager.js)
