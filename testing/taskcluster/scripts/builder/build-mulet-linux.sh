@@ -39,7 +39,7 @@ mv jsshell-linux-x86_64.zip     $HOME/artifacts/jsshell-linux-x86_64.zip
 mv mozharness.zip               $HOME/artifacts/mozharness.zip
 
 # Fix up the JSON manifest file since we've _renamed_ assets.
-sed -i 's/firefox.*en\-US/target/g' $HOME/artifacts/target.test_packages.json
+sed -i 's/firefox.*en\-US\.linux\-x86_64/target/g' $HOME/artifacts/target.test_packages.json
 
 ccache -s
 
