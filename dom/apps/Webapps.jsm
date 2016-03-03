@@ -5030,4 +5030,5 @@ AppcacheObserver.prototype = {
   }
 };
 
-DOMApplicationRegistry.init();
+// FIXME: Properly remove Cu.import(Webapps.jsm) from every place.
+//DOMApplicationRegistry.init();

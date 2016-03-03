@@ -58,6 +58,7 @@ EXTRA_JS_MODULES += [
     'AboutServiceWorkers.jsm',
     'ActivityChannel.jsm',
     'AlertsHelper.jsm',
+    'AppPermissions.jsm',
     'Bootstraper.jsm',
     'ContentRequestHelper.jsm',
     'DebuggerActors.js',

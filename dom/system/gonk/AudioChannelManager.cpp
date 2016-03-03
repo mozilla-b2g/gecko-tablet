@@ -188,6 +188,8 @@ AudioChannelManager::GetAllowedAudioChannels(
   }
 
   if (status != nsIPrincipal::APP_STATUS_CERTIFIED) {
+    // FIXME: We fail here, and in nsBrowserElement::GenerateAllowedAudioChannels()
+    // that checks permission on the app object...
     aRv.Throw(NS_ERROR_FAILURE);
     return;
   }
