@@ -27,6 +27,7 @@ BrowserWindow.prototype.view = function() {
     '<input type="url" id="url-bar-' + this.id + '" type="text"></input>' +
     '</form>' +
     '<button class="menu-button">' +
+    '<button id="close-button-' + this.id + '" class="close-button">' +
     '</menu>' +
     '<iframe id="browser-frame-' + this.id + '"' +
     'class="browser-tab-frame" mozbrowser remote>' +
@@ -44,6 +45,7 @@ BrowserWindow.prototype.render = function() {
   this.urlBar = document.getElementById('url-bar-' + this.id);
   this.urlBarForm = document.getElementById('url-bar-form-' + this.id);
   this.frame = document.getElementById('browser-frame-' + this.id);
+  this.closeButton = document.getElementById('close-button-' + this.id);
 
   // Add event listeners
  this.frame.addEventListener('mozbrowserlocationchange',
@@ -52,6 +54,7 @@ BrowserWindow.prototype.render = function() {
  this.urlBar.addEventListener('blur', this.handleUrlBarBlur.bind(this));
  this.urlBarForm.addEventListener('submit',
     this.handleUrlSubmit.bind(this));
+ this.closeButton.addEventListener('click', this.close.bind(this));
 };
 
 /**

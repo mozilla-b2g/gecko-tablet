@@ -91,11 +91,20 @@ button::-moz-focus-inner {
   text-align: center;
   margin: 2rem;
   width: 90%;
+  border-radius: 0;
 }
 
 /* Windows */
 #windows {
   flex: 1;
+  background-color: #000;
+}
+
+#windows.task-manager {
+  display: flex;
+  flex-direction: column;
+  transform: scaleX(0.9) scaleY(0.9);
+  overflow: scroll;
 }
 
 .browser-window {
@@ -104,6 +113,12 @@ button::-moz-focus-inner {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
+}
+
+#windows.task-manager .browser-window {
+  flex: 1;
+  display: flex;
+  margin-top: 1rem;
 }
 
 .browser-window.hidden {
@@ -117,6 +132,16 @@ button::-moz-focus-inner {
   margin: 0;
   padding: 0 0 0 0.8rem;
   box-sizing: border-box;
+}
+
+#windows.task-manager .browser-chrome {
+  background-color: #333;
+  padding: 0.5rem 0 0 0.8rem;
+}
+
+
+#windows.task-manager .browser-chrome input {
+  background-color: transparent;
 }
 
 .browser-chrome form {
@@ -136,6 +161,7 @@ button::-moz-focus-inner {
   text-align: center;
   padding: 0 1rem;
   box-sizing: border-box;
+  border-radius: 0;
 }
 
 .browser-chrome input:focus {
@@ -156,7 +182,23 @@ button::-moz-focus-inner {
   background-position: center;
   padding: 0;
   margin: 0;
-  background-image: url('../images/menu-light.png');
+}
+
+.browser-chrome button.menu-button {
+    background-image: url('../images/menu-light.png');
+}
+
+.browser-chrome button.close-button {
+    background-image: url('../images/close-light.png');
+    display: none;
+}
+
+#windows.task-manager .browser-chrome button.menu-button {
+  display: none;
+}
+
+#windows.task-manager .browser-chrome button.close-button {
+  display: block;
 }
 
 .browser-window iframe {
