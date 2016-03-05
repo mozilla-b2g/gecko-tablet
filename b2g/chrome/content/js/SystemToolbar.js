@@ -15,10 +15,12 @@ var SystemToolbar = {
     this.element = document.getElementById('system-toolbar');
     this.backButton = document.getElementById('back-button');
     this.homeButton = document.getElementById('home-button');
+    this.windowsButton = document.getElementById('windows-button');
 
     // Add event listeners
     this.homeButton.addEventListener('click', this.handleHomeClick);
     this.backButton.addEventListener('click', this.handleBackClick);
+    this.windowsButton.addEventListener('click', this.handleWindows);
 
     return this;
   },
@@ -35,6 +37,13 @@ var SystemToolbar = {
    */
   handleBackClick: function() {
      window.dispatchEvent(new CustomEvent('_back'));
+  },
+
+  /**
+   * Handle click of windows button.
+   */
+  handleWindows: function() {
+    window.dispatchEvent(new CustomEvent('_windows'));
   }
 
 };

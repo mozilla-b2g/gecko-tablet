@@ -22,6 +22,11 @@ var WindowManager = {
   currentWindow: null,
 
   /**
+   * Task manager mode.
+   */
+  taskManagerMode: false,
+
+  /**
    * Start the Window Manager.
    *
    * @return {Object} The WindowManager object.
@@ -37,6 +42,8 @@ var WindowManager = {
       this.handleHome.bind(this));
     window.addEventListener('_back',
       this.handleBack.bind(this));
+    window.addEventListener('_windows',
+      this.handleWindows.bind(this));
     return this;
   },
 
@@ -69,6 +76,9 @@ var WindowManager = {
     var windowIds = Object.keys(this.windows);
     if (windowIds.length > 0) {
       this.switchWindow(windowIds[windowIds.length-1]);
+    } else {
+      this.hideTaskManager();
+      this.hideWindows();
     }
   },
 
@@ -77,6 +87,9 @@ var WindowManager = {
    *
    */
   handleHome: function() {
+    if (this.taskManagerMode) {
+      this.hideTaskManager();
+    }
     this.hideWindows();
   },
 
@@ -86,6 +99,20 @@ var WindowManager = {
   handleBack: function() {
     if (this.windows[this.currentWindow]) {
       this.windows[this.currentWindow].goBack();
+    }
+  },
+
+  /**
+   * Handle _windows event.
+   */
+  handleWindows: function() {
+    var windowIds = Object.keys(this.windows);
+    if (windowIds.length == 0)
+      return;
+    if (this.taskManagerMode) {
+      this.hideTaskManager();
+    } else {
+      this.showTaskManager();
     }
   },
 
@@ -129,5 +156,16 @@ var WindowManager = {
   hideWindows: function() {
     this.element.classList.add('hidden');
     this.homeScreen.classList.remove('hidden');
+  },
+
+  showTaskManager: function() {
+    this.taskManagerMode = true;
+    this.showWindows();
+    this.element.classList.add('task-manager');
+  },
+  
+  hideTaskManager: function() {
+    this.taskManagerMode = false;
+    this.element.classList.remove('task-manager');
   }
 };
