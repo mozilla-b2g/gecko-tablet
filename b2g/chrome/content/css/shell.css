@@ -1,7 +1,6 @@
 /**
  * B2G Tablet Shell Stylesheet.
 */
-
 html, body {
   height: 100%;
   width: 100%;
@@ -19,14 +18,14 @@ body {
   flex-direction: column;
 }
 
-/* Prevent dotted outlines on buttons */
 button::-moz-focus-inner {
-  border: 0;
+  border: 0; /* Prevent dotted outlines on buttons */
 }
 
 .hidden {
   display: none;
 }
+
 
 /* Status Bar */
 #status-bar {
@@ -37,7 +36,6 @@ button::-moz-focus-inner {
   margin: 0;
   padding: 0;
   color: #fff;
-  /* background-color: #333;*/
 }
 
 #clock {
@@ -46,12 +44,13 @@ button::-moz-focus-inner {
   padding: 0 1rem;
 }
 
+
+/* System Toolbar */
 #system-toolbar {
   height: 3.2rem;
   padding: 0;
   margin: 0;
   text-align: center;
-  /* background-color: #333;*/
 }
 
 #system-toolbar button {
@@ -77,6 +76,12 @@ button::-moz-focus-inner {
   background-image: url('../images/windows-light.png');
 }
 
+#system-toolbar #new-window-button {
+  background-image: url('../images/new-window-light.png');
+}
+
+
+/* Home Screen */
 #home-screen {
   flex: 1;
   text-align: center;
@@ -94,10 +99,26 @@ button::-moz-focus-inner {
   border-radius: 0;
 }
 
-/* Windows */
+
+/* Window Manager */
 #windows {
   flex: 1;
   background-color: #000;
+  color: #fff;
+}
+
+#windows.no-windows {
+  justify-content: center;
+}
+
+#windows p {
+  text-align: center;
+  font-size: 1.6rem;
+  display: none;
+}
+
+#windows.task-manager.no-windows p {
+  display: block;
 }
 
 #windows.task-manager {
@@ -107,6 +128,8 @@ button::-moz-focus-inner {
   overflow: scroll;
 }
 
+
+/* Browser Window */
 .browser-window {
   display: flex;
   flex-direction: column;
@@ -125,6 +148,29 @@ button::-moz-focus-inner {
   display: none;
 }
 
+.browser-window iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background-color: #fff;
+}
+
+.browser-window .window-scrim {
+  display: none;
+}
+
+#windows.task-manager .window-scrim {
+  display: block;
+  position: relative;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: transparent;
+  margin-top: -100%;
+}
+
+/* Browser Chrome */
 .browser-chrome {
   display: flex;
   flex-direction: row;
@@ -193,6 +239,10 @@ button::-moz-focus-inner {
     display: none;
 }
 
+#windows.task-manager button.close-button {
+  z-index: 1;
+}
+
 #windows.task-manager .browser-chrome button.menu-button {
   display: none;
 }
@@ -200,12 +250,3 @@ button::-moz-focus-inner {
 #windows.task-manager .browser-chrome button.close-button {
   display: block;
 }
-
-.browser-window iframe {
-  flex: 1;
-  width: 100%;
-  border: none;
-  background-color: #fff;
-}
-
-

@@ -82,11 +82,14 @@
     <div id="home-screen">
       <input id="search-bar" type="text" placeholder="Search or enter address"></input>
     </div>
-    <div id="windows" class="hidden"></div>
+    <div id="windows" class="hidden no-windows">
+      <p id="no-windows-message">No open windows</p>
+    </div>
     <menu type="toolbar" id="system-toolbar">
       <button id="back-button"></button>
       <button id="home-button"></button>
       <button id="windows-button"></button>
+      <button id="new-window-button" class="hidden"></button>
     </menu>
 #endif
   </body>

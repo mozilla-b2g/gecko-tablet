@@ -34,15 +34,16 @@ var WindowManager = {
   start: function() {
     this.element = document.getElementById('windows');
     this.homeScreen = document.getElementById('home-screen');
+    
     window.addEventListener('_openwindow',
       this.handleOpenWindow.bind(this));
     window.addEventListener('_closewindow',
       this.handleCloseWindow.bind(this));
-    window.addEventListener('_home',
+    window.addEventListener('_homeclicked',
       this.handleHome.bind(this));
-    window.addEventListener('_back',
+    window.addEventListener('_backclicked',
       this.handleBack.bind(this));
-    window.addEventListener('_windows',
+    window.addEventListener('_windowsclicked',
       this.handleWindows.bind(this));
     return this;
   },
@@ -59,6 +60,7 @@ var WindowManager = {
       this.createWindow();
     }
     this.showWindows();
+    this.hideTaskManager();
   },
   
   /**
@@ -79,11 +81,12 @@ var WindowManager = {
     } else {
       this.hideTaskManager();
       this.hideWindows();
+      this.element.classList.add('no-windows');
     }
   },
 
   /**
-   * Handle _home event.
+   * Handle _homeclicked event.
    *
    */
   handleHome: function() {
@@ -94,7 +97,7 @@ var WindowManager = {
   },
 
   /**
-   * Handle _back event.
+   * Handle _backclicked event.
    */
   handleBack: function() {
     if (this.windows[this.currentWindow]) {
@@ -103,17 +106,10 @@ var WindowManager = {
   },
 
   /**
-   * Handle _windows event.
+   * Handle _windowsclicked event.
    */
   handleWindows: function() {
-    var windowIds = Object.keys(this.windows);
-    if (windowIds.length == 0)
-      return;
-    if (this.taskManagerMode) {
-      this.hideTaskManager();
-    } else {
       this.showTaskManager();
-    }
   },
 
   /**
@@ -121,10 +117,9 @@ var WindowManager = {
    */
   createWindow: function() {
     var id = this.windowCount;
-
     var newWindow = new BrowserWindow(id);
     this.windows[id] = newWindow;
-
+    this.element.classList.remove('no-windows');
     this.switchWindow(id);
     this.windowCount++;
   },
@@ -162,10 +157,12 @@ var WindowManager = {
     this.taskManagerMode = true;
     this.showWindows();
     this.element.classList.add('task-manager');
+    window.dispatchEvent(new CustomEvent('_taskmanageropened'));
   },
   
   hideTaskManager: function() {
     this.taskManagerMode = false;
     this.element.classList.remove('task-manager');
+    window.dispatchEvent(new CustomEvent('_taskmanagerclosed'));
   }
 };
