@@ -67,6 +67,7 @@ chrome.jar:
   content/images/menu-light.png        (content/images/menu-light.png)
   content/images/close-light.png       (content/images/close-light.png)
   content/images/windows-light.png     (content/images/windows-light.png)
+  content/images/new-window-light.png  (content/images/new-window-light.png)
   content/js/BrowserWindow.js          (content/js/BrowserWindow.js)
   content/js/HomeScreen.js             (content/js/HomeScreen.js)
   content/js/Shell.js                  (content/js/Shell.js)

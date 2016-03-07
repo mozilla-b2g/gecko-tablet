@@ -29,8 +29,8 @@ BrowserWindow.prototype.view = function() {
     '<button class="menu-button">' +
     '<button id="close-button-' + this.id + '" class="close-button">' +
     '</menu>' +
-    '<iframe id="browser-frame-' + this.id + '"' +
-    'class="browser-tab-frame" mozbrowser remote>' +
+    '<iframe id="window-frame-' + this.id + '" mozbrowser remote></iframe>' +
+    '<div id="window-scrim-' + this.id + '" class="window-scrim"></div>' +
     '</div>';
 };
 
@@ -44,8 +44,9 @@ BrowserWindow.prototype.render = function() {
   this.element = document.getElementById('window' + this.id);
   this.urlBar = document.getElementById('url-bar-' + this.id);
   this.urlBarForm = document.getElementById('url-bar-form-' + this.id);
-  this.frame = document.getElementById('browser-frame-' + this.id);
+  this.frame = document.getElementById('window-frame-' + this.id);
   this.closeButton = document.getElementById('close-button-' + this.id);
+  this.scrim = document.getElementById('window-scrim-' + this.id);
 
   // Add event listeners
  this.frame.addEventListener('mozbrowserlocationchange',
@@ -55,6 +56,7 @@ BrowserWindow.prototype.render = function() {
  this.urlBarForm.addEventListener('submit',
     this.handleUrlSubmit.bind(this));
  this.closeButton.addEventListener('click', this.close.bind(this));
+ this.scrim.addEventListener('click', this.handleScrimClick.bind(this));
 };
 
 /**
@@ -147,4 +149,16 @@ BrowserWindow.prototype.handleUrlSubmit = function (e) {
  */
 BrowserWindow.prototype.goBack = function() {
   this.frame.goBack();
+};
+
+/**
+ * Handle click on window scrim.
+ */
+BrowserWindow.prototype.handleScrimClick = function() {
+  var e = new CustomEvent('_openwindow', {
+    detail: {
+      id: this.id
+    }
+  });
+  window.dispatchEvent(e);
 };
