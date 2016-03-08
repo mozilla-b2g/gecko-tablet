@@ -220,7 +220,8 @@
         testEmptyObject();
       } else {
         // A sanity check to make sure we must run tests on Firefox OS (B2G).
-        if (!SpecialPowers.isB2G) {
+        if (navigator.userAgent.indexOf("Mobile") != -1 &&
+            navigator.appVersion.indexOf("Android") == -1) {
           ok(false, "Should run the test on Firefox OS (B2G)!");
         }
 

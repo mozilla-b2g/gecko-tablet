@@ -63,7 +63,9 @@
 
     SpecialPowers.pushPrefEnv({"set": [["dom.mozAlarms.enabled", true]]}, function() {
       // Currently applicable only on FxOS
-      if (!SpecialPowers.isB2G) {
+      if (navigator.userAgent.indexOf("Mobile") != -1 &&
+          navigator.appVersion.indexOf("Android") == -1)
+      {
         registerPage();
       } else {
         ok(true, "mozAlarms on Firefox OS only.");
