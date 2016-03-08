@@ -144,8 +144,7 @@
         testHonorTimezone(tomorrow);
       } else {
         // A sanity check to make sure we must run tests on Firefox OS (B2G).
-        if (navigator.userAgent.indexOf("Mobile") != -1 &&
-            navigator.appVersion.indexOf("Android") == -1) {
+        if (!SpecialPowers.isB2G) {
           ok(false, "Should run the test on Firefox OS (B2G)!");
         }
 
