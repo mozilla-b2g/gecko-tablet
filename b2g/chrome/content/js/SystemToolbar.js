@@ -17,10 +17,6 @@ var SystemToolbar = {
     this.newWindowButton = document.getElementById('new-window-button');
 
     // Add event listeners
-    window.addEventListener('_taskmanageropened',
-      this.handleTaskManagerOpened.bind(this));
-    window.addEventListener('_taskmanagerclosed',
-      this.handleTaskManagerClosed.bind(this));
     this.homeButton.addEventListener('click', this.handleHomeClick.bind(this));
     this.backButton.addEventListener('click', this.handleBackClick.bind(this));
     this.windowsButton.addEventListener('click',
@@ -56,16 +52,6 @@ var SystemToolbar = {
    */
   handleNewWindowClick: function() {
     window.dispatchEvent(new CustomEvent('_openwindow'));
-  },
-
-  handleTaskManagerOpened: function() {
-    this.windowsButton.classList.add('hidden');
-    this.newWindowButton.classList.remove('hidden');
-  },
-
-  handleTaskManagerClosed: function() {
-    this.windowsButton.classList.remove('hidden');
-    this.newWindowButton.classList.add('hidden');
   }
 
 };

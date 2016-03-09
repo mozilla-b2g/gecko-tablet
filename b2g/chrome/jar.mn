@@ -62,6 +62,7 @@ chrome.jar:
 
 # B2G Tablet
   content/css/shell.css                (content/css/shell.css)
+  content/images/firefox-os-background.png (content/images/firefox-os-background.png)
   content/images/back-light.png        (content/images/back-light.png)
   content/images/home-light.png        (content/images/home-light.png)
   content/images/menu-light.png        (content/images/menu-light.png)

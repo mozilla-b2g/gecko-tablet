@@ -32,6 +32,7 @@ var WindowManager = {
    * @return {Object} The WindowManager object.
    */
   start: function() {
+    this.container = document.getElementById('container');
     this.element = document.getElementById('windows');
     this.homeScreen = document.getElementById('home-screen');
     
@@ -141,6 +142,7 @@ var WindowManager = {
    * Show windows.
    */
   showWindows: function() {
+    this.container.classList.add('windows-active');
     this.element.classList.remove('hidden');
     this.homeScreen.classList.add('hidden');
   },
@@ -149,6 +151,7 @@ var WindowManager = {
    * Hide windows.
    */
   hideWindows: function() {
+    this.container.classList.remove('windows-active');
     this.element.classList.add('hidden');
     this.homeScreen.classList.remove('hidden');
   },
@@ -156,13 +159,13 @@ var WindowManager = {
   showTaskManager: function() {
     this.taskManagerMode = true;
     this.showWindows();
-    this.element.classList.add('task-manager');
+    this.container.classList.add('task-manager-active');
     window.dispatchEvent(new CustomEvent('_taskmanageropened'));
   },
   
   hideTaskManager: function() {
     this.taskManagerMode = false;
-    this.element.classList.remove('task-manager');
+    this.container.classList.remove('task-manager-active');
     window.dispatchEvent(new CustomEvent('_taskmanagerclosed'));
   }
 };
