@@ -12,8 +12,8 @@ const { OriginalLocation, GeneratedLocation } = require("devtools/server/actors/
 const { resolve } = require("promise");
 const URL = require("URL");
 
-loader.lazyRequireGetter(this, "SourceActor", "devtools/server/actors/script", true);
-loader.lazyRequireGetter(this, "isEvalSource", "devtools/server/actors/script", true);
+loader.lazyRequireGetter(this, "SourceActor", "devtools/server/actors/source", true);
+loader.lazyRequireGetter(this, "isEvalSource", "devtools/server/actors/source", true);
 loader.lazyRequireGetter(this, "SourceMapConsumer", "source-map", true);
 loader.lazyRequireGetter(this, "SourceMapGenerator", "source-map", true);
 
@@ -303,7 +303,9 @@ TabSources.prototype = {
       if (url) {
         // There are a few special URLs that we know are JavaScript:
         // inline `javascript:` and code coming from the console
-        if (url.indexOf("javascript:") === 0 || url === 'debugger eval code') {
+        if (url.indexOf("Scratchpad/") === 0 ||
+            url.indexOf("javascript:") === 0 ||
+            url === "debugger eval code") {
           spec.contentType = "text/javascript";
         } else {
           try {

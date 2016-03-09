@@ -663,13 +663,14 @@
     "n_buckets": 50,
     "description": "Committed, unused heap memory (KB)"
   },
-  "MEMORY_HEAP_COMMITTED_UNUSED_RATIO": {
+  "MEMORY_HEAP_OVERHEAD_FRACTION": {
     "alert_emails": ["memshrink-telemetry-alerts@mozilla.com"],
+    "bug_numbers": [1252375],
     "expires_in_version": "never",
     "kind": "linear",
     "high": 100,
     "n_buckets": 25,
-    "description": "Ratio of committed, unused memory to allocated memory in the heap (percentage)."
+    "description": "Fraction of committed heap memory that is overhead (percentage)."
   },
   "GHOST_WINDOWS": {
     "alert_emails": ["memshrink-telemetry-alerts@mozilla.com"],
@@ -2767,13 +2768,6 @@
     "high": 5000,
     "n_buckets": 20,
     "description": "Time spent loading plugin DLL and obtaining metadata (ms)"
-  },
-  "PLUGIN_STARTUP_MS": {
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 5000,
-    "n_buckets": 20,
-    "description": "Time spent starting up plugins (ms)"
   },
   "PLUGIN_SHUTDOWN_MS": {
     "expires_in_version": "never",
@@ -6914,7 +6908,7 @@
     "expires_in_version": "never",
     "kind": "count",
     "bug_numbers": [1247985],
-    "description": "Number of times the DevTools Scratchpad has been opened.",
+    "description": "Number of times the DevTools Scratchpad toolbox panel has been opened.",
     "releaseChannelCollection": "opt-out"
   },
   "DEVTOOLS_SCRATCHPAD_WINDOW_OPENED_COUNT": {
@@ -8489,6 +8483,15 @@
     "bug_numbers": [1245486],
     "description": "Number times info bar buttons are clicked (0=PAUSED, 1=CREATED)"
   },
+  "LOOP_ACTIVITY_COUNTER": {
+    "alert_emails": ["firefox-dev@mozilla.org", "mbanner@mozilla.com"],
+    "expires_in_version": "51",
+    "kind": "enumerated",
+    "n_values": 5,
+    "releaseChannelCollection": "opt-out",
+    "bug_numbers": [1208416],
+    "description": "Number of times an action is performed by an user (0=OPEN_PANEL, 1=OPEN_CONVERSATION, 2=ROOM_OPEN, 3=ROOM_SHARE, 4=ROOM_DELETE)"
+  },
   "E10S_STATUS": {
     "alert_emails": ["firefox-dev@mozilla.org"],
     "expires_in_version": "never",
@@ -8523,7 +8526,7 @@
   },
   "BLOCKED_ON_PLUGIN_MODULE_INIT_MS": {
     "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "50",
+    "expires_in_version": "never",
     "kind": "exponential",
     "high": 10000,
     "n_buckets": 20,
@@ -8532,7 +8535,7 @@
   },
   "BLOCKED_ON_PLUGIN_INSTANCE_INIT_MS": {
     "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "50",
+    "expires_in_version": "never",
     "kind": "exponential",
     "high": 10000,
     "n_buckets": 20,
@@ -8541,7 +8544,7 @@
   },
   "BLOCKED_ON_PLUGIN_STREAM_INIT_MS": {
     "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "50",
+    "expires_in_version": "never",
     "kind": "exponential",
     "high": 10000,
     "n_buckets": 20,
@@ -8559,7 +8562,7 @@
   },
   "BLOCKED_ON_PLUGIN_INSTANCE_DESTROY_MS": {
     "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "50",
+    "expires_in_version": "never",
     "kind": "exponential",
     "high": 10000,
     "n_buckets": 20,

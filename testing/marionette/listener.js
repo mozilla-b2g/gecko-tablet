@@ -19,12 +19,12 @@ Cu.import("chrome://marionette/content/capture.js");
 Cu.import("chrome://marionette/content/cookies.js");
 Cu.import("chrome://marionette/content/element.js");
 Cu.import("chrome://marionette/content/error.js");
+Cu.import("chrome://marionette/content/evaluate.js");
 Cu.import("chrome://marionette/content/event.js");
-Cu.import("chrome://marionette/content/proxy.js");
 Cu.import("chrome://marionette/content/interaction.js");
+Cu.import("chrome://marionette/content/proxy.js");
 
 Cu.import("resource://gre/modules/FileUtils.jsm");
-Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
@@ -39,14 +39,13 @@ var listenerId = null; // unique ID of this listener
 var curContainer = { frame: content, shadowRoot: null };
 var isRemoteBrowser = () => curContainer.frame.contentWindow !== null;
 var previousContainer = null;
-var elementManager = new ElementManager([]);
+var elementManager = new ElementManager();
 
 // Holds session capabilities.
 var capabilities = {};
 var interactions = new Interactions(() => capabilities);
 
 var actions = new action.Chain(checkForInterrupted);
-var importedScripts = null;
 
 // Contains the last file input element that was the target of
 // sendKeysToElement.
@@ -83,6 +82,7 @@ var multiLast = {};
 
 var chrome = proxy.toChrome(sendSyncMessage.bind(this));
 var cookies = new Cookies(() => curContainer.frame.document, chrome);
+var importedScripts = new evaluate.ScriptStorageServiceClient(chrome);
 
 Cu.import("resource://gre/modules/Log.jsm");
 var logger = Log.repository.getLogger("Marionette");
@@ -117,8 +117,6 @@ function registerSelf() {
       if (register[0][1] == true) {
         addMessageListener("MarionetteMainListener:emitTouchEvent", emitTouchEventForIFrame);
       }
-      importedScripts = FileUtils.getDir('TmpD', [], false);
-      importedScripts.append('marionetteContentScripts');
       startListeners();
       let rv = {};
       if (remotenessChange) {
@@ -164,6 +162,10 @@ function emitTouchEventForIFrame(message) {
 // Perhaps one could even conceive having a separate instance of
 // CommandProcessor for the listener, because the code is mostly the same.
 function dispatch(fn) {
+  if (typeof fn != "function") {
+    throw new TypeError("Provided dispatch handler is not a function");
+  }
+
   return function(msg) {
     let id = msg.json.command_id;
 
@@ -270,7 +272,6 @@ function startListeners() {
   addMessageListenerId("Marionette:deleteSession", deleteSession);
   addMessageListenerId("Marionette:sleepSession", sleepSession);
   addMessageListenerId("Marionette:emulatorCmdResult", emulatorCmdResult);
-  addMessageListenerId("Marionette:importScript", importScript);
   addMessageListenerId("Marionette:getAppCacheStatus", getAppCacheStatus);
   addMessageListenerId("Marionette:setTestName", setTestName);
   addMessageListenerId("Marionette:takeScreenshot", takeScreenshotFn);
@@ -375,7 +376,6 @@ function deleteSession(msg) {
   removeMessageListenerId("Marionette:deleteSession", deleteSession);
   removeMessageListenerId("Marionette:sleepSession", sleepSession);
   removeMessageListenerId("Marionette:emulatorCmdResult", emulatorCmdResult);
-  removeMessageListenerId("Marionette:importScript", importScript);
   removeMessageListenerId("Marionette:getAppCacheStatus", getAppCacheStatus);
   removeMessageListenerId("Marionette:setTestName", setTestName);
   removeMessageListenerId("Marionette:takeScreenshot", takeScreenshotFn);
@@ -622,15 +622,9 @@ function executeScript(msg, directInject) {
 
   try {
     if (directInject) {
-      if (importedScripts.exists()) {
-        let stream = Components.classes["@mozilla.org/network/file-input-stream;1"].
-                      createInstance(Components.interfaces.nsIFileInputStream);
-        stream.init(importedScripts, -1, 0, 0);
-        let data = NetUtil.readInputStreamToString(stream, stream.available());
-        stream.close();
-        script = data + script;
-      }
+      script = importedScripts.for("content").concat(script);
       let res = Cu.evalInSandbox(script, sandbox, "1.8", filename ? filename : "dummy file" ,0);
+
       sendSyncMessage("Marionette:shareData",
                       {log: elementManager.wrapValue(marionetteLogObj.getLogs())});
       marionetteLogObj.clearLogs();
@@ -653,14 +647,8 @@ function executeScript(msg, directInject) {
 
       script = "var __marionetteFunc = function(){" + script + "};" +
                    "__marionetteFunc.apply(null, __marionetteParams);";
-      if (importedScripts.exists()) {
-        let stream = Components.classes["@mozilla.org/network/file-input-stream;1"].
-                      createInstance(Components.interfaces.nsIFileInputStream);
-        stream.init(importedScripts, -1, 0, 0);
-        let data = NetUtil.readInputStreamToString(stream, stream.available());
-        stream.close();
-        script = data + script;
-      }
+      script = importedScripts.for("content").concat(script);
+
       let res = Cu.evalInSandbox(script, sandbox, "1.8", filename ? filename : "dummy file", 0);
       sendSyncMessage("Marionette:shareData",
                       {log: elementManager.wrapValue(marionetteLogObj.getLogs())});
@@ -809,14 +797,7 @@ function executeWithCallback(msg, useFinish) {
 
   try {
     asyncTestRunning = true;
-    if (importedScripts.exists()) {
-      let stream = Cc["@mozilla.org/network/file-input-stream;1"].
-                      createInstance(Ci.nsIFileInputStream);
-      stream.init(importedScripts, -1, 0, 0);
-      let data = NetUtil.readInputStreamToString(stream, stream.available());
-      stream.close();
-      scriptSrc = data + scriptSrc;
-    }
+    scriptSrc = importedScripts.for("content").concat(scriptSrc);
     Cu.evalInSandbox(scriptSrc, sandbox, "1.8", filename ? filename : "dummy file", 0);
   } catch (e) {
     let err = new JavaScriptError(
@@ -868,32 +849,12 @@ function emitTouchEvent(type, touch) {
 }
 
 /**
- * This function generates a pair of coordinates relative to the viewport given a
- * target element and coordinates relative to that element's top-left corner.
- * @param 'x', and 'y' are the relative to the target.
- *        If they are not specified, then the center of the target is used.
- */
-function coordinates(target, x, y) {
-  let box = target.getBoundingClientRect();
-  if (x == null) {
-    x = box.width / 2;
-  }
-  if (y == null) {
-    y = box.height / 2;
-  }
-  let coords = {};
-  coords.x = box.left + x;
-  coords.y = box.top + y;
-  return coords;
-}
-
-/**
  * Function that perform a single tap
  */
 function singleTap(id, corx, cory) {
   let el = elementManager.getKnownElement(id, curContainer);
   // after this block, the element will be scrolled into view
-  let visible = element.checkVisible(el, curContainer.frame, corx, cory);
+  let visible = element.isVisible(el, corx, cory);
   if (!visible) {
     throw new ElementNotVisibleError("Element is not currently visible and may not be manipulated");
   }
@@ -903,7 +864,7 @@ function singleTap(id, corx, cory) {
     if (!curContainer.frame.document.createTouch) {
       actions.mouseEventsOnly = true;
     }
-    let c = coordinates(el, corx, cory);
+    let c = element.coordinates(el, corx, cory);
     if (!actions.mouseEventsOnly) {
       let touchId = actions.nextTouchId++;
       let touch = createATouch(el, c.x, c.y, touchId);
@@ -1015,7 +976,7 @@ function setDispatch(batches, touches, batchIndex=0) {
     switch (command) {
       case "press":
         el = elementManager.getKnownElement(pack[2], curContainer);
-        c = coordinates(el, pack[3], pack[4]);
+        c = element.coordinates(el, pack[3], pack[4]);
         touch = createATouch(el, c.x, c.y, touchId);
         multiLast[touchId] = touch;
         touches.push(touch);
@@ -1032,7 +993,7 @@ function setDispatch(batches, touches, batchIndex=0) {
 
       case "move":
         el = elementManager.getKnownElement(pack[2], curContainer);
-        c = coordinates(el);
+        c = element.coordinates(el);
         touch = createATouch(multiLast[touchId].target, c.x, c.y, touchId);
         touchIndex = touches.indexOf(lastTouch);
         touches[touchIndex] = touch;
@@ -1761,26 +1722,6 @@ function emulatorCmdResult(msg) {
     let err = new JavaScriptError(e);
     sendError(err, id);
   }
-}
-
-function importScript(msg) {
-  let command_id = msg.json.command_id;
-  let file;
-  if (importedScripts.exists()) {
-    file = FileUtils.openFileOutputStream(importedScripts,
-        FileUtils.MODE_APPEND | FileUtils.MODE_WRONLY);
-  }
-  else {
-    //Note: The permission bits here don't actually get set (bug 804563)
-    importedScripts.createUnique(Components.interfaces.nsIFile.NORMAL_FILE_TYPE,
-                                 parseInt("0666", 8));
-    file = FileUtils.openFileOutputStream(importedScripts,
-                                          FileUtils.MODE_WRONLY | FileUtils.MODE_CREATE);
-    importedScripts.permissions = parseInt("0666", 8); //actually set permissions
-  }
-  file.write(msg.json.script, msg.json.script.length);
-  file.close();
-  sendOk(command_id);
 }
 
 /**

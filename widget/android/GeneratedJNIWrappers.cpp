@@ -31,6 +31,14 @@ constexpr char AlarmReceiver::NotifyAlarmFired_t::signature[];
 template<> const char mozilla::jni::Context<DownloadsIntegration, jobject>::name[] =
         "org/mozilla/gecko/DownloadsIntegration";
 
+constexpr char DownloadsIntegration::GetTemporaryDownloadDirectory_t::name[];
+constexpr char DownloadsIntegration::GetTemporaryDownloadDirectory_t::signature[];
+
+auto DownloadsIntegration::GetTemporaryDownloadDirectory() -> mozilla::jni::String::LocalRef
+{
+    return mozilla::jni::Method<GetTemporaryDownloadDirectory_t>::Call(DownloadsIntegration::Context(), nullptr);
+}
+
 constexpr char DownloadsIntegration::ScanMedia_t::name[];
 constexpr char DownloadsIntegration::ScanMedia_t::signature[];
 
@@ -766,6 +774,14 @@ constexpr char GeckoEditable::NotifyIMEContext_t::signature[];
 auto GeckoEditable::NotifyIMEContext(int32_t a0, mozilla::jni::String::Param a1, mozilla::jni::String::Param a2, mozilla::jni::String::Param a3) const -> void
 {
     return mozilla::jni::Method<NotifyIMEContext_t>::Call(GeckoEditable::mCtx, nullptr, a0, a1, a2, a3);
+}
+
+constexpr char GeckoEditable::OnDefaultKeyEvent_t::name[];
+constexpr char GeckoEditable::OnDefaultKeyEvent_t::signature[];
+
+auto GeckoEditable::OnDefaultKeyEvent(mozilla::jni::Object::Param a0) const -> void
+{
+    return mozilla::jni::Method<OnDefaultKeyEvent_t>::Call(GeckoEditable::mCtx, nullptr, a0);
 }
 
 constexpr char GeckoEditable::OnImeAcknowledgeFocus_t::name[];

@@ -468,8 +468,8 @@
                 accesskey="&syncedTabs.context.bookmarkSingleTab.accesskey;"
                 id="syncedTabsBookmarkSelected"/>
       <menuseparator/>
-      <menuitem label="&syncedTabs.context.refreshList.label;"
-                accesskey="&syncedTabs.context.refreshList.accesskey;"
+      <menuitem label="&syncSyncNowItem.label;"
+                accesskey="&syncSyncNowItem.accesskey;"
                 id="syncedTabsRefresh"/>
     </menupopup>
   </popupset>
@@ -678,8 +678,6 @@
                        aria-label="&urlbar.loginFillNotificationAnchor.label;"/>
                 <image id="password-notification-icon" class="notification-anchor-icon" role="button"
                        aria-label="&urlbar.passwordNotificationAnchor.label;"/>
-                <image id="webapps-notification-icon" class="notification-anchor-icon" role="button"
-                       aria-label="&urlbar.webappsNotificationAnchor.label;"/>
                 <image id="plugins-notification-icon" class="notification-anchor-icon" role="button"
                        aria-label="&urlbar.pluginsNotificationAnchor.label;"/>
                 <image id="web-notifications-notification-icon" class="notification-anchor-icon" role="button"

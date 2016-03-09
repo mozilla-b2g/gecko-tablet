@@ -78,6 +78,9 @@ class WasmName
             return true;
         return EqualChars(begin(), rhs.begin(), length());
     }
+    bool operator!=(WasmName rhs) const {
+        return !(*this == rhs);
+    }
 };
 
 class WasmRef
@@ -192,6 +195,7 @@ enum class WasmAstExprKind
     BinaryOperator,
     Block,
     Branch,
+    BranchTable,
     Call,
     CallIndirect,
     ComparisonOperator,
@@ -204,7 +208,6 @@ enum class WasmAstExprKind
     Return,
     SetLocal,
     Store,
-    TableSwitch,
     UnaryOperator,
 };
 
@@ -453,15 +456,15 @@ class WasmAstStore : public WasmAstExpr
     WasmAstExpr& value() const { return *value_; }
 };
 
-class WasmAstTableSwitch : public WasmAstExpr
+class WasmAstBranchTable : public WasmAstExpr
 {
     WasmAstExpr& index_;
     WasmRef default_;
     WasmRefVector table_;
 
   public:
-    static const WasmAstExprKind Kind = WasmAstExprKind::TableSwitch;
-    explicit WasmAstTableSwitch(WasmAstExpr& index, WasmRef def, WasmRefVector&& table)
+    static const WasmAstExprKind Kind = WasmAstExprKind::BranchTable;
+    explicit WasmAstBranchTable(WasmAstExpr& index, WasmRef def, WasmRefVector&& table)
       : WasmAstExpr(Kind),
         index_(index),
         default_(def),
@@ -562,14 +565,18 @@ typedef WasmAstVector<WasmAstSegment*> WasmAstSegmentVector;
 class WasmAstMemory : public WasmAstNode
 {
     uint32_t initialSize_;
+    Maybe<uint32_t> maxSize_;
     WasmAstSegmentVector segments_;
 
   public:
-    explicit WasmAstMemory(uint32_t initialSize, WasmAstSegmentVector&& segments)
+    explicit WasmAstMemory(uint32_t initialSize, Maybe<uint32_t> maxSize,
+                           WasmAstSegmentVector&& segments)
       : initialSize_(initialSize),
+        maxSize_(maxSize),
         segments_(Move(segments))
     {}
     uint32_t initialSize() const { return initialSize_; }
+    const Maybe<uint32_t>& maxSize() const { return maxSize_; }
     const WasmAstSegmentVector& segments() const { return segments_; }
 };
 
@@ -755,6 +762,7 @@ class WasmToken
         Block,
         Br,
         BrIf,
+        BrTable,
         Call,
         CallImport,
         CallIndirect,
@@ -776,6 +784,7 @@ class WasmToken
         UnsignedInteger,
         SignedInteger,
         Memory,
+        NegativeZero,
         Load,
         Local,
         Loop,
@@ -791,7 +800,6 @@ class WasmToken
         SetLocal,
         Store,
         Table,
-        TableSwitch,
         Text,
         Type,
         UnaryOpcode,
@@ -1264,6 +1272,8 @@ WasmTokenStream::literal(const char16_t* begin)
 
         if (*begin == '-') {
             uint64_t value = u.value();
+            if (value == 0)
+                return WasmToken(WasmToken::NegativeZero, begin, cur_);
             if (value > uint64_t(INT64_MIN))
                 return LexHexFloatLiteral(begin, end_, &cur_);
 
@@ -1288,6 +1298,8 @@ WasmTokenStream::literal(const char16_t* begin)
 
         if (*begin == '-') {
             uint64_t value = u.value();
+            if (value == 0)
+                return WasmToken(WasmToken::NegativeZero, begin, cur_);
             if (value > uint64_t(INT64_MIN))
                 return LexDecFloatLiteral(begin, end_, &cur_);
 
@@ -1371,6 +1383,8 @@ WasmTokenStream::next()
         if (consume(MOZ_UTF16("block")))
             return WasmToken(WasmToken::Block, begin, cur_);
         if (consume(MOZ_UTF16("br"))) {
+            if (consume(MOZ_UTF16("_table")))
+                return WasmToken(WasmToken::BrTable, begin, cur_);
             if (consume(MOZ_UTF16("_if")))
                 return WasmToken(WasmToken::BrIf, begin, cur_);
             return WasmToken(WasmToken::Br, begin, cur_);
@@ -1448,7 +1462,7 @@ WasmTokenStream::next()
                 if (consume(MOZ_UTF16("lt")))
                     return WasmToken(WasmToken::ComparisonOpcode, Expr::F32Lt, begin, cur_);
                 if (consume(MOZ_UTF16("load")))
-                    return WasmToken(WasmToken::Load, Expr::F32LoadMem, begin, cur_);
+                    return WasmToken(WasmToken::Load, Expr::F32Load, begin, cur_);
                 break;
               case 'm':
                 if (consume(MOZ_UTF16("max")))
@@ -1477,7 +1491,7 @@ WasmTokenStream::next()
                 if (consume(MOZ_UTF16("sub")))
                     return WasmToken(WasmToken::BinaryOpcode, Expr::F32Sub, begin, cur_);
                 if (consume(MOZ_UTF16("store")))
-                    return WasmToken(WasmToken::Store, Expr::F32StoreMem, begin, cur_);
+                    return WasmToken(WasmToken::Store, Expr::F32Store, begin, cur_);
                 break;
               case 't':
                 if (consume(MOZ_UTF16("trunc")))
@@ -1535,7 +1549,7 @@ WasmTokenStream::next()
                 if (consume(MOZ_UTF16("lt")))
                     return WasmToken(WasmToken::ComparisonOpcode, Expr::F64Lt, begin, cur_);
                 if (consume(MOZ_UTF16("load")))
-                    return WasmToken(WasmToken::Load, Expr::F64LoadMem, begin, cur_);
+                    return WasmToken(WasmToken::Load, Expr::F64Load, begin, cur_);
                 break;
               case 'm':
                 if (consume(MOZ_UTF16("max")))
@@ -1564,7 +1578,7 @@ WasmTokenStream::next()
                 if (consume(MOZ_UTF16("sub")))
                     return WasmToken(WasmToken::BinaryOpcode, Expr::F64Sub, begin, cur_);
                 if (consume(MOZ_UTF16("store")))
-                    return WasmToken(WasmToken::Store, Expr::F64StoreMem, begin, cur_);
+                    return WasmToken(WasmToken::Store, Expr::F64Store, begin, cur_);
                 break;
               case 't':
                 if (consume(MOZ_UTF16("trunc")))
@@ -1631,15 +1645,15 @@ WasmTokenStream::next()
                     return WasmToken(WasmToken::ComparisonOpcode, Expr::I32LtU, begin, cur_);
                 if (consume(MOZ_UTF16("load"))) {
                     if (IsWasmSpace(*cur_))
-                        return WasmToken(WasmToken::Load, Expr::I32LoadMem, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I32Load, begin, cur_);
                     if (consume(MOZ_UTF16("8_s")))
-                        return WasmToken(WasmToken::Load, Expr::I32LoadMem8S, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I32Load8S, begin, cur_);
                     if (consume(MOZ_UTF16("8_u")))
-                        return WasmToken(WasmToken::Load, Expr::I32LoadMem8U, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I32Load8U, begin, cur_);
                     if (consume(MOZ_UTF16("16_s")))
-                        return WasmToken(WasmToken::Load, Expr::I32LoadMem16S, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I32Load16S, begin, cur_);
                     if (consume(MOZ_UTF16("16_u")))
-                        return WasmToken(WasmToken::Load, Expr::I32LoadMem16U, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I32Load16U, begin, cur_);
                     break;
                 }
                 break;
@@ -1679,11 +1693,11 @@ WasmTokenStream::next()
                     return WasmToken(WasmToken::BinaryOpcode, Expr::I32ShrU, begin, cur_);
                 if (consume(MOZ_UTF16("store"))) {
                     if (IsWasmSpace(*cur_))
-                        return WasmToken(WasmToken::Store, Expr::I32StoreMem, begin, cur_);
+                        return WasmToken(WasmToken::Store, Expr::I32Store, begin, cur_);
                     if (consume(MOZ_UTF16("8")))
-                        return WasmToken(WasmToken::Store, Expr::I32StoreMem8, begin, cur_);
+                        return WasmToken(WasmToken::Store, Expr::I32Store8, begin, cur_);
                     if (consume(MOZ_UTF16("16")))
-                        return WasmToken(WasmToken::Store, Expr::I32StoreMem16, begin, cur_);
+                        return WasmToken(WasmToken::Store, Expr::I32Store16, begin, cur_);
                     break;
                 }
                 break;
@@ -1769,19 +1783,19 @@ WasmTokenStream::next()
                     return WasmToken(WasmToken::ComparisonOpcode, Expr::I64LtU, begin, cur_);
                 if (consume(MOZ_UTF16("load"))) {
                     if (IsWasmSpace(*cur_))
-                        return WasmToken(WasmToken::Load, Expr::I64LoadMem, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I64Load, begin, cur_);
                     if (consume(MOZ_UTF16("8_s")))
-                        return WasmToken(WasmToken::Load, Expr::I64LoadMem8S, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I64Load8S, begin, cur_);
                     if (consume(MOZ_UTF16("8_u")))
-                        return WasmToken(WasmToken::Load, Expr::I64LoadMem8U, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I64Load8U, begin, cur_);
                     if (consume(MOZ_UTF16("16_s")))
-                        return WasmToken(WasmToken::Load, Expr::I64LoadMem16S, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I64Load16S, begin, cur_);
                     if (consume(MOZ_UTF16("16_u")))
-                        return WasmToken(WasmToken::Load, Expr::I64LoadMem16U, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I64Load16U, begin, cur_);
                     if (consume(MOZ_UTF16("32_s")))
-                        return WasmToken(WasmToken::Load, Expr::I64LoadMem32S, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I64Load32S, begin, cur_);
                     if (consume(MOZ_UTF16("32_u")))
-                        return WasmToken(WasmToken::Load, Expr::I64LoadMem32U, begin, cur_);
+                        return WasmToken(WasmToken::Load, Expr::I64Load32U, begin, cur_);
                     break;
                 }
                 break;
@@ -1821,13 +1835,13 @@ WasmTokenStream::next()
                     return WasmToken(WasmToken::BinaryOpcode, Expr::I64ShrU, begin, cur_);
                 if (consume(MOZ_UTF16("store"))) {
                     if (IsWasmSpace(*cur_))
-                        return WasmToken(WasmToken::Store, Expr::I64StoreMem, begin, cur_);
+                        return WasmToken(WasmToken::Store, Expr::I64Store, begin, cur_);
                     if (consume(MOZ_UTF16("8")))
-                        return WasmToken(WasmToken::Store, Expr::I64StoreMem8, begin, cur_);
+                        return WasmToken(WasmToken::Store, Expr::I64Store8, begin, cur_);
                     if (consume(MOZ_UTF16("16")))
-                        return WasmToken(WasmToken::Store, Expr::I64StoreMem16, begin, cur_);
+                        return WasmToken(WasmToken::Store, Expr::I64Store16, begin, cur_);
                     if (consume(MOZ_UTF16("32")))
-                        return WasmToken(WasmToken::Store, Expr::I64StoreMem32, begin, cur_);
+                        return WasmToken(WasmToken::Store, Expr::I64Store32, begin, cur_);
                     break;
                 }
                 break;
@@ -1909,11 +1923,8 @@ WasmTokenStream::next()
         break;
 
       case 't':
-        if (consume(MOZ_UTF16("table"))) {
-            if (consume(MOZ_UTF16("switch")))
-                return WasmToken(WasmToken::TableSwitch, begin, cur_);
+        if (consume(MOZ_UTF16("table")))
             return WasmToken(WasmToken::Table, begin, cur_);
-        }
         if (consume(MOZ_UTF16("type")))
             return WasmToken(WasmToken::Type, begin, cur_);
         break;
@@ -2264,6 +2275,9 @@ ParseFloatLiteral(WasmParseContext& c, WasmToken token, Float* result)
       case WasmToken::SignedInteger:
         *result = token.sint();
         return true;
+      case WasmToken::NegativeZero:
+        *result = -0.0;
+        return true;
       case WasmToken::Float:
         break;
       default:
@@ -2339,6 +2353,8 @@ ParseConst(WasmParseContext& c, WasmToken constToken)
                 break;
             return new(c.lifo) WasmAstConst(Val(uint32_t(sint.value())));
           }
+          case WasmToken::NegativeZero:
+            return new(c.lifo) WasmAstConst(Val(uint32_t(0)));
           default:
             break;
         }
@@ -2352,6 +2368,8 @@ ParseConst(WasmParseContext& c, WasmToken constToken)
             return new(c.lifo) WasmAstConst(Val(val.uint()));
           case WasmToken::SignedInteger:
             return new(c.lifo) WasmAstConst(Val(uint64_t(val.sint())));
+          case WasmToken::NegativeZero:
+            return new(c.lifo) WasmAstConst(Val(uint32_t(0)));
           default:
             break;
         }
@@ -2534,26 +2552,26 @@ ParseLoad(WasmParseContext& c, Expr expr)
 
     if (align == 0) {
         switch (expr) {
-          case Expr::I32LoadMem8S:
-          case Expr::I32LoadMem8U:
-          case Expr::I64LoadMem8S:
-          case Expr::I64LoadMem8U:
+          case Expr::I32Load8S:
+          case Expr::I32Load8U:
+          case Expr::I64Load8S:
+          case Expr::I64Load8U:
             align = 1;
             break;
-          case Expr::I32LoadMem16S:
-          case Expr::I32LoadMem16U:
-          case Expr::I64LoadMem16S:
-          case Expr::I64LoadMem16U:
+          case Expr::I32Load16S:
+          case Expr::I32Load16U:
+          case Expr::I64Load16S:
+          case Expr::I64Load16U:
             align = 2;
             break;
-          case Expr::I32LoadMem:
-          case Expr::F32LoadMem:
-          case Expr::I64LoadMem32S:
-          case Expr::I64LoadMem32U:
+          case Expr::I32Load:
+          case Expr::F32Load:
+          case Expr::I64Load32S:
+          case Expr::I64Load32U:
             align = 4;
             break;
-          case Expr::I64LoadMem:
-          case Expr::F64LoadMem:
+          case Expr::I64Load:
+          case Expr::F64Load:
             align = 8;
             break;
           default:
@@ -2575,21 +2593,21 @@ ParseStore(WasmParseContext& c, Expr expr)
 
     if (align == 0) {
         switch (expr) {
-          case Expr::I32StoreMem8:
-          case Expr::I64StoreMem8:
+          case Expr::I32Store8:
+          case Expr::I64Store8:
             align = 1;
             break;
-          case Expr::I32StoreMem16:
-          case Expr::I64StoreMem16:
+          case Expr::I32Store16:
+          case Expr::I64Store16:
             align = 2;
             break;
-          case Expr::I32StoreMem:
-          case Expr::F32StoreMem:
-          case Expr::I64StoreMem32:
+          case Expr::I32Store:
+          case Expr::F32Store:
+          case Expr::I64Store32:
             align = 4;
             break;
-          case Expr::I64StoreMem:
-          case Expr::F64StoreMem:
+          case Expr::I64Store:
+          case Expr::F64Store:
             align = 8;
             break;
           default:
@@ -2604,8 +2622,8 @@ ParseStore(WasmParseContext& c, Expr expr)
     return new(c.lifo) WasmAstStore(expr, WasmAstLoadStoreAddress(base, offset, align), value);
 }
 
-static WasmAstTableSwitch*
-ParseTableSwitch(WasmParseContext& c)
+static WasmAstBranchTable*
+ParseBranchTable(WasmParseContext& c)
 {
     WasmAstExpr* index = ParseExpr(c);
     if (!index)
@@ -2648,7 +2666,7 @@ ParseTableSwitch(WasmParseContext& c)
     if (!c.ts.match(WasmToken::CloseParen, c.error))
         return nullptr;
 
-    return new(c.lifo) WasmAstTableSwitch(*index, def, Move(table));
+    return new(c.lifo) WasmAstBranchTable(*index, def, Move(table));
 }
 
 static WasmAstExpr*
@@ -2667,6 +2685,8 @@ ParseExprInsideParens(WasmParseContext& c)
         return ParseBranch(c, Expr::Br);
       case WasmToken::BrIf:
         return ParseBranch(c, Expr::BrIf);
+      case WasmToken::BrTable:
+        return ParseBranchTable(c);
       case WasmToken::Call:
         return ParseCall(c, Expr::Call);
       case WasmToken::CallImport:
@@ -2695,8 +2715,6 @@ ParseExprInsideParens(WasmParseContext& c)
         return ParseSetLocal(c);
       case WasmToken::Store:
         return ParseStore(c, token.expr());
-      case WasmToken::TableSwitch:
-        return ParseTableSwitch(c);
       case WasmToken::UnaryOpcode:
         return ParseUnaryOperator(c, token.expr());
       default:
@@ -2897,6 +2915,11 @@ ParseMemory(WasmParseContext& c)
     if (!c.ts.match(WasmToken::Index, &initialSize, c.error))
         return nullptr;
 
+    Maybe<uint32_t> maxSize;
+    WasmToken token;
+    if (c.ts.getIf(WasmToken::Index, &token))
+        maxSize.emplace(token.index());
+
     WasmAstSegmentVector segments(c.lifo);
     while (c.ts.getIf(WasmToken::OpenParen)) {
         WasmAstSegment* segment = ParseSegment(c);
@@ -2906,7 +2929,7 @@ ParseMemory(WasmParseContext& c)
             return nullptr;
     }
 
-    return new(c.lifo) WasmAstMemory(initialSize.index(), Move(segments));
+    return new(c.lifo) WasmAstMemory(initialSize.index(), maxSize, Move(segments));
 }
 
 static WasmAstImport*
@@ -2947,6 +2970,10 @@ ParseExport(WasmParseContext& c)
       case WasmToken::Name:
         return new(c.lifo) WasmAstExport(name.text(), WasmRef(exportee.name(), WasmNoIndex));
       case WasmToken::Memory:
+        if (name.text() != WasmName(MOZ_UTF16("memory"), 6)) {
+            c.ts.generateError(exportee, c.error);
+            return nullptr;
+        }
         return new(c.lifo) WasmAstExport(name.text());
       default:
         break;
@@ -3090,6 +3117,15 @@ class Resolver
         }
         return false;
     }
+    bool failResolveLabel(const char* kind, WasmName name) {
+        Vector<char16_t, 0, SystemAllocPolicy> nameWithNull;
+        if (!nameWithNull.append(name.begin(), name.length()))
+            return false;
+        if (!nameWithNull.append(0))
+            return false;
+        error_->reset(JS_smprintf("%s label '%hs' not found", kind, nameWithNull.begin()));
+        return false;
+    }
 
   public:
     explicit Resolver(LifoAlloc& lifo, UniqueChars* error)
@@ -3126,29 +3162,40 @@ class Resolver
         MOZ_ASSERT(targetStack_.back() == name);
         targetStack_.popBack();
     }
-    bool resolveSigRef(WasmRef& ref) {
-        return ref.name().empty() || resolveRef(sigMap_, ref);
+
+    bool resolveSignature(WasmRef& ref) {
+        if (!ref.name().empty() && !resolveRef(sigMap_, ref))
+            return failResolveLabel("signature", ref.name());
+        return true;
     }
-    bool resolveFuncRef(WasmRef& ref) {
-        return ref.name().empty() || resolveRef(funcMap_, ref);
+    bool resolveFunction(WasmRef& ref) {
+        if (!ref.name().empty() && !resolveRef(funcMap_, ref))
+            return failResolveLabel("function", ref.name());
+        return true;
     }
-    bool resolveImportRef(WasmRef& ref) {
-        return ref.name().empty() || resolveRef(importMap_, ref);
+    bool resolveImport(WasmRef& ref) {
+        if (!ref.name().empty() && !resolveRef(importMap_, ref))
+            return failResolveLabel("import", ref.name());
+        return true;
     }
-    bool resolveVarRef(WasmRef& ref) {
-        return ref.name().empty() || resolveRef(varMap_, ref);
+    bool resolveLocal(WasmRef& ref) {
+        if (!ref.name().empty() && !resolveRef(varMap_, ref))
+            return failResolveLabel("local", ref.name());
+        return true;
     }
-    bool resolveTarget(WasmRef& ref) {
-        for (size_t i = targetStack_.length(); i > 0; i--) {
-            uint32_t targetIndex = i - 1;
-            if (targetStack_[targetIndex] == ref.name()) {
-                ref.setIndex(targetIndex);
+    bool resolveBranchTarget(WasmRef& ref) {
+        if (ref.name().empty())
+            return true;
+        for (size_t i = 0, e = targetStack_.length(); i < e; i++) {
+            if (targetStack_[e - i - 1] == ref.name()) {
+                ref.setIndex(i);
                 return true;
             }
         }
-        return false;
+        return failResolveLabel("branch target", ref.name());
     }
-    bool fail(const char*message) {
+
+    bool fail(const char* message) {
         error_->reset(JS_smprintf("%s", message));
         return false;
     }
@@ -3185,8 +3232,8 @@ ResolveBlock(Resolver& r, WasmAstBlock& b)
 static bool
 ResolveBranch(Resolver& r, WasmAstBranch& br)
 {
-    if (!br.target().name().empty() && !r.resolveTarget(br.target()))
-        return r.fail("label not found");
+    if (!r.resolveBranchTarget(br.target()))
+        return false;
 
     if (br.expr() == Expr::BrIf) {
         if (!ResolveExpr(r, br.cond()))
@@ -3214,12 +3261,12 @@ ResolveCall(Resolver& r, WasmAstCall& c)
         return false;
 
     if (c.expr() == Expr::Call) {
-        if (!r.resolveFuncRef(c.func()))
-            return r.fail("function not found");
+        if (!r.resolveFunction(c.func()))
+            return false;
     } else {
         MOZ_ASSERT(c.expr() == Expr::CallImport);
-        if (!r.resolveImportRef(c.func()))
-            return r.fail("import not found");
+        if (!r.resolveImport(c.func()))
+            return false;
     }
 
     return true;
@@ -3234,8 +3281,8 @@ ResolveCallIndirect(Resolver& r, WasmAstCallIndirect& c)
     if (!ResolveArgs(r, c.args()))
         return false;
 
-    if (!r.resolveSigRef(c.sig()))
-        return r.fail("signature not found");
+    if (!r.resolveSignature(c.sig()))
+        return false;
 
     return true;
 }
@@ -3243,10 +3290,7 @@ ResolveCallIndirect(Resolver& r, WasmAstCallIndirect& c)
 static bool
 ResolveGetLocal(Resolver& r, WasmAstGetLocal& gl)
 {
-    if (!r.resolveVarRef(gl.local()))
-        return r.fail("local not found");
-
-    return true;
+    return r.resolveLocal(gl.local());
 }
 
 static bool
@@ -3255,8 +3299,8 @@ ResolveSetLocal(Resolver& r, WasmAstSetLocal& sl)
     if (!ResolveExpr(r, sl.value()))
         return false;
 
-    if (!r.resolveVarRef(sl.local()))
-        return r.fail("local not found");
+    if (!r.resolveLocal(sl.local()))
+        return false;
 
     return true;
 }
@@ -3321,17 +3365,17 @@ ResolveReturn(Resolver& r, WasmAstReturn& ret)
 }
 
 static bool
-ResolveTableSwitch(Resolver& r, WasmAstTableSwitch& ts)
+ResolveBranchTable(Resolver& r, WasmAstBranchTable& bt)
 {
-    if (!ts.def().name().empty() && !r.resolveTarget(ts.def()))
-        return r.fail("switch default not found");
+    if (!r.resolveBranchTarget(bt.def()))
+        return false;
 
-    for (WasmRef& elem : ts.table()) {
-        if (!elem.name().empty() && !r.resolveTarget(elem))
-            return r.fail("switch element not found");
+    for (WasmRef& elem : bt.table()) {
+        if (!r.resolveBranchTarget(elem))
+            return false;
     }
 
-    return ResolveExpr(r, ts.index());
+    return ResolveExpr(r, bt.index());
 }
 
 static bool
@@ -3368,8 +3412,8 @@ ResolveExpr(Resolver& r, WasmAstExpr& expr)
         return ResolveSetLocal(r, expr.as<WasmAstSetLocal>());
       case WasmAstExprKind::Store:
         return ResolveStore(r, expr.as<WasmAstStore>());
-      case WasmAstExprKind::TableSwitch:
-        return ResolveTableSwitch(r, expr.as<WasmAstTableSwitch>());
+      case WasmAstExprKind::BranchTable:
+        return ResolveBranchTable(r, expr.as<WasmAstBranchTable>());
       case WasmAstExprKind::UnaryOperator:
         return ResolveUnaryOperator(r, expr.as<WasmAstUnaryOperator>());
     }
@@ -3412,16 +3456,16 @@ ResolveModule(LifoAlloc& lifo, WasmAstModule* module, UniqueChars* error)
     size_t numFuncs = module->funcs().length();
     for (size_t i = 0; i < numFuncs; i++) {
         WasmAstFunc* func = module->funcs()[i];
-        if (!r.resolveSigRef(func->sig()))
-            return r.fail("signature not found");
+        if (!r.resolveSignature(func->sig()))
+            return false;
         if (!r.registerFuncName(func->name(), i))
             return r.fail("duplicate function");
     }
 
     if (module->maybeTable()) {
         for (WasmRef& ref : module->maybeTable()->elems()) {
-            if (!r.resolveFuncRef(ref))
-                return r.fail("function not found");
+            if (!r.resolveFunction(ref))
+                return false;
         }
     }
 
@@ -3435,8 +3479,8 @@ ResolveModule(LifoAlloc& lifo, WasmAstModule* module, UniqueChars* error)
     for (WasmAstExport* export_ : module->exports()) {
         if (export_->kind() != WasmAstExportKind::Func)
             continue;
-        if (!r.resolveFuncRef(export_->func()))
-            return r.fail("function not found");
+        if (!r.resolveFunction(export_->func()))
+            return false;
     }
 
     for (WasmAstFunc* func : module->funcs()) {
@@ -3456,7 +3500,7 @@ EncodeExpr(Encoder& e, WasmAstExpr& expr);
 static bool
 EncodeBlock(Encoder& e, WasmAstBlock& b)
 {
-    if (!e.writeExpr(Expr::Block))
+    if (!e.writeExpr(b.expr()))
         return false;
 
     size_t numExprs = b.exprs().length();
@@ -3538,10 +3582,10 @@ EncodeConst(Encoder& e, WasmAstConst& c)
     switch (c.val().type()) {
       case ValType::I32:
         return e.writeExpr(Expr::I32Const) &&
-               e.writeVarU32(c.val().i32());
+               e.writeVarS32(c.val().i32());
       case ValType::I64:
         return e.writeExpr(Expr::I64Const) &&
-               e.writeVarU64(c.val().i64());
+               e.writeVarS64(c.val().i64());
       case ValType::F32:
         return e.writeExpr(Expr::F32Const) &&
                e.writeFixedF32(c.val().f32());
@@ -3639,23 +3683,23 @@ EncodeReturn(Encoder& e, WasmAstReturn& r)
 }
 
 static bool
-EncodeTableSwitch(Encoder& e, WasmAstTableSwitch& ts)
+EncodeBranchTable(Encoder& e, WasmAstBranchTable& bt)
 {
-    if (!e.writeExpr(Expr::TableSwitch))
+    if (!e.writeExpr(Expr::BrTable))
         return false;
 
-    if (!e.writeVarU32(ts.def().index()))
+    if (!e.writeVarU32(bt.table().length()))
         return false;
 
-    if (!e.writeVarU32(ts.table().length()))
-        return false;
-
-    for (const WasmRef& elem : ts.table()) {
+    for (const WasmRef& elem : bt.table()) {
         if (!e.writeVarU32(elem.index()))
             return false;
     }
 
-    return EncodeExpr(e, ts.index());
+    if (!e.writeVarU32(bt.def().index()))
+        return false;
+
+    return EncodeExpr(e, bt.index());
 }
 
 static bool
@@ -3692,8 +3736,8 @@ EncodeExpr(Encoder& e, WasmAstExpr& expr)
         return EncodeSetLocal(e, expr.as<WasmAstSetLocal>());
       case WasmAstExprKind::Store:
         return EncodeStore(e, expr.as<WasmAstStore>());
-      case WasmAstExprKind::TableSwitch:
-        return EncodeTableSwitch(e, expr.as<WasmAstTableSwitch>());
+      case WasmAstExprKind::BranchTable:
+        return EncodeBranchTable(e, expr.as<WasmAstBranchTable>());
       case WasmAstExprKind::UnaryOperator:
         return EncodeUnaryOperator(e, expr.as<WasmAstUnaryOperator>());
     }
@@ -3704,16 +3748,13 @@ EncodeExpr(Encoder& e, WasmAstExpr& expr)
 // wasm AST binary serialization
 
 static bool
-EncodeSignatureSection(Encoder& e, WasmAstModule& module)
+EncodeSignatures(Encoder& e, WasmAstModule& module)
 {
     if (module.sigs().empty())
         return true;
 
-    if (!e.writeCString(SigLabel))
-        return false;
-
     size_t offset;
-    if (!e.startSection(&offset))
+    if (!e.startSection(SignaturesId, &offset))
         return false;
 
     if (!e.writeVarU32(module.sigs().length()))
@@ -3737,16 +3778,13 @@ EncodeSignatureSection(Encoder& e, WasmAstModule& module)
 }
 
 static bool
-EncodeDeclarationSection(Encoder& e, WasmAstModule& module)
+EncodeFunctionSignatures(Encoder& e, WasmAstModule& module)
 {
     if (module.funcs().empty())
         return true;
 
-    if (!e.writeCString(DeclLabel))
-        return false;
-
     size_t offset;
-    if (!e.startSection(&offset))
+    if (!e.startSection(FunctionSignaturesId, &offset))
         return false;
 
     if (!e.writeVarU32(module.funcs().length()))
@@ -3762,11 +3800,11 @@ EncodeDeclarationSection(Encoder& e, WasmAstModule& module)
 }
 
 static bool
-EncodeCString(Encoder& e, WasmName wasmName)
+EncodeBytes(Encoder& e, WasmName wasmName)
 {
     TwoByteChars range(wasmName.begin(), wasmName.length());
     UniqueChars utf8(JS::CharsToNewUTF8CharsZ(nullptr, range).c_str());
-    return utf8 && e.writeCString(utf8.get());
+    return utf8 && e.writeBytes(utf8.get(), strlen(utf8.get()));
 }
 
 static bool
@@ -3775,64 +3813,65 @@ EncodeImport(Encoder& e, WasmAstImport& imp)
     if (!e.writeVarU32(imp.sigIndex()))
         return false;
 
-    if (!EncodeCString(e, imp.module()))
+    if (!EncodeBytes(e, imp.module()))
         return false;
 
-    if (!EncodeCString(e, imp.func()))
+    if (!EncodeBytes(e, imp.func()))
         return false;
 
     return true;
 }
 
 static bool
-EncodeImportSection(Encoder& e, WasmAstModule& module)
+EncodeImportTable(Encoder& e, WasmAstModule& module)
 {
     if (module.imports().empty())
         return true;
 
-    if (!e.writeCString(ImportLabel))
+    size_t offset;
+    if (!e.startSection(ImportTableId, &offset))
         return false;
 
-    size_t offset;
-    if (!e.startSection(&offset))
+    if (!e.writeVarU32(module.imports().length()))
         return false;
 
     for (WasmAstImport* imp : module.imports()) {
-        if (!e.writeCString(FuncLabel))
-            return false;
         if (!EncodeImport(e, *imp))
             return false;
     }
-
-    if (!e.writeCString(EndLabel))
-        return false;
 
     e.finishSection(offset);
     return true;
 }
 
 static bool
-EncodeMemorySection(Encoder& e, WasmAstModule& module)
+EncodeMemory(Encoder& e, WasmAstModule& module)
 {
     if (!module.maybeMemory())
         return true;
 
-    if (!e.writeCString(MemoryLabel))
-        return false;
-
     size_t offset;
-    if (!e.startSection(&offset))
+    if (!e.startSection(MemoryId, &offset))
         return false;
 
     WasmAstMemory& memory = *module.maybeMemory();
 
-    if (!e.writeCString(InitialLabel))
-        return false;
-
     if (!e.writeVarU32(memory.initialSize()))
         return false;
 
-    if (!e.writeCString(EndLabel))
+    uint32_t maxSize = memory.maxSize() ? *memory.maxSize() : memory.initialSize();
+    if (!e.writeVarU32(maxSize))
+        return false;
+
+    uint8_t exported = 0;
+    for (WasmAstExport* exp : module.exports()) {
+        if (exp->kind() == WasmAstExportKind::Memory) {
+            exported = 1;
+            break;
+        }
+    }
+
+    if (!e.writeU8(exported))
         return false;
 
     e.finishSection(offset);
@@ -3845,69 +3884,54 @@ EncodeFunctionExport(Encoder& e, WasmAstExport& exp)
     if (!e.writeVarU32(exp.func().index()))
         return false;
 
-    if (!EncodeCString(e, exp.name()))
+    if (!EncodeBytes(e, exp.name()))
         return false;
 
     return true;
 }
 
 static bool
-EncodeMemoryExport(Encoder& e, WasmAstExport& exp)
+EncodeExportTable(Encoder& e, WasmAstModule& module)
 {
-    if (!EncodeCString(e, exp.name()))
-        return false;
+    uint32_t numFuncExports = 0;
+    for (WasmAstExport* exp : module.exports()) {
+        if (exp->kind() == WasmAstExportKind::Func)
+            numFuncExports++;
+    }
 
-    return true;
-}
-
-static bool
-EncodeExportSection(Encoder& e, WasmAstModule& module)
-{
-    if (module.exports().empty())
+    if (!numFuncExports)
         return true;
 
-    if (!e.writeCString(ExportLabel))
+    size_t offset;
+    if (!e.startSection(ExportTableId, &offset))
         return false;
 
-    size_t offset;
-    if (!e.startSection(&offset))
+    if (!e.writeVarU32(numFuncExports))
         return false;
 
     for (WasmAstExport* exp : module.exports()) {
         switch (exp->kind()) {
           case WasmAstExportKind::Func:
-            if (!e.writeCString(FuncLabel))
-                return false;
             if (!EncodeFunctionExport(e, *exp))
                 return false;
             break;
           case WasmAstExportKind::Memory:
-            if (!e.writeCString(MemoryLabel))
-                return false;
-            if (!EncodeMemoryExport(e, *exp))
-                return false;
-            break;
+            continue;
         }
     }
-
-    if (!e.writeCString(EndLabel))
-        return false;
 
     e.finishSection(offset);
     return true;
 }
 
 static bool
-EncodeTableSection(Encoder& e, WasmAstModule& module)
+EncodeFunctionTable(Encoder& e, WasmAstModule& module)
 {
     if (!module.maybeTable())
         return true;
 
-    if (!e.writeCString(TableLabel))
-        return false;
-
     size_t offset;
-    if (!e.startSection(&offset))
+    if (!e.startSection(FunctionTableId, &offset))
         return false;
 
     if (!e.writeVarU32(module.maybeTable()->elems().length()))
@@ -3923,24 +3947,18 @@ EncodeTableSection(Encoder& e, WasmAstModule& module)
 }
 
 static bool
-EncodeFunctionSection(Encoder& e, WasmAstFunc& func)
+EncodeFunctionBody(Encoder& e, WasmAstFunc& func)
 {
-    if (!e.writeCString(FuncLabel))
+    size_t bodySizeAt;
+    if (!e.writePatchableVarU32(&bodySizeAt))
         return false;
 
-    size_t offset;
-    if (!e.startSection(&offset))
+    size_t beforeBody = e.currentOffset();
+
+    ValTypeVector varTypes;
+    if (!varTypes.appendAll(func.vars()))
         return false;
-
-    if (!e.writeVarU32(func.vars().length()))
-        return false;
-
-    for (ValType type : func.vars()) {
-        if (!e.writeValType(type))
-            return false;
-    }
-
-    if (!e.writeVarU32(func.body().length()))
+    if (!EncodeLocalEntries(e, varTypes))
         return false;
 
     for (WasmAstExpr* expr : func.body()) {
@@ -3948,8 +3966,26 @@ EncodeFunctionSection(Encoder& e, WasmAstFunc& func)
             return false;
     }
 
-    e.finishSection(offset);
+    e.patchVarU32(bodySizeAt, e.currentOffset() - beforeBody);
+    return true;
+}
 
+static bool
+EncodeFunctionBodies(Encoder& e, WasmAstModule& module)
+{
+    if (module.funcs().empty())
+        return true;
+
+    size_t offset;
+    if (!e.startSection(FunctionBodiesId, &offset))
+        return false;
+
+    for (WasmAstFunc* func : module.funcs()) {
+        if (!EncodeFunctionBody(e, *func))
+            return false;
+    }
+
+    e.finishSection(offset);
     return true;
 }
 
@@ -3973,103 +4009,86 @@ EncodeDataSegment(Encoder& e, WasmAstSegment& segment)
         bytes.infallibleAppend(byte);
     }
 
-    if (!e.writeVarU32(bytes.length()))
-        return false;
-
-    if (!e.writeRawData(bytes.begin(), bytes.length()))
+    if (!e.writeBytes(bytes.begin(), bytes.length()))
         return false;
 
     return true;
 }
 
 static bool
-EncodeDataSection(Encoder& e, WasmAstModule& module)
+EncodeDataSegments(Encoder& e, WasmAstModule& module)
 {
     if (!module.maybeMemory() || module.maybeMemory()->segments().empty())
         return true;
 
     const WasmAstSegmentVector& segments = module.maybeMemory()->segments();
 
-    if (!e.writeCString(DataLabel))
+    size_t offset;
+    if (!e.startSection(DataSegmentsId, &offset))
         return false;
 
-    size_t offset;
-    if (!e.startSection(&offset))
+    if (!e.writeVarU32(segments.length()))
         return false;
 
     for (WasmAstSegment* segment : segments) {
-        if (!e.writeCString(SegmentLabel))
-            return false;
         if (!EncodeDataSegment(e, *segment))
             return false;
     }
-
-    if (!e.writeCString(EndLabel))
-        return false;
 
     e.finishSection(offset);
     return true;
 }
 
-static UniqueBytecode
-EncodeModule(WasmAstModule& module)
+static bool
+EncodeModule(WasmAstModule& module, Bytes* bytes)
 {
-    UniqueBytecode bytecode = MakeUnique<Bytecode>();
-    if (!bytecode)
-        return nullptr;
-
-    Encoder e(*bytecode);
+    Encoder e(*bytes);
 
     if (!e.writeFixedU32(MagicNumber))
-        return nullptr;
+        return false;
 
     if (!e.writeFixedU32(EncodingVersion))
-        return nullptr;
+        return false;
 
-    if (!EncodeSignatureSection(e, module))
-        return nullptr;
+    if (!EncodeSignatures(e, module))
+        return false;
 
-    if (!EncodeImportSection(e, module))
-        return nullptr;
+    if (!EncodeImportTable(e, module))
+        return false;
 
-    if (!EncodeDeclarationSection(e, module))
-        return nullptr;
+    if (!EncodeFunctionSignatures(e, module))
+        return false;
 
-    if (!EncodeTableSection(e, module))
-        return nullptr;
+    if (!EncodeFunctionTable(e, module))
+        return false;
 
-    if (!EncodeMemorySection(e, module))
-        return nullptr;
+    if (!EncodeMemory(e, module))
+        return false;
 
-    if (!EncodeExportSection(e, module))
-        return nullptr;
+    if (!EncodeExportTable(e, module))
+        return false;
 
-    for (WasmAstFunc* func : module.funcs()) {
-        if (!EncodeFunctionSection(e, *func))
-            return nullptr;
-    }
+    if (!EncodeFunctionBodies(e, module))
+        return false;
 
-    if (!EncodeDataSection(e, module))
-        return nullptr;
+    if (!EncodeDataSegments(e, module))
+        return false;
 
-    if (!e.writeCString(EndLabel))
-        return nullptr;
-
-    return Move(bytecode);
+    return true;
 }
 
 /*****************************************************************************/
 
-UniqueBytecode
-wasm::TextToBinary(const char16_t* text, UniqueChars* error)
+bool
+wasm::TextToBinary(const char16_t* text, Bytes* bytes, UniqueChars* error)
 {
     LifoAlloc lifo(AST_LIFO_DEFAULT_CHUNK_SIZE);
     WasmAstModule* module = ParseModule(text, lifo, error);
     if (!module)
-        return nullptr;
+        return false;
 
     if (!ResolveModule(lifo, module, error))
-        return nullptr;
+        return false;
 
-    return EncodeModule(*module);
+    return EncodeModule(*module, bytes);
 }

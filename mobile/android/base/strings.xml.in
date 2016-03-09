@@ -87,6 +87,10 @@
 
   <string name="url_bar_default_text">&url_bar_default_text2;</string>
 
+  <!-- https://input.mozilla.org/feedback/android/%VERSION%/%CHANNEL%/?utm_source=feedback-settings
+       This should be kept in sync with the "app.feedbackURL" pref defined in mobile.js -->
+  <string name="feedback_link">https://input.mozilla.org/feedback/android/&formatS1;/&formatS2;/?utm_source=feedback-settings</string>
+
   <!-- https://support.mozilla.org/1/mobile/%VERSION%/%OS%/%LOCALE%/faq -->
   <string name="faq_link">https://support.mozilla.org/1/mobile/&formatS1;/&formatS2;/&formatS3;/faq</string>
 
@@ -447,7 +451,7 @@
   <string name="home_most_recent_emptyhint">&home_most_recent_emptyhint2;</string>
   <string name="home_reading_list_empty">&home_reading_list_empty;</string>
   <string name="home_default_empty">&home_default_empty;</string>
-  <string name="home_move_up_to_filter">&home_move_up_to_filter;</string>
+  <string name="home_move_back_to_filter">&home_move_back_to_filter;</string>
   <string name="home_remote_tabs_title">&home_remote_tabs_title;</string>
   <string name="home_remote_tabs_empty">&home_remote_tabs_empty;</string>
   <string name="home_remote_tabs_unable_to_connect">&home_remote_tabs_unable_to_connect;</string>

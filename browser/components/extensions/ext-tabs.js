@@ -445,7 +445,7 @@ extensions.registerSchemaAPI("tabs", null, (extension, context) => {
           }
 
           let window = createProperties.windowId !== null ?
-            WindowManager.getWindow(createProperties.windowId) :
+            WindowManager.getWindow(createProperties.windowId, context) :
             WindowManager.topWindow;
           if (!window.gBrowser) {
             let obs = (finishedWindow, topic, data) => {
@@ -629,7 +629,7 @@ extensions.registerSchemaAPI("tabs", null, (extension, context) => {
 
         let window = windowId == null ?
           WindowManager.topWindow :
-          WindowManager.getWindow(windowId);
+          WindowManager.getWindow(windowId, context);
 
         let browser = window.gBrowser.selectedBrowser;
         let recipient = {
@@ -653,7 +653,7 @@ extensions.registerSchemaAPI("tabs", null, (extension, context) => {
         };
 
         return context.sendMessage(browser.messageManager, "Extension:Capture",
-                                   message, recipient);
+                                   message, {recipient});
       },
 
       detectLanguage: function(tabId) {
@@ -666,7 +666,7 @@ extensions.registerSchemaAPI("tabs", null, (extension, context) => {
         let recipient = {innerWindowID: browser.innerWindowID};
 
         return context.sendMessage(browser.messageManager, "Extension:DetectLanguage",
-                                   {}, recipient);
+                                   {}, {recipient});
       },
 
       _execute: function(tabId, details, kind, method) {
@@ -724,7 +724,7 @@ extensions.registerSchemaAPI("tabs", null, (extension, context) => {
           options.run_at = "document_idle";
         }
 
-        return context.sendMessage(mm, "Extension:Execute", {options}, recipient);
+        return context.sendMessage(mm, "Extension:Execute", {options}, {recipient});
       },
 
       executeScript: function(tabId, details) {
@@ -774,7 +774,7 @@ extensions.registerSchemaAPI("tabs", null, (extension, context) => {
 
         let destinationWindow = null;
         if (moveProperties.windowId !== null) {
-          destinationWindow = WindowManager.getWindow(moveProperties.windowId);
+          destinationWindow = WindowManager.getWindow(moveProperties.windowId, context);
           // Ignore invalid window.
           if (!destinationWindow) {
             return;

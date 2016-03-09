@@ -311,18 +311,13 @@ class MOZ_RAII js::EnterDebuggeeNoExecute
     }
 
 #ifdef DEBUG
-    static bool isUniqueLockedInStack(JSContext* cx, Debugger& dbg) {
+    static bool isLockedInStack(JSContext* cx, Debugger& dbg) {
         JSRuntime* rt = cx->runtime();
-        EnterDebuggeeNoExecute* found = nullptr;
         for (EnterDebuggeeNoExecute* it = rt->noExecuteDebuggerTop; it; it = it->prev_) {
-            if (&it->debugger() == &dbg && !it->unlocked_) {
-                // This invariant does not hold when DebuggeeWouldRun is only a
-                // warning.
-                MOZ_ASSERT_IF(rt->options().throwOnDebuggeeWouldRun(), !found);
-                found = it;
-            }
+            if (&it->debugger() == &dbg)
+                return !it->unlocked_;
         }
-        return !!found;
+        return false;
     }
 #endif
 
@@ -351,12 +346,13 @@ class MOZ_RAII js::EnterDebuggeeNoExecute
                     fprintf(stdout, "Dumping stack for DebuggeeWouldRun:\n");
                     DumpBacktrace(cx);
                 }
+                const char* filename = script->filename() ? script->filename() : "(none)";
                 char linenoStr[15];
                 JS_snprintf(linenoStr, sizeof(linenoStr), "%" PRIuSIZE, script->lineno());
                 unsigned flags = warning ? JSREPORT_WARNING : JSREPORT_ERROR;
                 return JS_ReportErrorFlagsAndNumber(cx, flags, GetErrorMessage, nullptr,
                                                     JSMSG_DEBUGGEE_WOULD_RUN,
-                                                    script->filename(), linenoStr);
+                                                    filename, linenoStr);
             }
         }
         return true;
@@ -1155,7 +1151,7 @@ Debugger::handleUncaughtExceptionHelper(Maybe<AutoCompartment>& ac,
 
     // Uncaught exceptions arise from Debugger code, and so we must already be
     // in an NX section.
-    MOZ_ASSERT(EnterDebuggeeNoExecute::isUniqueLockedInStack(cx, *this));
+    MOZ_ASSERT(EnterDebuggeeNoExecute::isLockedInStack(cx, *this));
 
     if (cx->isExceptionPending()) {
         if (callHook && uncaughtExceptionHook) {
@@ -1945,6 +1941,11 @@ Debugger::slowPathOnLogAllocationSite(JSContext* cx, HandleObject obj, HandleSav
     // Debuggers, and globals only hold their Debuggers weakly.
     Rooted<GCVector<JSObject*>> activeDebuggers(cx, GCVector<JSObject*>(cx));
     for (Debugger** dbgp = dbgs.begin(); dbgp < dbgs.end(); dbgp++) {
+        // Since we're pulling these Debugger objects out of the GlobalObject's
+        // debugger array, which holds them only weakly, we need to let the
+        // incremental GC know that a possibly previously unreachable Debugger
+        // object just became reachable.
+        InternalBarrierMethods<JSObject*>::readBarrier((*dbgp)->object);
         if (!activeDebuggers.append((*dbgp)->object))
             return false;
     }
@@ -8076,6 +8077,45 @@ DebuggerObject_forceLexicalInitializationByName(JSContext *cx, unsigned argc, Va
     return true;
 }
 
+// Returns the "name" field (see js.msg), which may be used as a unique
+// identifier, for any error object with a JSErrorReport or undefined
+// if the error object has no JSErrorReport.
+bool
+DebuggerObject_getErrorMessageName(JSContext *cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (!args.requireAtLeast(cx, "Debugger.Object.prototype.getErrorMessageName", 1))
+        return false;
+
+    RootedObject obj(cx);
+
+    bool isErrorObject = false;
+    if (args[0].isObject()) {
+        obj = &args[0].toObject();
+        if (IsCrossCompartmentWrapper(obj))
+            obj = UncheckedUnwrap(obj);
+        isErrorObject = obj->is<ErrorObject>();
+    }
+
+    if (!isErrorObject) {
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
+                             "argument", "not an error object");
+        return false;
+    }
+
+    JSErrorReport* report = obj->as<ErrorObject>().getErrorReport();
+
+    if (report) {
+        const JSErrorFormatString* efs = GetErrorMessage(nullptr, report->errorNumber);
+        RootedString str(cx, JS_NewStringCopyZ(cx, efs->name));
+        args.rval().setString(str);
+    } else {
+        args.rval().setUndefined();
+    }
+
+    return true;
+}
+
 static bool
 DebuggerObject_executeInGlobal(JSContext* cx, unsigned argc, Value* vp)
 {
@@ -8196,6 +8236,7 @@ static const JSFunctionSpec DebuggerObject_methods[] = {
     JS_FN("preventExtensions", DebuggerObject_preventExtensions, 0, 0),
     JS_FN("isSealed", DebuggerObject_isSealed, 0, 0),
     JS_FN("forceLexicalInitializationByName", DebuggerObject_forceLexicalInitializationByName, 1, 0),
+    JS_FN("getErrorMessageName", DebuggerObject_getErrorMessageName, 1, 0),
     JS_FN("isFrozen", DebuggerObject_isFrozen, 0, 0),
     JS_FN("isExtensible", DebuggerObject_isExtensible, 0, 0),
     JS_FN("apply", DebuggerObject_apply, 0, 0),

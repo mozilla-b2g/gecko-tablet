@@ -1118,13 +1118,10 @@ class RunProgram(MachCommandBase):
          help='Profiling mode. The default is \'dark-matter\'.')
     @CommandArgument('--sample-below', default=None, type=str, group='DMD',
         help='Sample blocks smaller than this. Use 1 for no sampling. The default is 4093.')
-    @CommandArgument('--max-frames', default=None, type=str, group='DMD',
-        help='The maximum depth of stack traces. The default and maximum is 24.')
     @CommandArgument('--show-dump-stats', action='store_true', group='DMD',
         help='Show stats when doing dumps.')
     def run(self, params, remote, background, noprofile, debug, debugger,
-        debugparams, slowscript, dmd, mode, sample_below, max_frames,
-        show_dump_stats):
+        debugparams, slowscript, dmd, mode, sample_below, show_dump_stats):
 
         if conditions.is_android(self):
             # Running Firefox for Android is completely different
@@ -1207,8 +1204,6 @@ class RunProgram(MachCommandBase):
                 dmd_params.append('--mode=' + mode)
             if sample_below:
                 dmd_params.append('--sample-below=' + sample_below)
-            if max_frames:
-                dmd_params.append('--max-frames=' + max_frames)
             if show_dump_stats:
                 dmd_params.append('--show-dump-stats=yes')
 
@@ -1396,31 +1391,6 @@ class MachDebug(MachCommandBase):
             print('FOUND_MOZCONFIG=%s' % mozpath.normsep(self.mozconfig['path']),
                 file=out)
 
-    def _environment_configure(self, out, verbose):
-        if self.mozconfig['path']:
-            # Replace ' with '"'"', so that shell quoting e.g.
-            # a'b becomes 'a'"'"'b'.
-            quote = lambda s: s.replace("'", """'"'"'""")
-            if self.mozconfig['configure_args'] and \
-                    'COMM_BUILD' not in os.environ:
-                print('echo Adding configure options from %s' %
-                    mozpath.normsep(self.mozconfig['path']), file=out)
-                for arg in self.mozconfig['configure_args']:
-                    quoted_arg = quote(arg)
-                    print("echo '  %s'" % quoted_arg, file=out)
-                    print("""set -- "$@" '%s'""" % quoted_arg, file=out)
-            for key, value in self.mozconfig['env']['added'].items():
-                print("export %s='%s'" % (key, quote(value)), file=out)
-            for key, (old, value) in self.mozconfig['env']['modified'].items():
-                print("export %s='%s'" % (key, quote(value)), file=out)
-            for key, value in self.mozconfig['vars']['added'].items():
-                print("%s='%s'" % (key, quote(value)), file=out)
-            for key, (old, value) in self.mozconfig['vars']['modified'].items():
-                print("%s='%s'" % (key, quote(value)), file=out)
-            for key in self.mozconfig['env']['removed'].keys() + \
-                    self.mozconfig['vars']['removed'].keys():
-                print("unset %s" % key, file=out)
-
     def _environment_json(self, out, verbose):
         import json
         class EnvironmentEncoder(json.JSONEncoder):
@@ -1489,7 +1459,12 @@ class PackageFrontend(MachCommandBase):
         self.log_manager.terminal_handler.setLevel(logging.INFO if not verbose else logging.DEBUG)
 
     def _make_artifacts(self, tree=None, job=None, skip_cache=False):
+        # Undo PATH munging that will be done by activating the virtualenv,
+        # so that invoked subprocesses expecting to find system python
+        # (git cinnabar, in particular), will not find virtualenv python.
+        original_path = os.environ.get('PATH', '')
         self._activate_virtualenv()
+        os.environ['PATH'] = original_path
         self.virtualenv_manager.install_pip_package('pylru==1.0.9')
         self.virtualenv_manager.install_pip_package('taskcluster==0.0.32')
         self.virtualenv_manager.install_pip_package('mozregression==1.0.2')

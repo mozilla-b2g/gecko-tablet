@@ -3197,7 +3197,7 @@ MustBeUInt32(MDefinition* def, MDefinition** pwrapped)
     if (def->isUrsh()) {
         *pwrapped = def->toUrsh()->lhs();
         MDefinition* rhs = def->toUrsh()->rhs();
-        return !def->toUrsh()->bailoutsDisabled() &&
+        return def->toUrsh()->bailoutsDisabled() &&
                rhs->maybeConstantValue() &&
                rhs->maybeConstantValue()->isInt32(0);
     }
@@ -3720,6 +3720,31 @@ MTruncateToInt32::foldsTo(TempAllocator& alloc)
     if (input->type() == MIRType_Double && input->isConstant()) {
         int32_t ret = ToInt32(input->toConstant()->toDouble());
         return MConstant::New(alloc, Int32Value(ret));
+    }
+
+    return this;
+}
+
+MDefinition*
+MWrapInt64ToInt32::foldsTo(TempAllocator& alloc)
+{
+    MDefinition* input = this->input();
+    if (input->isConstant()) {
+        int64_t c = input->toConstant()->toInt64();
+        return MConstant::New(alloc, Int32Value(int32_t(c)));
+    }
+
+    return this;
+}
+
+MDefinition*
+MExtendInt32ToInt64::foldsTo(TempAllocator& alloc)
+{
+    MDefinition* input = this->input();
+    if (input->isConstant()) {
+        int32_t c = input->toConstant()->toInt32();
+        int64_t res = isUnsigned() ? int64_t(uint32_t(c)) : int64_t(c);
+        return MConstant::NewInt64(alloc, res);
     }
 
     return this;
@@ -4527,10 +4552,11 @@ MAsmJSLoadHeap::mightAlias(const MDefinition* def) const
         const MAsmJSStoreHeap* store = def->toAsmJSStoreHeap();
         if (store->accessType() != accessType())
             return true;
-        if (!ptr()->isConstant() || !store->ptr()->isConstant())
+        if (!base()->isConstant() || !store->base()->isConstant())
             return true;
-        const MConstant* otherPtr = store->ptr()->toConstant();
-        return ptr()->toConstant()->equals(otherPtr);
+        const MConstant* otherBase = store->base()->toConstant();
+        return base()->toConstant()->equals(otherBase) &&
+               offset() == store->offset();
     }
     return true;
 }
@@ -4541,7 +4567,9 @@ MAsmJSLoadHeap::congruentTo(const MDefinition* ins) const
     if (!ins->isAsmJSLoadHeap())
         return false;
     const MAsmJSLoadHeap* load = ins->toAsmJSLoadHeap();
-    return load->accessType() == accessType() && congruentIfOperandsEqual(load);
+    return load->accessType() == accessType() &&
+           load->offset() == offset() &&
+           congruentIfOperandsEqual(load);
 }
 
 bool
