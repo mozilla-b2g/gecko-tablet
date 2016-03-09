@@ -14,8 +14,16 @@ body {
   font-family: Helvetica, Sans-serif;
   background-color: #000;
   background-image: radial-gradient(closest-side, #434343 0%, #000 100%);
+  background-image: url(../images/firefox-os-background.png);
+  background-size: cover;
+  background-position: center;
   display: flex;
   flex-direction: column;
+}
+
+body.windows-active {
+  background-color: #000;
+  background-image: none;
 }
 
 button::-moz-focus-inner {
@@ -44,6 +52,10 @@ button::-moz-focus-inner {
   padding: 0 1rem;
 }
 
+body.windows-active #status-bar {
+  background-color: #000;
+}
+
 
 /* System Toolbar */
 #system-toolbar {
@@ -51,6 +63,10 @@ button::-moz-focus-inner {
   padding: 0;
   margin: 0;
   text-align: center;
+}
+
+body.windows-active #system-toolbar {
+  background-color: #000;
 }
 
 #system-toolbar button {
@@ -62,6 +78,11 @@ button::-moz-focus-inner {
   background-position: center;
   padding: 0.8rem 5rem;
   box-sizing: content-box;
+  border-radius: 0;
+}
+
+#system-toolbar button:active {
+  background-color: rgba(255, 255, 255, 0.5);
 }
 
 #system-toolbar #back-button {
@@ -77,7 +98,16 @@ button::-moz-focus-inner {
 }
 
 #system-toolbar #new-window-button {
+  display: none;
   background-image: url('../images/new-window-light.png');
+}
+
+body.task-manager-active #system-toolbar #windows-button {
+  display: none;
+}
+
+body.task-manager-active #system-toolbar #new-window-button {
+  display: inline;
 }
 
 
@@ -88,7 +118,7 @@ button::-moz-focus-inner {
 }
 
 #home-screen #search-bar {
-  color: #ccc;
+  color: #fff;
   background-color: rgba(255, 255, 255, 0.15);
   height: 3.2rem;
   font-size: 1.2rem;
@@ -98,7 +128,6 @@ button::-moz-focus-inner {
   width: 90%;
   border-radius: 0;
 }
-
 
 /* Window Manager */
 #windows {
@@ -117,11 +146,11 @@ button::-moz-focus-inner {
   display: none;
 }
 
-#windows.task-manager.no-windows p {
+body.task-manager-active #windows.no-windows p {
   display: block;
 }
 
-#windows.task-manager {
+body.task-manager-active #windows {
   display: flex;
   flex-direction: column;
   transform: scaleX(0.9) scaleY(0.9);
@@ -138,7 +167,7 @@ button::-moz-focus-inner {
   height: 100%;
 }
 
-#windows.task-manager .browser-window {
+body.task-manager-active .browser-window {
   flex: 1;
   display: flex;
   margin-top: 1rem;
@@ -159,7 +188,7 @@ button::-moz-focus-inner {
   display: none;
 }
 
-#windows.task-manager .window-scrim {
+body.task-manager-active .window-scrim {
   display: block;
   position: relative;
   top: 0;
@@ -180,13 +209,13 @@ button::-moz-focus-inner {
   box-sizing: border-box;
 }
 
-#windows.task-manager .browser-chrome {
+body.task-manager-active .browser-chrome {
   background-color: #333;
   padding: 0.5rem 0 0 0.8rem;
 }
 
 
-#windows.task-manager .browser-chrome input {
+body.task-manager-active .browser-chrome input {
   background-color: transparent;
 }
 
@@ -228,6 +257,7 @@ button::-moz-focus-inner {
   background-position: center;
   padding: 0;
   margin: 0;
+  border-radius: 0;
 }
 
 .browser-chrome button.menu-button {
@@ -239,14 +269,18 @@ button::-moz-focus-inner {
     display: none;
 }
 
-#windows.task-manager button.close-button {
+.browser-chrome button.close-button:active {
+  background-color: rgba(255, 255, 255, 0.5);
+}
+
+body.task-manager-active #windows button.close-button {
   z-index: 1;
 }
 
-#windows.task-manager .browser-chrome button.menu-button {
+body.task-manager-active .browser-chrome button.menu-button {
   display: none;
 }
 
-#windows.task-manager .browser-chrome button.close-button {
+body.task-manager-active .browser-chrome button.close-button {
   display: block;
 }
