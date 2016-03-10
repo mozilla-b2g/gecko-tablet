@@ -7,6 +7,8 @@ PATH=$DIRNAME:$PATH
 
 . desktop-setup.sh
 
+export MOZ_SIMPLE_PACKAGE_NAME=target
+
 cd $GECKO_DIR
 ./mach build;
 
@@ -19,9 +21,6 @@ make package package-tests buildsymbols;
 cd $MOZ_OBJDIR/dist;
 
 ls -lah $MOZ_OBJDIR/dist/
-
-# Target names are cached so make sure we discard them first if found.
-rm -f target.linux-x86_64.tar.bz2 target.linux-x86_64.json target*.tests.zip
 
 # Artifacts folder is outside of the cache.
 mkdir -p $HOME/artifacts/
