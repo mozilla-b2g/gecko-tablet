@@ -113,8 +113,14 @@ body.task-manager-active #system-toolbar #new-window-button {
 
 /* Home Screen */
 #home-screen {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   text-align: center;
+}
+
+#home-screen.hidden {
+  display: none;
 }
 
 #home-screen #search-bar {
@@ -127,6 +133,11 @@ body.task-manager-active #system-toolbar #new-window-button {
   margin: 2rem;
   width: 90%;
   border-radius: 0;
+}
+
+#home-screen-frame {
+  flex: 1;
+  border: none;
 }
 
 /* Window Manager */
