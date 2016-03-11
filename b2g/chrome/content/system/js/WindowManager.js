@@ -32,7 +32,7 @@ var WindowManager = {
    * @return {Object} The WindowManager object.
    */
   start: function() {
-    this.container = document.getElementById('container');
+    this.container = document.getElementById('system');
     this.element = document.getElementById('windows');
     this.homeScreen = document.getElementById('home-screen');
     

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this file,
+   - You can obtain one at http://mozilla.org/MPL/2.0/.  -->
+
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>B2G System</title>
+    <link rel="stylesheet" href="css/shell.css" type="text/css" />
+    <script type="text/javascript" src="js/Shell.js"></script>
+    <script type="text/javascript" src="js/StatusBar.js"></script>
+    <script type="text/javascript" src="js/SystemToolbar.js"></script>
+    <script type="text/javascript" src="js/HomeScreen.js"></script>
+    <script type="text/javascript" src="js/WindowManager.js"></script>
+    <script type="text/javascript" src="js/BrowserWindow.js"></script>
+  </head>
+  <body id="system">
+    <menu type="toolbar" id="status-bar">
+      <span id="clock"></span>
+    </menu>
+    <div id="home-screen">
+      <input id="search-bar" type="text" placeholder="Search or enter address"></input>
+      <iframe id="home-screen-frame" mozbrowser src="../homescreen/index.html"></iframe>
+    </div>
+    <div id="windows" class="hidden no-windows">
+      <p id="no-windows-message">No open windows</p>
+    </div>
+    <menu type="toolbar" id="system-toolbar">
+      <button id="back-button"></button>
+      <button id="home-button"></button>
+      <button id="windows-button"></button>
+      <button id="new-window-button"></button>
+    </menu>
+  </body>
+</html>
