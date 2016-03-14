@@ -334,6 +334,7 @@ AutoJSAPI::InitInternal(JSObject* aGlobal, JSContext* aCx, bool aIsMainThread)
 {
   MOZ_ASSERT(aCx);
   MOZ_ASSERT(aIsMainThread == NS_IsMainThread());
+  MOZ_ASSERT(!JS_IsExceptionPending(aCx));
 
   mCx = aCx;
   mIsMainThread = aIsMainThread;
@@ -414,14 +415,6 @@ AutoJSAPI::Init(JSObject* aObject)
 }
 
 bool
-AutoJSAPI::InitWithLegacyErrorReporting(nsIGlobalObject* aGlobalObject)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-
-  return Init(aGlobalObject, FindJSContext(aGlobalObject));
-}
-
-bool
 AutoJSAPI::Init(nsPIDOMWindowInner* aWindow, JSContext* aCx)
 {
   return Init(nsGlobalWindow::Cast(aWindow), aCx);
@@ -443,18 +436,6 @@ bool
 AutoJSAPI::Init(nsGlobalWindow* aWindow)
 {
   return Init(static_cast<nsIGlobalObject*>(aWindow));
-}
-
-bool
-AutoJSAPI::InitWithLegacyErrorReporting(nsPIDOMWindowInner* aWindow)
-{
-  return InitWithLegacyErrorReporting(nsGlobalWindow::Cast(aWindow));
-}
-
-bool
-AutoJSAPI::InitWithLegacyErrorReporting(nsGlobalWindow* aWindow)
-{
-  return InitWithLegacyErrorReporting(static_cast<nsIGlobalObject*>(aWindow));
 }
 
 // Even with autoJSAPIOwnsErrorReporting, the JS engine still sends warning
@@ -484,6 +465,12 @@ WarningOnlyErrorReporter(JSContext* aCx, const char* aMessage, JSErrorReport* aR
 
   RefPtr<xpc::ErrorReport> xpcReport = new xpc::ErrorReport();
   nsGlobalWindow* win = xpc::CurrentWindowOrNull(aCx);
+  if (!win) {
+    // We run addons in a separate privileged compartment, but if we're in an
+    // addon compartment we should log warnings to the console of the associated
+    // DOM Window.
+    win = xpc::AddonWindowOrNull(JS::CurrentGlobalOrNull(aCx));
+  }
   xpcReport->Init(aRep, aMessage, nsContentUtils::IsCallerChrome(),
                   win ? win->AsInner()->WindowID() : 0);
   xpcReport->LogToConsole();
@@ -528,15 +515,23 @@ AutoJSAPI::ReportException()
   if (StealException(&exn) && jsReport.init(cx(), exn)) {
     if (mIsMainThread) {
       RefPtr<xpc::ErrorReport> xpcReport = new xpc::ErrorReport();
+
       RefPtr<nsGlobalWindow> win = xpc::WindowGlobalOrNull(errorGlobal);
+      if (!win) {
+        // We run addons in a separate privileged compartment, but they still
+        // expect to trigger the onerror handler of their associated DOM Window.
+        win = xpc::AddonWindowOrNull(errorGlobal);
+      }
       nsPIDOMWindowInner* inner = win ? win->AsInner() : nullptr;
       xpcReport->Init(jsReport.report(), jsReport.message(),
                       nsContentUtils::IsCallerChrome(),
                       inner ? inner->WindowID() : 0);
-      if (inner) {
+      if (inner && jsReport.report()->errorNumber != JSMSG_OUT_OF_MEMORY) {
         DispatchScriptErrorEvent(inner, JS_GetRuntime(cx()), xpcReport, exn);
       } else {
-        xpcReport->LogToConsole();
+        JS::Rooted<JSObject*> stack(cx(),
+          xpc::FindExceptionStackForConsoleReport(inner, exn));
+        xpcReport->LogToConsoleWithStack(stack);
       }
     } else {
       // On a worker, we just use the worker error reporting mechanism and don't
@@ -598,6 +593,16 @@ AutoEntryScript::AutoEntryScript(nsIGlobalObject* aGlobalObject,
   if (aIsMainThread && gRunToCompletionListeners > 0) {
     mDocShellEntryMonitor.emplace(cx(), aReason);
   }
+
+  TakeOwnershipOfErrorReporting();
+}
+
+AutoEntryScript::AutoEntryScript(JSObject* aObject,
+                                 const char *aReason,
+                                 bool aIsMainThread,
+                                 JSContext* aCx)
+  : AutoEntryScript(xpc::NativeGlobal(aObject), aReason, aIsMainThread, aCx)
+{
 }
 
 AutoEntryScript::~AutoEntryScript()

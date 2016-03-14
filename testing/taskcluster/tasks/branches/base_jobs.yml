@@ -132,6 +132,12 @@ builds:
         task: tasks/builds/opt_linux64.yml
       debug:
         task: tasks/builds/dbg_linux64.yml
+  linux64-artifact:
+    platforms:
+      - Linux64
+    types:
+      opt:
+        task: tasks/builds/opt_linux64_artifact.yml
   linux64-st-an:
     platforms:
       - Linux64 Static Analysis
@@ -290,6 +296,14 @@ tests:
     allowed_build_tasks:
       tasks/builds/dbg_linux64.yml:
         task: tasks/tests/fx_linux64_mochitest_push.yml
+  mochitest-media:
+    allowed_build_tasks:
+      tasks/builds/dbg_linux64.yml:
+        task: tasks/tests/fx_linux64_mochitest_media.yml
+  mochitest-media-e10s:
+    allowed_build_tasks:
+      tasks/builds/dbg_linux64.yml:
+        task: tasks/tests/fx_linux64_mochitest_media_e10s.yml
   mochitest-webgl:
     allowed_build_tasks:
       tasks/builds/dbg_linux64.yml:
@@ -351,3 +365,9 @@ tasks:
         - 'testing/eslint-plugin-mozilla/**'
         # Other misc lint related files.
         - 'tools/lint/**'
+  android-api-15-gradle-dependencies:
+    task: tasks/builds/android_api_15_gradle_dependencies.yml
+    root: true
+    when:
+      file_patterns:
+        - 'testing/docker/android-gradle-build/**'

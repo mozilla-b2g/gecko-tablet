@@ -612,6 +612,7 @@ nsPIDOMWindow<T>::nsPIDOMWindow(nsPIDOMWindowOuter *aOuterWindow)
   mMayHavePaintEventListener(false), mMayHaveTouchEventListener(false),
   mMayHaveMouseEnterLeaveEventListener(false),
   mMayHavePointerEnterLeaveEventListener(false),
+  mInnerObjectsFreed(false),
   mIsModalContentWindow(false),
   mIsActive(false), mIsBackground(false),
   mAudioMuted(false), mAudioVolume(1.0), mAudioCaptured(false),
@@ -840,8 +841,7 @@ nsOuterWindowProxy::defineProperty(JSContext* cx,
                                    JS::Handle<JS::PropertyDescriptor> desc,
                                    JS::ObjectOpResult &result) const
 {
-  int32_t index = GetArrayIndexFromId(cx, id);
-  if (IsArrayIndex(index)) {
+  if (IsArrayIndex(GetArrayIndexFromId(cx, id))) {
     // Spec says to Reject whether this is a supported index or not,
     // since we have no indexed setter or indexed creator.  It is up
     // to the caller to decide whether to throw a TypeError.
@@ -900,8 +900,7 @@ nsOuterWindowProxy::delete_(JSContext *cx, JS::Handle<JSObject*> proxy,
     return result.failCantDeleteWindowElement();
   }
 
-  int32_t index = GetArrayIndexFromId(cx, id);
-  if (IsArrayIndex(index)) {
+  if (IsArrayIndex(GetArrayIndexFromId(cx, id))) {
     // Indexed, but not supported.  Spec says return true.
     return result.succeed();
   }
@@ -984,8 +983,7 @@ nsOuterWindowProxy::set(JSContext *cx, JS::Handle<JSObject*> proxy,
                         JS::Handle<JS::Value> receiver,
                         JS::ObjectOpResult &result) const
 {
-  int32_t index = GetArrayIndexFromId(cx, id);
-  if (IsArrayIndex(index)) {
+  if (IsArrayIndex(GetArrayIndexFromId(cx, id))) {
     // Reject the set.  It's up to the caller to decide whether to throw a
     // TypeError.  If the caller is strict mode JS code, it'll throw.
     return result.failReadOnly();
@@ -1046,7 +1044,7 @@ nsOuterWindowProxy::GetSubframeWindow(JSContext *cx,
                                       JS::Handle<JSObject*> proxy,
                                       JS::Handle<jsid> id) const
 {
-  int32_t index = GetArrayIndexFromId(cx, id);
+  uint32_t index = GetArrayIndexFromId(cx, id);
   if (!IsArrayIndex(index)) {
     return nullptr;
   }
@@ -1174,7 +1172,6 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
 #endif
     mShowFocusRingForContent(false),
     mFocusByKeyOccurred(false),
-    mInnerObjectsFreed(false),
     mHasGamepad(false),
 #ifdef MOZ_GAMEPAD
     mHasSeenGamepadInput(false),
@@ -3424,9 +3421,9 @@ nsGlobalWindow::DefineArgumentsProperty(nsIArray *aArguments)
 
   nsIScriptContext *ctx = GetOuterWindowInternal()->mContext;
   NS_ENSURE_TRUE(aArguments && ctx, NS_ERROR_NOT_INITIALIZED);
-  AutoJSContext cx;
 
-  JS::Rooted<JSObject*> obj(cx, GetWrapperPreserveColor());
+  JS::Rooted<JSObject*> obj(nsContentUtils::RootingCx(),
+                            GetWrapperPreserveColor());
   return ctx->SetProperty(obj, "arguments", aArguments);
 }
 
@@ -7538,20 +7535,20 @@ nsGlobalWindow::MozRequestOverfill(OverfillCallback& aCallback,
 }
 
 void
-nsGlobalWindow::ClearTimeout(int32_t aHandle, ErrorResult& aError)
+nsGlobalWindow::ClearTimeout(int32_t aHandle)
 {
   MOZ_RELEASE_ASSERT(IsInnerWindow());
 
   if (aHandle > 0) {
-    ClearTimeoutOrInterval(aHandle, aError);
+    ClearTimeoutOrInterval(aHandle);
   }
 }
 
 void
-nsGlobalWindow::ClearInterval(int32_t aHandle, ErrorResult& aError)
+nsGlobalWindow::ClearInterval(int32_t aHandle)
 {
   if (aHandle > 0) {
-    ClearTimeoutOrInterval(aHandle, aError);
+    ClearTimeoutOrInterval(aHandle);
   }
 }
 
@@ -9632,6 +9629,15 @@ static bool IsLink(nsIContent* aContent)
                                             nsGkAtoms::simple, eCaseMatters));
 }
 
+static bool ShouldShowFocusRingIfFocusedByMouse(nsIContent* aNode)
+{
+  if (!aNode) {
+    return true;
+  }
+  return !IsLink(aNode) &&
+         !aNode->IsAnyOfHTMLElements(nsGkAtoms::video, nsGkAtoms::audio);
+}
+
 void
 nsGlobalWindow::SetFocusedNode(nsIContent* aNode,
                                uint32_t aFocusMethod,
@@ -9665,9 +9671,10 @@ nsGlobalWindow::SetFocusedNode(nsIContent* aNode,
       // otherwise, we set mShowFocusRingForContent, as we don't want this to
       // be permanent for the window. On Windows, focus rings are only shown
       // when the FLAG_SHOWRING flag is used. On other platforms, focus rings
-      // are only hidden for clicks on links.
+      // are only visible on some elements.
 #ifndef XP_WIN
-      !(mFocusMethod & nsIFocusManager::FLAG_BYMOUSE) || !IsLink(aNode) ||
+      !(mFocusMethod & nsIFocusManager::FLAG_BYMOUSE) ||
+      ShouldShowFocusRingIfFocusedByMouse(aNode) ||
 #endif
       aFocusMethod & nsIFocusManager::FLAG_SHOWRING) {
         mShowFocusRingForContent = true;
@@ -11904,6 +11911,7 @@ nsGlobalWindow::RunTimeoutHandler(nsTimeout* aTimeout,
     reason = "setTimeout handler";
   }
 
+  bool abortIntervalHandler = false;
   nsCOMPtr<nsIScriptTimeoutHandler> handler(timeout->mScriptHandler);
   RefPtr<Function> callback = handler->GetCallback();
   if (!callback) {
@@ -11918,22 +11926,39 @@ nsGlobalWindow::RunTimeoutHandler(nsTimeout* aTimeout,
     // New script entry point required, due to the "Create a script" sub-step of
     // http://www.whatwg.org/specs/web-apps/current-work/#timer-initialisation-steps
     nsAutoMicroTask mt;
-    AutoEntryScript entryScript(this, reason, true, aScx->GetNativeContext());
-    entryScript.TakeOwnershipOfErrorReporting();
-    JS::CompileOptions options(entryScript.cx());
+    AutoEntryScript aes(this, reason, true, aScx->GetNativeContext());
+    JS::CompileOptions options(aes.cx());
     options.setFileAndLine(filename, lineNo)
            .setVersion(JSVERSION_DEFAULT);
-    JS::Rooted<JSObject*> global(entryScript.cx(), FastGetGlobalJSObject());
-    nsJSUtils::EvaluateString(entryScript.cx(), nsDependentString(script),
-                              global, options);
+    JS::Rooted<JSObject*> global(aes.cx(), FastGetGlobalJSObject());
+    nsresult rv =
+      nsJSUtils::EvaluateString(aes.cx(), nsDependentString(script),
+                                global, options);
+    if (rv == NS_SUCCESS_DOM_SCRIPT_EVALUATION_THREW_UNCATCHABLE) {
+      abortIntervalHandler = true;
+    }
   } else {
     // Hold strong ref to ourselves while we call the callback.
     nsCOMPtr<nsISupports> me(static_cast<nsIDOMWindow *>(this));
-    ErrorResult ignored;
+    ErrorResult rv;
     JS::Rooted<JS::Value> ignoredVal(CycleCollectedJSRuntime::Get()->Runtime());
-    callback->Call(me, handler->GetArgs(), &ignoredVal, ignored, reason);
-    ignored.SuppressException();
+    callback->Call(me, handler->GetArgs(), &ignoredVal, rv, reason);
+    if (rv.IsUncatchableException()) {
+      abortIntervalHandler = true;
+    }
+
+    rv.SuppressException();
   }
+
+  // If we received an uncatchable exception, do not schedule the timeout again.
+  // This allows the slow script dialog to break easy DoS attacks like
+  // setInterval(function() { while(1); }, 100);
+  if (abortIntervalHandler) {
+    // If it wasn't an interval timer to begin with, this does nothing.  If it
+    // was, we'll treat it as a timeout that we just ran and discard it when
+    // we return.
+    timeout->mIsInterval = false;
+   }
 
   // We ignore any failures from calling EvaluateString() on the context or
   // Call() on a Function here since we're in a loop
@@ -12210,7 +12235,7 @@ nsGlobalWindow::RunTimeout(nsTimeout *aTimeout)
 }
 
 void
-nsGlobalWindow::ClearTimeoutOrInterval(int32_t aTimerID, ErrorResult& aError)
+nsGlobalWindow::ClearTimeoutOrInterval(int32_t aTimerID)
 {
   MOZ_RELEASE_ASSERT(IsInnerWindow());
 
@@ -13761,8 +13786,7 @@ nsGlobalWindow::GetExternal(ErrorResult& aRv)
   if (!mExternal) {
     AutoJSContext cx;
     JS::Rooted<JSObject*> jsImplObj(cx);
-    ConstructJSImplementation(cx, "@mozilla.org/sidebar;1",
-                              this, &jsImplObj, aRv);
+    ConstructJSImplementation("@mozilla.org/sidebar;1", this, &jsImplObj, aRv);
     if (aRv.Failed()) {
       return nullptr;
     }

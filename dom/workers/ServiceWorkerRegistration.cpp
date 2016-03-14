@@ -22,6 +22,7 @@
 #include "nsIServiceWorkerManager.h"
 #include "nsISupportsPrimitives.h"
 #include "nsPIDOMWindow.h"
+#include "nsContentUtils.h"
 
 #include "WorkerPrivate.h"
 #include "Workers.h"
@@ -729,8 +730,8 @@ ServiceWorkerRegistrationMainThread::ShowNotification(JSContext* aCx,
 
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(window);
   RefPtr<Promise> p =
-    Notification::ShowPersistentNotification(global,
-                                             mScope, aTitle, aOptions, aRv);
+    Notification::ShowPersistentNotification(aCx, global, mScope, aTitle,
+                                             aOptions, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
@@ -767,21 +768,10 @@ ServiceWorkerRegistrationMainThread::GetPushManager(ErrorResult& aRv)
       return nullptr;
     }
 
-    AutoJSAPI jsapi;
-    if (NS_WARN_IF(!jsapi.Init(globalObject))) {
-      aRv.Throw(NS_ERROR_FAILURE);
-      return nullptr;
-    }
-
-    JSContext* cx = jsapi.cx();
-
-    JS::RootedObject globalJs(cx, globalObject->GetGlobalJSObject());
-    GlobalObject global(cx, globalJs);
-
     // TODO: bug 1148117.  This will fail when swr is exposed on workers
-    JS::Rooted<JSObject*> jsImplObj(cx);
-    nsCOMPtr<nsIGlobalObject> unused = ConstructJSImplementation(cx, "@mozilla.org/push/PushManager;1",
-                              global, &jsImplObj, aRv);
+    JS::Rooted<JSObject*> jsImplObj(nsContentUtils::RootingCxForThread());
+    ConstructJSImplementation("@mozilla.org/push/PushManager;1",
+                              globalObject, &jsImplObj, aRv);
     if (aRv.Failed()) {
       return nullptr;
     }
@@ -1212,7 +1202,7 @@ ServiceWorkerRegistrationWorkerThread::ShowNotification(JSContext* aCx,
   // also verifying scope so that we block the worker on the main thread only
   // once.
   RefPtr<Promise> p =
-    Notification::ShowPersistentNotification(mWorkerPrivate->GlobalScope(),
+    Notification::ShowPersistentNotification(aCx, mWorkerPrivate->GlobalScope(),
                                              mScope, aTitle, aOptions, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;

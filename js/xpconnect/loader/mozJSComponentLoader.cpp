@@ -1,3 +1,4 @@
+
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* vim: set ts=8 sts=4 et sw=4 tw=99: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -71,7 +72,7 @@ static const char kJSCachePrefix[] = "jsloader";
 #define XPC_DESERIALIZATION_BUFFER_SIZE (12 * 8192)
 
 // NSPR_LOG_MODULES=JSComponentLoader:5
-static PRLogModuleInfo* gJSCLLog;
+static LazyLogModule gJSCLLog("JSComponentLoader");
 
 #define LOG(args) MOZ_LOG(gJSCLLog, mozilla::LogLevel::Debug, args)
 
@@ -197,10 +198,6 @@ mozJSComponentLoader::mozJSComponentLoader()
       mReuseLoaderGlobal(false)
 {
     MOZ_ASSERT(!sSelf, "mozJSComponentLoader should be a singleton");
-
-    if (!gJSCLLog) {
-        gJSCLLog = PR_NewLogModule("JSComponentLoader");
-    }
 
     sSelf = this;
 }
@@ -636,7 +633,7 @@ mozJSComponentLoader::PrepareObjectForLocation(JSContext* aCx,
     if (createdNewGlobal) {
         // AutoEntryScript required to invoke debugger hook, which is a
         // Gecko-specific concept at present.
-        dom::AutoEntryScript aes(NativeGlobal(holder->GetJSObject()),
+        dom::AutoEntryScript aes(holder->GetJSObject(),
                                  "component loader report global");
         RootedObject global(aes.cx(), holder->GetJSObject());
         JS_FireOnNewGlobalObject(aes.cx(), global);
@@ -884,9 +881,9 @@ mozJSComponentLoader::ObjectForLocation(ComponentLoaderInfo& aInfo,
         }
         // Propagate the exception, if one exists. Also, don't leave the stale
         // exception on this context.
-        if (!script && !function && aPropagateExceptions) {
-            JS_GetPendingException(cx, aException);
-            JS_ClearPendingException(cx);
+        if (!script && !function && aPropagateExceptions &&
+            jsapi.HasException()) {
+            jsapi.StealException(aException);
         }
     }
 
@@ -931,33 +928,35 @@ mozJSComponentLoader::ObjectForLocation(ComponentLoaderInfo& aInfo,
 
     aTableScript.set(tableScript);
 
-    bool ok = false;
 
-    {
+    {   // Scope for AutoEntryScript
+
         // We're going to run script via JS_ExecuteScript or
         // JS_CallFunction, so we need an AutoEntryScript.
         // This is Gecko-specific and not in any spec.
-        dom::AutoEntryScript aes(NativeGlobal(CurrentGlobalOrNull(cx)),
+        dom::AutoEntryScript aes(CurrentGlobalOrNull(cx),
                                  "component loader load module");
-        AutoSaveContextOptions asco(cx);
+        JSContext* aescx = aes.cx();
+        AutoSaveContextOptions asco(aescx);
         if (aPropagateExceptions)
-            ContextOptionsRef(cx).setDontReportUncaught(true);
+            ContextOptionsRef(aescx).setDontReportUncaught(true);
+        bool ok;
         if (script) {
-            ok = JS_ExecuteScript(cx, script);
+            ok = JS_ExecuteScript(aescx, script);
         } else {
             RootedValue rval(cx);
-            ok = JS_CallFunction(cx, obj, function, JS::HandleValueArray::empty(), &rval);
+            ok = JS_CallFunction(aescx, obj, function,
+                                 JS::HandleValueArray::empty(), &rval);
         }
-     }
 
-    if (!ok) {
-        if (aPropagateExceptions) {
-            JS_GetPendingException(cx, aException);
-            JS_ClearPendingException(cx);
+        if (!ok) {
+            if (aPropagateExceptions && aes.HasException()) {
+                aes.StealException(aException);
+            }
+            aObject.set(nullptr);
+            aTableScript.set(nullptr);
+            return NS_ERROR_FAILURE;
         }
-        aObject.set(nullptr);
-        aTableScript.set(nullptr);
-        return NS_ERROR_FAILURE;
     }
 
     /* Freed when we remove from the table. */

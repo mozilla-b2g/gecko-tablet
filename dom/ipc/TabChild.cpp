@@ -866,9 +866,6 @@ TabChild::NotifyTabContextUpdated()
     return;
   }
 
-  if (IsMozBrowserElement()) {
-    docShell->SetIsInIsolatedMozBrowserElement(IsIsolatedMozBrowserElement());
-  }
   docShell->SetFrameType(IsMozBrowserElement() ?
                            nsIDocShell::FRAME_TYPE_BROWSER :
                            HasOwnApp() ?
@@ -1637,6 +1634,7 @@ TabChild::RecvShow(const ScreenIntSize& aSize,
 bool
 TabChild::RecvUpdateDimensions(const CSSRect& rect, const CSSSize& size,
                                const ScreenOrientationInternal& orientation,
+                               const LayoutDeviceIntPoint& clientOffset,
                                const LayoutDeviceIntPoint& chromeDisp)
 {
     if (!mRemoteFrame) {
@@ -1644,6 +1642,7 @@ TabChild::RecvUpdateDimensions(const CSSRect& rect, const CSSSize& size,
     }
 
     mUnscaledOuterRect = rect;
+    mClientOffset = clientOffset;
     mChromeDisp = chromeDisp;
 
     mOrientation = orientation;
@@ -1662,8 +1661,8 @@ TabChild::RecvUpdateDimensions(const CSSRect& rect, const CSSSize& size,
     baseWin->SetPositionAndSize(0, 0, screenSize.width, screenSize.height,
                                 true);
 
-    mPuppetWidget->Resize(screenRect.x + chromeDisp.x,
-                          screenRect.y + chromeDisp.y,
+    mPuppetWidget->Resize(screenRect.x + clientOffset.x + chromeDisp.x,
+                          screenRect.y + clientOffset.y + chromeDisp.y,
                           screenSize.width, screenSize.height, true);
 
     return true;
@@ -1701,7 +1700,7 @@ TabChild::RecvSuppressDisplayport(const bool& aEnabled)
   }
 
   MOZ_ASSERT(mActiveSuppressDisplayport >= 0);
-  APZCCallbackHelper::SuppressDisplayport(aEnabled);
+  APZCCallbackHelper::SuppressDisplayport(aEnabled, GetPresShell());
   return true;
 }
 
@@ -1850,35 +1849,37 @@ TabChild::RecvMouseEvent(const nsString& aType,
 }
 
 bool
-TabChild::RecvRealMouseMoveEvent(const WidgetMouseEvent& event,
+TabChild::RecvRealMouseMoveEvent(const WidgetMouseEvent& aEvent,
                                  const ScrollableLayerGuid& aGuid,
                                  const uint64_t& aInputBlockId)
 {
-  return RecvRealMouseButtonEvent(event, aGuid, aInputBlockId);
+  return RecvRealMouseButtonEvent(aEvent, aGuid, aInputBlockId);
 }
 
 bool
-TabChild::RecvSynthMouseMoveEvent(const WidgetMouseEvent& event,
+TabChild::RecvSynthMouseMoveEvent(const WidgetMouseEvent& aEvent,
                                   const ScrollableLayerGuid& aGuid,
                                   const uint64_t& aInputBlockId)
 {
-  return RecvRealMouseButtonEvent(event, aGuid, aInputBlockId);
+  return RecvRealMouseButtonEvent(aEvent, aGuid, aInputBlockId);
 }
 
 bool
-TabChild::RecvRealMouseButtonEvent(const WidgetMouseEvent& event,
+TabChild::RecvRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
                                    const ScrollableLayerGuid& aGuid,
                                    const uint64_t& aInputBlockId)
 {
   nsEventStatus unused;
   InputAPZContext context(aGuid, aInputBlockId, unused);
 
-  WidgetMouseEvent localEvent(event);
+  WidgetMouseEvent localEvent(aEvent);
   localEvent.widget = mPuppetWidget;
+  APZCCallbackHelper::ApplyCallbackTransform(localEvent, aGuid,
+      mPuppetWidget->GetDefaultScale());
   APZCCallbackHelper::DispatchWidgetEvent(localEvent);
 
-  if (event.mFlags.mHandledByAPZ) {
-    mAPZEventState->ProcessMouseEvent(event, aGuid, aInputBlockId);
+  if (aEvent.mFlags.mHandledByAPZ) {
+    mAPZEventState->ProcessMouseEvent(aEvent, aGuid, aInputBlockId);
   }
   return true;
 }
@@ -1894,16 +1895,18 @@ TabChild::RecvMouseWheelEvent(const WidgetWheelEvent& aEvent,
       mPuppetWidget, document, aEvent, aGuid, aInputBlockId);
   }
 
-  WidgetWheelEvent event(aEvent);
-  event.widget = mPuppetWidget;
-  APZCCallbackHelper::DispatchWidgetEvent(event);
+  WidgetWheelEvent localEvent(aEvent);
+  localEvent.widget = mPuppetWidget;
+  APZCCallbackHelper::ApplyCallbackTransform(localEvent, aGuid,
+      mPuppetWidget->GetDefaultScale());
+  APZCCallbackHelper::DispatchWidgetEvent(localEvent);
 
-  if (event.mCanTriggerSwipe) {
-    SendRespondStartSwipeEvent(aInputBlockId, event.TriggersSwipe());
+  if (localEvent.mCanTriggerSwipe) {
+    SendRespondStartSwipeEvent(aInputBlockId, localEvent.TriggersSwipe());
   }
 
   if (aEvent.mFlags.mHandledByAPZ) {
-    mAPZEventState->ProcessWheelEvent(event, aGuid, aInputBlockId);
+    mAPZEventState->ProcessWheelEvent(localEvent, aGuid, aInputBlockId);
   }
   return true;
 }
@@ -2380,7 +2383,7 @@ TabChild::RecvDestroy()
   }
 
   while (mActiveSuppressDisplayport > 0) {
-    APZCCallbackHelper::SuppressDisplayport(false);
+    APZCCallbackHelper::SuppressDisplayport(false, nullptr);
     mActiveSuppressDisplayport--;
   }
 
@@ -2940,8 +2943,8 @@ TabChild::RecvUIResolutionChanged(const float& aDpi, const double& aScale)
   ScreenIntSize screenSize = GetInnerSize();
   if (mHasValidInnerSize && oldScreenSize != screenSize) {
     ScreenIntRect screenRect = GetOuterRect();
-    mPuppetWidget->Resize(screenRect.x + mChromeDisp.x,
-                          screenRect.y + mChromeDisp.y,
+    mPuppetWidget->Resize(screenRect.x + mClientOffset.x + mChromeDisp.x,
+                          screenRect.y + mClientOffset.y + mChromeDisp.y,
                           screenSize.width, screenSize.height, true);
 
     nsCOMPtr<nsIBaseWindow> baseWin = do_QueryInterface(WebNavigation());

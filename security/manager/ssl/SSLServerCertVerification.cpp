@@ -133,7 +133,7 @@
 #include "secport.h"
 #include "sslerr.h"
 
-extern PRLogModuleInfo* gPIPNSSLog;
+extern mozilla::LazyLogModule gPIPNSSLog;
 
 using namespace mozilla::pkix;
 
@@ -1242,6 +1242,11 @@ AuthCertificate(CertVerifier& certVerifier,
   if (rv != SECSuccess) {
     savedErrorCode = PR_GetError();
   }
+
+  uint32_t evStatus = (rv != SECSuccess) ? 0                // 0 = Failure
+                    : (evOidPolicy == SEC_OID_UNKNOWN) ? 1  // 1 = DV
+                    : 2;                                    // 2 = EV
+  Telemetry::Accumulate(Telemetry::CERT_EV_STATUS, evStatus);
 
   if (ocspStaplingStatus != CertVerifier::OCSP_STAPLING_NEVER_CHECKED) {
     Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, ocspStaplingStatus);

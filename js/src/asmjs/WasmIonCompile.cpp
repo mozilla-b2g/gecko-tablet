@@ -1055,7 +1055,8 @@ class FunctionCompiler
         }
     }
 
-    bool setLoopBackedge(MBasicBlock* loopEntry, MBasicBlock* loopBody, MBasicBlock* backedge)
+    bool setLoopBackedge(MBasicBlock* loopEntry, MBasicBlock* loopBody, MBasicBlock* backedge,
+                         MDefinition** loopResult)
     {
         if (!loopEntry->setBackedgeAsmJS(backedge))
             return false;
@@ -1066,6 +1067,10 @@ class FunctionCompiler
             if (phi->getOperand(0) == phi->getOperand(1))
                 phi->setUnused();
         }
+
+        // The loop result may also be referencing a recycled phi.
+        if (*loopResult && (*loopResult)->isUnused())
+            *loopResult = (*loopResult)->toPhi()->getOperand(0);
 
         // Fix up phis stored in the slots Vector of pending blocks.
         for (BlockVector& vec : targets_) {
@@ -1094,7 +1099,7 @@ class FunctionCompiler
     }
 
   public:
-    bool closeLoop(MBasicBlock* loopHeader)
+    bool closeLoop(MBasicBlock* loopHeader, MDefinition** loopResult)
     {
         MOZ_ASSERT(blockDepth_ >= 2);
         MOZ_ASSERT(loopDepth_);
@@ -1128,7 +1133,7 @@ class FunctionCompiler
             // We're on the loop backedge block, created by bindBranches.
             MOZ_ASSERT(curBlock_->loopDepth() == loopDepth_);
             curBlock_->end(MGoto::New(alloc(), loopHeader));
-            if (!setLoopBackedge(loopHeader, loopBody, curBlock_))
+            if (!setLoopBackedge(loopHeader, loopBody, curBlock_, loopResult))
                 return false;
         }
 
@@ -1254,6 +1259,7 @@ class FunctionCompiler
     /************************************************************ DECODING ***/
 
     uint8_t        readU8()       { return decoder_.uncheckedReadFixedU8(); }
+    uint32_t       readU32()      { return decoder_.uncheckedReadFixedU32(); }
     uint32_t       readVarS32()   { return decoder_.uncheckedReadVarS32(); }
     uint32_t       readVarU32()   { return decoder_.uncheckedReadVarU32(); }
     uint64_t       readVarU64()   { return decoder_.uncheckedReadVarU64(); }
@@ -1407,11 +1413,11 @@ static bool EmitExpr(FunctionCompiler&, MDefinition**);
 static bool
 EmitHeapAddress(FunctionCompiler& f, MDefinition** base, MAsmJSHeapAccess* access)
 {
+    uint32_t alignLog2 = f.readVarU32();
+    access->setAlign(1 << alignLog2);
+
     uint32_t offset = f.readVarU32();
     access->setOffset(offset);
-
-    uint32_t align = f.readVarU32();
-    access->setAlign(align);
 
     if (!EmitExpr(f, base))
         return false;
@@ -1433,16 +1439,6 @@ EmitHeapAddress(FunctionCompiler& f, MDefinition** base, MAsmJSHeapAccess* acces
         access->setOffset(offset);
     }
 
-    // TODO Remove this after implementing unaligned loads/stores.
-    int32_t maskVal = ~(Scalar::byteSize(access->accessType()) - 1);
-    if (maskVal == -1)
-        return true;
-
-    offset &= maskVal;
-    access->setOffset(offset);
-
-    MDefinition* mask = f.constant(Int32Value(maskVal), MIRType_Int32);
-    *base = f.bitwise<MBitAnd>(*base, mask, MIRType_Int32);
     return true;
 }
 
@@ -2493,7 +2489,7 @@ EmitLoop(FunctionCompiler& f, MDefinition** def)
         *def = nullptr;
     }
 
-    return f.closeLoop(loopHeader);
+    return f.closeLoop(loopHeader, def);
 }
 
 static bool
@@ -2557,9 +2553,9 @@ EmitBrTable(FunctionCompiler& f, MDefinition** def)
         return false;
 
     for (size_t i = 0; i < numCases; i++)
-        depths[i] = f.readVarU32();
+        depths[i] = f.readU32();
 
-    uint32_t defaultDepth = f.readVarU32();
+    uint32_t defaultDepth = f.readU32();
 
     MDefinition* index;
     if (!EmitExpr(f, &index))
@@ -2641,28 +2637,25 @@ EmitBlock(FunctionCompiler& f, MDefinition** def)
 }
 
 static bool
-EmitBr(FunctionCompiler& f, MDefinition** def)
+EmitBranch(FunctionCompiler& f, Expr op, MDefinition** def)
 {
+    MOZ_ASSERT(op == Expr::Br || op == Expr::BrIf);
+
     uint32_t relativeDepth = f.readVarU32();
 
-    if (!f.br(relativeDepth))
-        return false;
+    MOZ_ALWAYS_TRUE(f.readExpr() == Expr::Nop);
 
-    *def = nullptr;
-    return true;
-}
+    if (op == Expr::Br) {
+        if (!f.br(relativeDepth))
+            return false;
+    } else {
+        MDefinition* condition;
+        if (!EmitExpr(f, &condition))
+            return false;
 
-static bool
-EmitBrIf(FunctionCompiler& f, MDefinition** def)
-{
-    uint32_t relativeDepth = f.readVarU32();
-
-    MDefinition* condition;
-    if (!EmitExpr(f, &condition))
-        return false;
-
-    if (!f.brIf(relativeDepth, condition))
-        return false;
+        if (!f.brIf(relativeDepth, condition))
+            return false;
+    }
 
     *def = nullptr;
     return true;
@@ -2691,9 +2684,8 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
       case Expr::Loop:
         return EmitLoop(f, def);
       case Expr::Br:
-        return EmitBr(f, def);
       case Expr::BrIf:
-        return EmitBrIf(f, def);
+        return EmitBranch(f, op, def);
       case Expr::BrTable:
         return EmitBrTable(f, def);
       case Expr::Return:
@@ -2737,7 +2729,7 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
         return EmitMathMinMax(f, ValType::I32, IsMax(false), def);
       case Expr::I32Max:
         return EmitMathMinMax(f, ValType::I32, IsMax(true), def);
-      case Expr::I32Not:
+      case Expr::I32Eqz:
         return EmitUnary<MNot>(f, def);
       case Expr::I32TruncSF32:
       case Expr::I32TruncUF32:
@@ -3034,6 +3026,11 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
       case Expr::I64Clz:
       case Expr::I64Ctz:
       case Expr::I64Popcnt:
+      case Expr::I64Eqz:
+      case Expr::I32Rotr:
+      case Expr::I32Rotl:
+      case Expr::I64Rotr:
+      case Expr::I64Rotl:
       case Expr::MemorySize:
       case Expr::GrowMemory:
       case Expr::Unreachable:

@@ -86,32 +86,6 @@ if test -z "$PERL" -o "$PERL" = ":"; then
     AC_MSG_ERROR([perl not found in \$PATH])
 fi
 
-MOZ_ARG_ENABLE_BOOL(shared-js,
-[  --disable-shared-js
-                          Do not create a shared library.],
-    DISABLE_SHARED_JS=0,
-    DISABLE_SHARED_JS=1)
-
-MOZ_ARG_DISABLE_BOOL(export-js,
-[  --disable-export-js
-                          Do not mark JS symbols as DLL exported/visible.],
-    DISABLE_EXPORT_JS=1,
-    DISABLE_EXPORT_JS=)
-
-if test "$DISABLE_SHARED_JS" = "1" ; then
-  if test "$DISABLE_EXPORT_JS" = "1"; then
-    AC_DEFINE(STATIC_JS_API)
-  else
-    AC_DEFINE(STATIC_EXPORTABLE_JS_API)
-  fi
-else
-  if test "$DISABLE_EXPORT_JS" = "1"; then
-    AC_MSG_ERROR([Must export JS symbols when building a shared library.])
-  fi
-  JS_SHARED_LIBRARY=1
-fi
-AC_SUBST(JS_SHARED_LIBRARY)
-
 if test "$JS_STANDALONE" = no; then
   autoconfmk=autoconf-js.mk
   JS_STANDALONE=
@@ -721,12 +695,11 @@ _PLATFORM_DEFAULT_TOOLKIT=cairo-gtk2
 if test -n "$CROSS_COMPILE"; then
     OS_TARGET="${target_os}"
     OS_ARCH=`echo $target_os | sed -e 's|/|_|g'`
-    OS_RELEASE=
     case "${target_os}" in
         linux*)       OS_ARCH=Linux OS_TARGET=Linux ;;
         kfreebsd*-gnu) OS_ARCH=GNU_kFreeBSD OS_TARGET=GNU/kFreeBSD ;;
         gnu*)         OS_ARCH=GNU ;;
-        solaris*)     OS_ARCH=SunOS OS_RELEASE=5 ;;
+        solaris*)     OS_ARCH=SunOS ;;
         mingw*)       OS_ARCH=WINNT OS_TARGET=WINNT ;;
         darwin*)      OS_ARCH=Darwin OS_TARGET=Darwin ;;
         dragonfly*)   OS_ARCH=DragonFly OS_TARGET=DragonFly ;;
@@ -740,7 +713,6 @@ if test -n "$CROSS_COMPILE"; then
 else
     OS_TARGET=`uname -s`
     OS_ARCH=`uname -s | sed -e 's|/|_|g'`
-    OS_RELEASE=`uname -r`
 fi
 
 # Before this used `uname -m` when not cross compiling
@@ -764,8 +736,6 @@ HOST_OS_ARCH=`echo $host_os | sed -e 's|/|_|g'`
 # OS_ARCH
 # OS_TEST
 # OS_TARGET
-# OS_RELEASE
-# OS_MINOR_RELEASE
 #
 
 case "$HOST_OS_ARCH" in
@@ -823,33 +793,14 @@ WINNT)
     fi
     ;;
 Windows_NT)
-#
-# If uname -s returns "Windows_NT", we assume that we are using
-# the uname.exe in MKS toolkit.
-#
-# The -r option of MKS uname only returns the major version number.
-# So we need to use its -v option to get the minor version number.
-# Moreover, it doesn't have the -p option, so we need to use uname -m.
-#
     OS_ARCH=WINNT
     OS_TARGET=WINNT
-    OS_MINOR_RELEASE=`uname -v`
-    if test "$OS_MINOR_RELEASE" = "00"; then
-        OS_MINOR_RELEASE=0
-    fi
-    OS_RELEASE="${OS_RELEASE}.${OS_MINOR_RELEASE}"
     ;;
 MINGW*_NT*)
-#
-# If uname -s returns MINGW32_NT-5.1, we assume that we are using
-# the uname.exe in the MSYS tools.
-#
-    OS_RELEASE=`expr $OS_ARCH : '.*NT-\(.*\)'`
     OS_ARCH=WINNT
     OS_TARGET=WINNT
     ;;
 AIX)
-    OS_RELEASE=`uname -v`.`uname -r`
     OS_TEST=${target_cpu}
     if test -z "$GNU_CC"; then
         if test "`$CC -qversion 2>&1 | egrep -c 'IBM XL'`" != "0"; then
@@ -937,7 +888,6 @@ esac
 if test -z "$OS_TARGET"; then
     OS_TARGET=$OS_ARCH
 fi
-OS_CONFIG="${OS_TARGET}${OS_RELEASE}"
 
 dnl Set INTEL_ARCHITECTURE if we're compiling for x86-32 or x86-64.
 dnl ===============================================================
@@ -1777,12 +1727,6 @@ ia64*-hpux*)
        WARNINGS_AS_ERRORS='-Werror'
        _WARNINGS_CFLAGS=''
        _WARNINGS_CXXFLAGS=''
-       if test "$OS_RELEASE" = "5.3"; then
-           AC_DEFINE(MUST_UNDEF_HAVE_BOOLEAN_AFTER_INCLUDES)
-       fi
-    fi
-    if test "$OS_RELEASE" = "5.5.1"; then
-        AC_DEFINE(NEED_USLEEP_PROTOTYPE)
     fi
     ;;
 
@@ -2206,9 +2150,7 @@ fi
 
 dnl Checks for math functions.
 dnl ========================================================
-AC_CHECK_LIB(m, sin)
 AC_CHECK_LIB(m, __sincos, AC_DEFINE(HAVE_SINCOS))
-AC_CHECK_FUNCS([log2 log1p expm1 sqrt1pm1 acosh asinh atanh cbrt])
 
 
 dnl check for wcrtomb/mbrtowc
@@ -2866,7 +2808,9 @@ elif test "$CPU_ARCH" = "x86_64"; then
 
     dnl Signal-handler OOM checking requires large mprotected guard regions, so
     dnl currently it is only implemented on x64.
+    AC_DEFINE(ASMJS_MAY_USE_SIGNAL_HANDLERS)
     AC_DEFINE(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
+    ASMJS_MAY_USE_SIGNAL_HANDLERS=1
     ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB=1
 elif test "$CPU_ARCH" = "arm"; then
     AC_DEFINE(JS_CODEGEN_ARM)
@@ -2875,6 +2819,13 @@ elif test "$CPU_ARCH" = "arm"; then
         AC_DEFINE(JS_DISASM_ARM)
         JS_DISASM_ARM=1
     fi
+
+    dnl ARM platforms may trap on unalinged accesses; catch the signal and
+    dnl recover.
+    AC_DEFINE(ASMJS_MAY_USE_SIGNAL_HANDLERS)
+    AC_DEFINE(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_UNALIGNED)
+    ASMJS_MAY_USE_SIGNAL_HANDLERS=1
+    ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_UNALIGNED=1
 elif test "$CPU_ARCH" = "mips32"; then
     AC_DEFINE(JS_CODEGEN_MIPS32)
     JS_CODEGEN_MIPS32=1
@@ -2896,7 +2847,9 @@ AC_SUBST(JS_CODEGEN_X86)
 AC_SUBST(JS_CODEGEN_X64)
 AC_SUBST(JS_CODEGEN_NONE)
 AC_SUBST(JS_DISASM_ARM)
+AC_SUBST(ASMJS_MAY_USE_SIGNAL_HANDLERS)
 AC_SUBST(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
+AC_SUBST(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_UNALIGNED)
 
 dnl ========================================================
 dnl jprof
@@ -3273,7 +3226,6 @@ MOZ_ARG_ENABLE_BOOL(readline,
 
 JS_BUNDLED_EDITLINE=
 EDITLINE_LIBS=
-JS_DISABLE_SHELL=
 
 case "$target" in
 *-mingw*)
@@ -3297,7 +3249,6 @@ if test -z "$SKIP_LIBRARY_CHECKS" -a -z "$NO_EDITLINE"; then
   AC_DEFINE(EDITLINE)
 fi
 AC_SUBST(JS_BUNDLED_EDITLINE)
-AC_SUBST(JS_DISABLE_SHELL)
 AC_SUBST_LIST(EDITLINE_LIBS)
 
 dnl ========================================================
@@ -3463,7 +3414,6 @@ AC_SUBST(TARGET_OS)
 AC_SUBST(TARGET_XPCOM_ABI)
 AC_SUBST(OS_TARGET)
 AC_SUBST(OS_ARCH)
-AC_SUBST(OS_RELEASE)
 AC_SUBST(OS_TEST)
 AC_SUBST(CPU_ARCH)
 AC_SUBST(INTEL_ARCHITECTURE)

@@ -8,6 +8,7 @@
 
 #include "mozilla/dom/AnimatableBinding.h"
 #include "mozilla/dom/AnimationEffectTimingBinding.h"
+#include "mozilla/TimingParams.h"
 
 namespace mozilla {
 namespace dom {
@@ -18,31 +19,61 @@ AnimationEffectTiming::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenPr
   return AnimationEffectTimingBinding::Wrap(aCx, this, aGivenProto);
 }
 
-void
-AnimationEffectTiming::SetDuration(const UnrestrictedDoubleOrString& aDuration)
+static inline void
+PostSpecifiedTimingUpdated(KeyframeEffect* aEffect)
 {
-  if (mTiming.mDuration.IsUnrestrictedDouble() &&
-      aDuration.IsUnrestrictedDouble() &&
-      mTiming.mDuration.GetAsUnrestrictedDouble() ==
-        aDuration.GetAsUnrestrictedDouble()) {
+  if (aEffect) {
+    aEffect->NotifySpecifiedTimingUpdated();
+  }
+}
+
+void
+AnimationEffectTiming::SetEndDelay(double aEndDelay)
+{
+  TimeDuration endDelay = TimeDuration::FromMilliseconds(aEndDelay);
+  if (mTiming.mEndDelay == endDelay) {
+    return;
+  }
+  mTiming.mEndDelay = endDelay;
+
+  PostSpecifiedTimingUpdated(mEffect);
+}
+
+void
+AnimationEffectTiming::SetIterationStart(double aIterationStart,
+                                         ErrorResult& aRv)
+{
+  if (mTiming.mIterationStart == aIterationStart) {
     return;
   }
 
-  if (mTiming.mDuration.IsString() && aDuration.IsString() &&
-      mTiming.mDuration.GetAsString() == aDuration.GetAsString()) {
+  TimingParams::ValidateIterationStart(aIterationStart, aRv);
+  if (aRv.Failed()) {
     return;
   }
 
-  if (aDuration.IsUnrestrictedDouble()) {
-    mTiming.mDuration.SetAsUnrestrictedDouble() =
-      aDuration.GetAsUnrestrictedDouble();
-  } else {
-    mTiming.mDuration.SetAsString() = aDuration.GetAsString();
+  mTiming.mIterationStart = aIterationStart;
+
+  PostSpecifiedTimingUpdated(mEffect);
+}
+
+void
+AnimationEffectTiming::SetDuration(const UnrestrictedDoubleOrString& aDuration,
+                                   ErrorResult& aRv)
+{
+  Maybe<StickyTimeDuration> newDuration =
+    TimingParams::ParseDuration(aDuration, aRv);
+  if (aRv.Failed()) {
+    return;
   }
 
-  if (mEffect) {
-    mEffect->NotifySpecifiedTimingUpdated();
+  if (mTiming.mDuration == newDuration) {
+    return;
   }
+
+  mTiming.mDuration = newDuration;
+
+  PostSpecifiedTimingUpdated(mEffect);
 }
 
 } // namespace dom

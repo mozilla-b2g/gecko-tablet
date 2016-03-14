@@ -481,9 +481,6 @@ pref("plugin.default.state", 1);
 pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
 pref("app.support.baseURL", "http://support.mozilla.org/1/mobile/%VERSION%/%OS%/%LOCALE%/");
 
-// Used to submit data to input from about:feedback
-pref("app.feedback.postURL", "https://input.mozilla.org/api/v1/feedback/");
-
 // URL for feedback page
 // This should be kept in sync with the "feedback_link" string defined in strings.xml.in
 pref("app.feedbackURL", "https://input.mozilla.org/feedback/android/%VERSION%/%CHANNEL%/?utm_source=feedback-prompt");
@@ -913,9 +910,6 @@ pref("layout.accessiblecaret.width", "22.0");
 pref("layout.accessiblecaret.height", "22.0");
 pref("layout.accessiblecaret.margin-left", "-11.5");
 
-// Android hides the selection bars at the two ends of the selection highlight.
-pref("layout.accessiblecaret.bar.enabled", false);
-
 // Android needs to show the caret when long tapping on an empty content.
 pref("layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content", true);
 
@@ -958,6 +952,17 @@ pref("dom.vr.enabled", true);
 pref("browser.tabs.showAudioPlayingIcon", true);
 
 pref("dom.serviceWorkers.enabled", true);
+pref("dom.serviceWorkers.interception.enabled", true);
+pref("dom.serviceWorkers.openWindow.enabled", true);
+
+pref("dom.push.debug", false);
+// The upstream autopush endpoint must have the Google API key corresponding to
+// the App's sender ID; we bake this assumption directly into the URL.
+pref("dom.push.serverURL", "https://updates-autopush.stage.mozaws.net/v1/gcm/@MOZ_ANDROID_GCM_SENDERID@");
+
+#ifdef MOZ_ANDROID_GCM
+pref("dom.push.enabled", true);
+#endif
 
 // The remote content URL where FxAccountsWebChannel messages originate.  Must use HTTPS.
 pref("identity.fxaccounts.remote.webchannel.uri", "https://accounts.firefox.com");

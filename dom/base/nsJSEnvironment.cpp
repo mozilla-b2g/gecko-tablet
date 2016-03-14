@@ -225,14 +225,30 @@ ProcessNameForCollectorLog()
     "default" : "content";
 }
 
-// This handles JS Exceptions (via ExceptionStackOrNull), as well as DOM and XPC Exceptions.
+namespace xpc {
+
+// This handles JS Exceptions (via ExceptionStackOrNull), as well as DOM and XPC
+// Exceptions.
 //
-// Note that the returned object is _not_ wrapped into the compartment of cx.
-static JSObject*
-FindExceptionStack(JSContext* cx, JS::HandleObject exceptionObject)
+// Note that the returned object is _not_ wrapped into the compartment of
+// exceptionValue.
+JSObject*
+FindExceptionStackForConsoleReport(nsPIDOMWindowInner* win,
+                                   JS::HandleValue exceptionValue)
 {
-  JSAutoCompartment ac(cx, exceptionObject);
-  JS::RootedObject stackObject(cx, ExceptionStackOrNull(cx, exceptionObject));
+  if (!exceptionValue.isObject()) {
+    return nullptr;
+  }
+
+  if (win && win->InnerObjectsFreed()) {
+    // Pretend like we have no stack, so we don't end up keeping the global
+    // alive via the stack.
+    return nullptr;
+  }
+
+  JSContext* cx = nsContentUtils::RootingCxForThread();
+  JS::RootedObject exceptionObject(cx, &exceptionValue.toObject());
+  JSObject* stackObject = ExceptionStackOrNull(exceptionObject);
   if (stackObject) {
     return stackObject;
   }
@@ -255,10 +271,12 @@ FindExceptionStack(JSContext* cx, JS::HandleObject exceptionObject)
   JS::RootedValue value(cx);
   stack->GetNativeSavedFrame(&value);
   if (value.isObject()) {
-    stackObject = &value.toObject();
+    return &value.toObject();
   }
-  return stackObject;
+  return nullptr;
 }
+
+} /* namespace xpc */
 
 static PRTime
 GetCollectionTimeDelta()
@@ -418,8 +436,10 @@ public:
     nsEventStatus status = nsEventStatus_eIgnore;
     nsPIDOMWindowInner* win = mWindow;
     MOZ_ASSERT(win);
+    MOZ_ASSERT(NS_IsMainThread());
     // First, notify the DOM that we have a script error, but only if
     // our window is still the current inner.
+    JSContext* rootingCx = nsContentUtils::RootingCx();
     if (win->IsCurrentInnerWindow() && win->GetDocShell() && !sHandlingScriptError) {
       AutoRestore<bool> recursionGuard(sHandlingScriptError);
       sHandlingScriptError = true;
@@ -427,8 +447,7 @@ public:
       RefPtr<nsPresContext> presContext;
       win->GetDocShell()->GetPresContext(getter_AddRefs(presContext));
 
-      ThreadsafeAutoJSContext cx;
-      RootedDictionary<ErrorEventInit> init(cx);
+      RootedDictionary<ErrorEventInit> init(rootingCx);
       init.mCancelable = true;
       init.mFilename = mReport->mFileName;
       init.mBubbles = true;
@@ -455,20 +474,9 @@ public:
     }
 
     if (status != nsEventStatus_eConsumeNoDefault) {
-      if (mError.isObject()) {
-        AutoJSAPI jsapi;
-        if (NS_WARN_IF(!jsapi.Init(mError.toObjectOrNull()))) {
-          mReport->LogToConsole();
-          return NS_OK;
-        }
-        JSContext* cx = jsapi.cx();
-        JS::Rooted<JSObject*> exObj(cx, mError.toObjectOrNull());
-        JS::RootedObject stack(cx, FindExceptionStack(cx, exObj));
-        mReport->LogToConsoleWithStack(stack);
-      } else {
-        mReport->LogToConsole();
-      }
-
+      JS::Rooted<JSObject*> stack(rootingCx,
+        xpc::FindExceptionStackForConsoleReport(win, mError));
+      mReport->LogToConsoleWithStack(stack);
     }
 
     return NS_OK;
@@ -546,14 +554,9 @@ SystemErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
     if (!win || JSREPORT_IS_WARNING(xpcReport->mFlags) ||
         report->errorNumber == JSMSG_OUT_OF_MEMORY)
     {
-      if (exception.isObject()) {
-        JS::RootedObject exObj(cx, exception.toObjectOrNull());
-        JSAutoCompartment ac(cx, exObj);
-        JS::RootedObject stackVal(cx, FindExceptionStack(cx, exObj));
-        xpcReport->LogToConsoleWithStack(stackVal);
-      } else {
-        xpcReport->LogToConsole();
-      }
+      JS::Rooted<JSObject*> stack(cx,
+        xpc::FindExceptionStackForConsoleReport(win, exception));
+      xpcReport->LogToConsoleWithStack(stack);
       return;
     }
 
@@ -836,15 +839,15 @@ nsresult
 nsJSContext::SetProperty(JS::Handle<JSObject*> aTarget, const char* aPropName, nsISupports* aArgs)
 {
   AutoJSAPI jsapi;
-  if (NS_WARN_IF(!jsapi.InitWithLegacyErrorReporting(GetGlobalObject()))) {
+  if (NS_WARN_IF(!jsapi.Init(GetGlobalObject()))) {
     return NS_ERROR_FAILURE;
   }
-  MOZ_ASSERT(jsapi.cx() == mContext,
-             "AutoJSAPI should have found our own JSContext*");
+  jsapi.TakeOwnershipOfErrorReporting();
+  JSContext* cx = jsapi.cx();
 
-  JS::AutoValueVector args(mContext);
+  JS::AutoValueVector args(cx);
 
-  JS::Rooted<JSObject*> global(mContext, GetWindowProxy());
+  JS::Rooted<JSObject*> global(cx, GetWindowProxy());
   nsresult rv =
     ConvertSupportsTojsvals(aArgs, global, args);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -852,17 +855,17 @@ nsJSContext::SetProperty(JS::Handle<JSObject*> aTarget, const char* aPropName, n
   // got the arguments, now attach them.
 
   for (uint32_t i = 0; i < args.length(); ++i) {
-    if (!JS_WrapValue(mContext, args[i])) {
+    if (!JS_WrapValue(cx, args[i])) {
       return NS_ERROR_FAILURE;
     }
   }
 
-  JS::Rooted<JSObject*> array(mContext, ::JS_NewArrayObject(mContext, args));
+  JS::Rooted<JSObject*> array(cx, ::JS_NewArrayObject(cx, args));
   if (!array) {
     return NS_ERROR_FAILURE;
   }
 
-  return JS_DefineProperty(mContext, aTarget, aPropName, array, 0) ? NS_OK : NS_ERROR_FAILURE;
+  return JS_DefineProperty(cx, aTarget, aPropName, array, 0) ? NS_OK : NS_ERROR_FAILURE;
 }
 
 nsresult

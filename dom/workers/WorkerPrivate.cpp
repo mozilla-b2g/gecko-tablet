@@ -2208,7 +2208,6 @@ typename WorkerPrivateParent<Derived>::cycleCollection
 
 template <class Derived>
 WorkerPrivateParent<Derived>::WorkerPrivateParent(
-                                           JSContext* aCx,
                                            WorkerPrivate* aParent,
                                            const nsAString& aScriptURL,
                                            bool aIsChromeWorker,
@@ -3521,7 +3520,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 template <class Derived>
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(WorkerPrivateParent<Derived>,
                                                 DOMEventTargetHelper)
-  tmp->Terminate(nullptr);
+  tmp->Terminate();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 template <class Derived>
@@ -3903,13 +3902,12 @@ WorkerDebugger::ReportErrorToDebuggerOnMainThread(const nsAString& aFilename,
   LogErrorToConsole(aMessage, aFilename, nsString(), aLineno, 0, 0, 0);
 }
 
-WorkerPrivate::WorkerPrivate(JSContext* aCx,
-                             WorkerPrivate* aParent,
+WorkerPrivate::WorkerPrivate(WorkerPrivate* aParent,
                              const nsAString& aScriptURL,
                              bool aIsChromeWorker, WorkerType aWorkerType,
                              const nsACString& aWorkerName,
                              WorkerLoadInfo& aLoadInfo)
-  : WorkerPrivateParent<WorkerPrivate>(aCx, aParent, aScriptURL,
+  : WorkerPrivateParent<WorkerPrivate>(aParent, aScriptURL,
                                        aIsChromeWorker, aWorkerType,
                                        aWorkerName, aLoadInfo)
   , mDebuggerRegistered(false)
@@ -4081,7 +4079,7 @@ WorkerPrivate::Constructor(JSContext* aCx,
   MOZ_ASSERT(runtimeService);
 
   RefPtr<WorkerPrivate> worker =
-    new WorkerPrivate(aCx, parent, aScriptURL, aIsChromeWorker,
+    new WorkerPrivate(parent, aScriptURL, aIsChromeWorker,
                       aWorkerType, aWorkerName, *aLoadInfo);
 
   if (!runtimeService->RegisterWorker(aCx, worker)) {
@@ -5781,9 +5779,9 @@ WorkerPrivate::ReportError(JSContext* aCx, const char* aFallbackMessage,
     xpc::ErrorReport::ErrorReportToMessageString(aReport, message);
 
     filename = NS_ConvertUTF8toUTF16(aReport->filename);
-    line = aReport->uclinebuf;
+    line.Assign(aReport->linebuf(), aReport->linebufLength());
     lineNumber = aReport->lineno;
-    columnNumber = aReport->uctokenptr - aReport->uclinebuf;
+    columnNumber = aReport->tokenOffset();
     flags = aReport->flags;
     errorNumber = aReport->errorNumber;
     MOZ_ASSERT(aReport->exnType >= JSEXN_NONE && aReport->exnType < JSEXN_LIMIT);
@@ -5795,7 +5793,13 @@ WorkerPrivate::ReportError(JSContext* aCx, const char* aFallbackMessage,
   }
 
   if (message.IsEmpty()) {
-    message = NS_ConvertUTF8toUTF16(aFallbackMessage);
+    nsDependentCString fallbackMessage(aFallbackMessage);
+    if (!AppendUTF8toUTF16(fallbackMessage, message, mozilla::fallible)) {
+      // Try again, with only a 1 KB string. Do this infallibly this time.
+      // If the user doesn't have 1 KB to spare we're done anyways.
+      nsDependentCString truncatedFallbackMessage(aFallbackMessage, 1024);
+      AppendUTF8toUTF16(truncatedFallbackMessage, message);
+    }
   }
 
   mErrorHandlerRecursionCount++;
@@ -6011,9 +6015,7 @@ WorkerPrivate::RunExpiredTimeouts(JSContext* aCx)
 
     { // scope for the AutoEntryScript, so it comes off the stack before we do
       // Promise::PerformMicroTaskCheckpoint.
-      AutoEntryScript entryScript(xpc::NativeGlobal(global), reason,
-                                  false, aCx);
-      entryScript.TakeOwnershipOfErrorReporting();
+      AutoEntryScript aes(global, reason, false, aCx);
       if (!info->mTimeoutCallable.isUndefined()) {
         JS::Rooted<JS::Value> rval(aCx);
         JS::HandleValueArray args =

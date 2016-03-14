@@ -442,9 +442,6 @@ pref("dom.sms.enabled", true);
 //The waiting time in network manager.
 pref("network.gonk.ms-release-mms-connection", 30000);
 
-// WebContacts
-pref("dom.mozContacts.enabled", true);
-
 // Shortnumber matching needed for e.g. Brazil:
 // 03187654321 can be found with 87654321
 pref("dom.phonenumber.substringmatching.BR", 8);
@@ -1053,6 +1050,10 @@ pref("dom.apps.reviewer_paths", "/reviewers/,/extension/reviewers/");
 
 // New implementation to unify touch-caret and selection-carets.
 pref("layout.accessiblecaret.enabled", true);
+
+// Show the selection bars at the two ends of the selection highlight. Required
+// by the spec in bug 921965.
+pref("layout.accessiblecaret.bar.enabled", true);
 
 // APZ on real devices supports long tap events.
 #ifdef MOZ_WIDGET_GONK

@@ -15530,6 +15530,10 @@
         "url": "/fetch/api/redirect/redirect-mode.html"
       },
       {
+        "path": "fetch/api/request/request-cache.html",
+        "url": "/fetch/api/request/request-cache.html"
+      },
+      {
         "path": "fetch/api/request/request-clone.sub.html",
         "url": "/fetch/api/request/request-clone.sub.html"
       },
@@ -28334,12 +28338,20 @@
         "url": "/web-animations/animation-effect-timing/duration.html"
       },
       {
+        "path": "web-animations/animation-effect-timing/endDelay.html",
+        "url": "/web-animations/animation-effect-timing/endDelay.html"
+      },
+      {
         "path": "web-animations/animation-effect-timing/getAnimations.html",
         "url": "/web-animations/animation-effect-timing/getAnimations.html"
       },
       {
         "path": "web-animations/animation-effect-timing/getComputedStyle.html",
         "url": "/web-animations/animation-effect-timing/getComputedStyle.html"
+      },
+      {
+        "path": "web-animations/animation-effect-timing/iterationStart.html",
+        "url": "/web-animations/animation-effect-timing/iterationStart.html"
       },
       {
         "path": "web-animations/animation-node/animation-node-after.html",
@@ -34724,7 +34736,23 @@
   },
   "local_changes": {
     "deleted": [],
-    "items": {},
+    "items": {
+      "testharness": {
+        "dom/collections/HTMLCollection-supported-property-indices.html": [
+          {
+            "path": "dom/collections/HTMLCollection-supported-property-indices.html",
+            "url": "/dom/collections/HTMLCollection-supported-property-indices.html"
+          }
+        ],
+        "fetch/api/request/request-cache.html": [
+          {
+            "path": "fetch/api/request/request-cache.html",
+            "timeout": "long",
+            "url": "/fetch/api/request/request-cache.html"
+          }
+        ]
+      }
+    },
     "reftest_nodes": {}
   },
   "reftest_nodes": {

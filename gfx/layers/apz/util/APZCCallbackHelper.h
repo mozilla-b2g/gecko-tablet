@@ -22,7 +22,7 @@ template<class T> class nsCOMPtr;
 namespace mozilla {
 namespace layers {
 
-typedef Function<void(uint64_t, const nsTArray<TouchBehaviorFlags>&)>
+typedef function<void(uint64_t, const nsTArray<TouchBehaviorFlags>&)>
         SetAllowedTouchBehaviorCallback;
 
 /* This class contains some helper methods that facilitate implementing the
@@ -99,9 +99,9 @@ public:
                            const ScrollableLayerGuid& aGuid,
                            const CSSToLayoutDeviceScale& aScale);
 
-    /* Convenience function for applying a callback transform to all touch
-     * points of a touch event. */
-    static void ApplyCallbackTransform(WidgetTouchEvent& aEvent,
+    /* Convenience function for applying a callback transform to all refpoints
+     * in the input event. */
+    static void ApplyCallbackTransform(WidgetEvent& aEvent,
                                        const ScrollableLayerGuid& aGuid,
                                        const CSSToLayoutDeviceScale& aScale);
 
@@ -163,8 +163,14 @@ public:
     /* Notify content that the repaint flush is complete. */
     static void NotifyFlushComplete(nsIPresShell* aShell);
 
-    /* Temporarily ignore the Displayport for better paint performance. */
-    static void SuppressDisplayport(const bool& aEnabled);
+    /* Temporarily ignore the Displayport for better paint performance. If at
+     * all possible, pass in a presShell if you have one at the call site, we
+     * use it to trigger a repaint once suppression is disabled. Without that
+     * the displayport may get left at the suppressed size for an extended
+     * period of time and result in unnecessary checkerboarding (see bug
+     * 1255054). */
+    static void SuppressDisplayport(const bool& aEnabled,
+                                    const nsCOMPtr<nsIPresShell>& aShell);
     static bool IsDisplayportSuppressed();
 
 private:

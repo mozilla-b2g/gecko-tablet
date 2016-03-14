@@ -104,14 +104,15 @@
 #include <math.h>
 #include "cairo/cairo-features.h"
 #include "mozilla/WindowsVersion.h"
+#include "mozilla/widget/AudioSession.h"
 
 #ifndef PROCESS_DEP_ENABLE
 #define PROCESS_DEP_ENABLE 0x1
 #endif
-
-#if defined(MOZ_CONTENT_SANDBOX)
-#include "nsIUUIDGenerator.h"
 #endif
+
+#if (defined(XP_WIN) || defined(XP_MACOSX)) && defined(MOZ_CONTENT_SANDBOX)
+#include "nsIUUIDGenerator.h"
 #endif
 
 #ifdef ACCESSIBILITY
@@ -603,37 +604,15 @@ CanShowProfileManager()
   return true;
 }
 
-#if defined(XP_WIN) && defined(MOZ_CONTENT_SANDBOX)
-static const char*
-SandboxTempDirParent()
-{
-  return NS_WIN_LOW_INTEGRITY_TEMP_BASE;
-}
-#endif
-
-#if defined(XP_MACOSX) && defined(MOZ_CONTENT_SANDBOX)
-static const char*
-SandboxTempDirParent()
-{
-  return NS_OS_TEMP_DIR;
-}
-#endif
-
 #if (defined(XP_WIN) || defined(XP_MACOSX)) && defined(MOZ_CONTENT_SANDBOX)
 static already_AddRefed<nsIFile>
-GetAndCleanTempDir(const nsAString& aTempDirSuffix)
+GetAndCleanTempDir()
 {
   // Get the directory within which we'll place the
   // sandbox-writable temp directory
   nsCOMPtr<nsIFile> tempDir;
-  nsresult rv = NS_GetSpecialDirectory(SandboxTempDirParent(),
-      getter_AddRefs(tempDir));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return nullptr;
-  }
-
-  // Append our profile specific temp name.
-  rv = tempDir->Append(NS_LITERAL_STRING("Temp-") + aTempDirSuffix);
+  nsresult rv = NS_GetSpecialDirectory(NS_APP_CONTENT_PROCESS_TEMP_DIR,
+                                       getter_AddRefs(tempDir));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return nullptr;
   }
@@ -714,7 +693,7 @@ SetUpSandboxEnvironment()
   }
 
   // Get (and clean up if still there) the sandbox-writable temp directory.
-  nsCOMPtr<nsIFile> tempDir = GetAndCleanTempDir(tempDirSuffix);
+  nsCOMPtr<nsIFile> tempDir = GetAndCleanTempDir();
   if (!tempDir) {
     NS_WARNING("Failed to get or clean sandboxed temp directory.");
     return;
@@ -736,16 +715,9 @@ CleanUpSandboxEnvironment()
   }
 #endif
 
-  // Get temp directory suffix pref.
-  nsAdoptingString tempDirSuffix =
-    Preferences::GetString("security.sandbox.content.tempDirSuffix");
-  if (tempDirSuffix.IsEmpty()) {
-    return;
-  }
-
   // Get and remove the sandbox-writable temp directory.
   // This function already warns if the deletion fails.
-  nsCOMPtr<nsIFile> tempDir = GetAndCleanTempDir(tempDirSuffix);
+  nsCOMPtr<nsIFile> tempDir = GetAndCleanTempDir();
 }
 #endif
 
@@ -4448,6 +4420,10 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   }
 
   mScopedXPCOM = nullptr;
+
+#if defined(XP_WIN)
+  mozilla::widget::StopAudioSession();
+#endif
 
   // unlock the profile after ScopedXPCOMStartup object (xpcom) 
   // has gone out of scope.  see bug #386739 for more details

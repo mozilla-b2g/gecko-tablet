@@ -506,6 +506,10 @@ pref("media.mediasource.webm.enabled", true);
 #endif
 pref("media.mediasource.webm.audio.enabled", true);
 
+pref("media.benchmark.vp9.threshold", 150);
+pref("media.benchmark.frames", 300);
+pref("media.benchmark.timeout", 1000);
+
 #ifdef MOZ_WEBSPEECH
 pref("media.webspeech.recognition.enable", false);
 pref("media.webspeech.synth.enabled", false);
@@ -1557,7 +1561,12 @@ pref("dom.server-events.default-reconnection-time", 5000); // in milliseconds
 // by the jar channel.
 pref("network.jar.open-unsafe-types", false);
 // If true, loading remote JAR files using the jar: protocol will be prevented.
+#ifdef RELEASE_BUILD
+// Keep allowing remote JAR files for IBM iNotes (see bug 1255139) for now.
+pref("network.jar.block-remote-files", false);
+#else
 pref("network.jar.block-remote-files", true);
+#endif
 
 // This preference, if true, causes all UTF-8 domain names to be normalized to
 // punycode.  The intention is to allow UTF-8 domain names as input, but never
@@ -4300,6 +4309,7 @@ pref("webgl.angle.try-d3d11", true);
 pref("webgl.angle.force-d3d11", false);
 pref("webgl.angle.force-warp", false);
 pref("webgl.dxgl.enabled", false);
+pref("webgl.dxgl.needs-finish", false);
 #endif
 
 pref("gfx.offscreencanvas.enabled", false);
@@ -4569,9 +4579,6 @@ pref("dom.sms.defaultServiceId", 0);
 // 0: don't read ahead unless explicitly requested, (default)
 // negative: read ahead all IDs if possible.
 pref("dom.sms.maxReadAheadEntries", 0);
-
-// WebContacts
-pref("dom.mozContacts.enabled", false);
 
 // WebAlarms
 pref("dom.mozAlarms.enabled", false);
@@ -4958,8 +4965,8 @@ pref("layout.accessiblecaret.height", "36.0");
 pref("layout.accessiblecaret.margin-left", "-18.5");
 pref("layout.accessiblecaret.bar.width", "2.0");
 
-// Show the selection bars at the two ends of the selection highlight.
-pref("layout.accessiblecaret.bar.enabled", true);
+// Show no selection bars at the two ends of the selection highlight.
+pref("layout.accessiblecaret.bar.enabled", false);
 
 // Show the caret when long tapping on an empty content.
 pref("layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content", false);
@@ -5209,9 +5216,6 @@ pref("memory.report_concurrency", 10);
 
 // Add Mozilla AudioChannel APIs.
 pref("media.useAudioChannelAPI", false);
-
-// Expose Request.cache. Currently disabled since the implementation is incomplete.
-pref("dom.requestcache.enabled", false);
 
 // Expose Request.context. Currently disabled since the spec is in flux.
 pref("dom.requestcontext.enabled", false);

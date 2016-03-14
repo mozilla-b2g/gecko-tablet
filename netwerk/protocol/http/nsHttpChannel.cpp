@@ -1955,7 +1955,7 @@ nsHttpChannel::StartRedirectChannelToHttps()
     LOG(("nsHttpChannel::HandleAsyncRedirectChannelToHttps() [STS]\n"));
 
     nsCOMPtr<nsIURI> upgradedURI;
-    nsresult rv = GetSecureUpgradedURI(mURI, getter_AddRefs(upgradedURI));
+    nsresult rv = NS_GetSecureUpgradedURI(mURI, getter_AddRefs(upgradedURI));
     NS_ENSURE_SUCCESS(rv,rv);
 
     return StartRedirectChannelToURI(upgradedURI,
@@ -3035,6 +3035,10 @@ nsHttpChannel::OpenCacheEntry(bool isHttps)
     } else {
         if (mInterceptCache == INTERCEPTED) {
             cacheEntryOpenFlags |= nsICacheStorage::OPEN_INTERCEPTED;
+            // Clear OPEN_TRUNCATE for the fake cache entry, since otherwise
+            // cache storage will close the current entry which breaks the
+            // response synthesis.
+            cacheEntryOpenFlags &= ~nsICacheStorage::OPEN_TRUNCATE;
             DebugOnly<bool> exists;
             MOZ_ASSERT(NS_SUCCEEDED(cacheStorage->Exists(openURI, extension, &exists)) && exists,
                        "The entry must exist in the cache after we create it here");
@@ -4694,11 +4698,13 @@ nsHttpChannel::ContinueProcessRedirectionAfterFallback(nsresult rv)
         redirectingBackToSameURI)
             mCacheEntry->AsyncDoom(nullptr);
 
+    bool hasRef = false;
+    rv = mRedirectURI->GetHasRef(&hasRef);
+
     // move the reference of the old location to the new one if the new
     // one has none.
-    nsAutoCString ref;
-    rv = mRedirectURI->GetRef(ref);
-    if (NS_SUCCEEDED(rv) && ref.IsEmpty()) {
+    if (NS_SUCCEEDED(rv) && !hasRef) {
+        nsAutoCString ref;
         mURI->GetRef(ref);
         if (!ref.IsEmpty()) {
             // NOTE: SetRef will fail if mRedirectURI is immutable

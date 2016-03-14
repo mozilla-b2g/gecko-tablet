@@ -24,7 +24,10 @@ public:
 
   void Unlink() override { mEffect = nullptr; }
 
-  void SetDuration(const UnrestrictedDoubleOrString& aDuration);
+  void SetEndDelay(double aEndDelay);
+  void SetIterationStart(double aIterationStart, ErrorResult& aRv);
+  void SetDuration(const UnrestrictedDoubleOrString& aDuration,
+                   ErrorResult& aRv);
 
 private:
   KeyframeEffect* MOZ_NON_OWNING_REF mEffect;

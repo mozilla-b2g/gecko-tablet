@@ -15,6 +15,7 @@
 #include "mozilla/gfx/MatrixFwd.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "LayerState.h"
+#include "Layers.h"
 #include "LayerUserData.h"
 
 class nsDisplayListBuilder;
@@ -56,11 +57,13 @@ struct ContainerLayerParameters {
     , mLayerContentsVisibleRect(nullptr)
     , mBackgroundColor(NS_RGBA(0,0,0,0))
     , mScrollClip(nullptr)
+    , mScrollClipForPerspectiveChild(nullptr)
     , mInTransformedSubtree(false)
     , mInActiveTransformedSubtree(false)
     , mDisableSubpixelAntialiasingInDescendants(false)
     , mInLowPrecisionDisplayPort(false)
     , mForEventsOnly(false)
+    , mLayerCreationHint(layers::LayerManager::NONE)
   {}
   ContainerLayerParameters(float aXScale, float aYScale)
     : mXScale(aXScale)
@@ -68,11 +71,13 @@ struct ContainerLayerParameters {
     , mLayerContentsVisibleRect(nullptr)
     , mBackgroundColor(NS_RGBA(0,0,0,0))
     , mScrollClip(nullptr)
+    , mScrollClipForPerspectiveChild(nullptr)
     , mInTransformedSubtree(false)
     , mInActiveTransformedSubtree(false)
     , mDisableSubpixelAntialiasingInDescendants(false)
     , mInLowPrecisionDisplayPort(false)
     , mForEventsOnly(false)
+    , mLayerCreationHint(layers::LayerManager::NONE)
   {}
   ContainerLayerParameters(float aXScale, float aYScale,
                            const nsIntPoint& aOffset,
@@ -83,11 +88,13 @@ struct ContainerLayerParameters {
     , mOffset(aOffset)
     , mBackgroundColor(aParent.mBackgroundColor)
     , mScrollClip(aParent.mScrollClip)
+    , mScrollClipForPerspectiveChild(aParent.mScrollClipForPerspectiveChild)
     , mInTransformedSubtree(aParent.mInTransformedSubtree)
     , mInActiveTransformedSubtree(aParent.mInActiveTransformedSubtree)
     , mDisableSubpixelAntialiasingInDescendants(aParent.mDisableSubpixelAntialiasingInDescendants)
     , mInLowPrecisionDisplayPort(aParent.mInLowPrecisionDisplayPort)
     , mForEventsOnly(aParent.mForEventsOnly)
+    , mLayerCreationHint(aParent.mLayerCreationHint)
   {}
 
   float mXScale, mYScale;
@@ -113,11 +120,17 @@ struct ContainerLayerParameters {
 
   nscolor mBackgroundColor;
   const DisplayItemScrollClip* mScrollClip;
+
+  // usually nullptr, except when building children of an nsDisplayPerspective
+  const DisplayItemScrollClip* mScrollClipForPerspectiveChild;
+
   bool mInTransformedSubtree;
   bool mInActiveTransformedSubtree;
   bool mDisableSubpixelAntialiasingInDescendants;
   bool mInLowPrecisionDisplayPort;
   bool mForEventsOnly;
+  layers::LayerManager::PaintedLayerCreationHint mLayerCreationHint;
+
   /**
    * When this is false, PaintedLayer coordinates are drawn to with an integer
    * translation and the scale in mXScale/mYScale.

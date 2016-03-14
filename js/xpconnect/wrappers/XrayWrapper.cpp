@@ -516,8 +516,7 @@ JSXrayTraits::resolveOwnProperty(JSContext* cx, const Wrapper& jsWrapper,
         if (key == JSProto_Object || key == JSProto_Array) {
             return getOwnPropertyFromWrapperIfSafe(cx, wrapper, id, desc);
         } else if (IsTypedArrayKey(key)) {
-            int32_t index = GetArrayIndexFromId(cx, id);
-            if (IsArrayIndex(index)) {
+            if (IsArrayIndex(GetArrayIndexFromId(cx, id))) {
                 // WebExtensions can't use cloneInto(), so we just let them do
                 // the slow thing to maximize compatibility.
                 if (CompartmentPrivate::Get(CurrentGlobalOrNull(cx))->isWebExtensionContentScript) {
@@ -910,6 +909,48 @@ JSXrayTraits::enumerateNames(JSContext* cx, HandleObject wrapper, unsigned flags
     return AppendNamesFromFunctionAndPropertySpecs(
         cx, clasp->spec.prototypeFunctions(),
         clasp->spec.prototypeProperties(), flags, props);
+}
+
+bool
+JSXrayTraits::construct(JSContext* cx, HandleObject wrapper,
+                        const JS::CallArgs& args, const js::Wrapper& baseInstance)
+{
+    JSXrayTraits& self = JSXrayTraits::singleton;
+    JS::RootedObject holder(cx, self.ensureHolder(cx, wrapper));
+    if (self.getProtoKey(holder) == JSProto_Function) {
+        JSProtoKey standardConstructor = constructorFor(holder);
+        if (standardConstructor == JSProto_Null)
+            return baseInstance.construct(cx, wrapper, args);
+
+        const js::Class* clasp = js::ProtoKeyToClass(standardConstructor);
+        MOZ_ASSERT(clasp);
+        if (!(clasp->flags & JSCLASS_HAS_XRAYED_CONSTRUCTOR))
+            return baseInstance.construct(cx, wrapper, args);
+
+        // If the JSCLASS_HAS_XRAYED_CONSTRUCTOR flag is set on the Class,
+        // we don't use the constructor at hand. Instead, we retrieve the
+        // equivalent standard constructor in the xray compartment and run
+        // it in that compartment. The newTarget isn't unwrapped, and the
+        // constructor has to be able to detect and handle this situation.
+        // See the comments in js/public/Class.h and PromiseConstructor for
+        // details and an example.
+        RootedObject ctor(cx);
+        if (!JS_GetClassObject(cx, standardConstructor, &ctor))
+            return false;
+
+        RootedValue ctorVal(cx, ObjectValue(*ctor));
+        HandleValueArray vals(args);
+        RootedObject result(cx);
+        if (!JS::Construct(cx, ctorVal, wrapper, vals, &result))
+            return false;
+        AssertSameCompartment(cx, result);
+        args.rval().setObject(*result);
+        return true;
+    }
+
+    JS::RootedValue v(cx, JS::ObjectValue(*wrapper));
+    js::ReportIsNotFunction(cx, v);
+    return false;
 }
 
 JSObject*
@@ -1582,7 +1623,7 @@ DOMXrayTraits::resolveOwnProperty(JSContext* cx, const Wrapper& jsWrapper, Handl
         return ok;
 
     // Check for indexed access on a window.
-    int32_t index = GetArrayIndexFromId(cx, id);
+    uint32_t index = GetArrayIndexFromId(cx, id);
     if (IsArrayIndex(index)) {
         nsGlobalWindow* win = AsWindow(cx, wrapper);
         // Note: As() unwraps outer windows to get to the inner window.
@@ -1633,8 +1674,7 @@ DOMXrayTraits::defineProperty(JSContext* cx, HandleObject wrapper, HandleId id,
     // Check for an indexed property on a Window.  If that's happening, do
     // nothing but claim we defined it so it won't get added as an expando.
     if (IsWindow(cx, wrapper)) {
-        int32_t index = GetArrayIndexFromId(cx, id);
-        if (IsArrayIndex(index)) {
+        if (IsArrayIndex(GetArrayIndexFromId(cx, id))) {
             *defined = true;
             return result.succeed();
         }

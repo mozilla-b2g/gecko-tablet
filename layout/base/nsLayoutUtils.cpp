@@ -460,7 +460,8 @@ GetSuitableScale(float aMaxScale, float aMinScale,
 
 static void
 GetMinAndMaxScaleForAnimationProperty(const nsIFrame* aFrame,
-                                      AnimationPtrArray& aAnimations,
+                                      nsTArray<RefPtr<dom::Animation>>&
+                                        aAnimations,
                                       gfxSize& aMaxScale,
                                       gfxSize& aMinScale)
 {
@@ -2673,12 +2674,6 @@ nsLayoutUtils::ContainsPoint(const nsRect& aRect, const nsPoint& aPoint,
   nsRect rect = aRect;
   rect.Inflate(aInflateSize);
   return rect.Contains(aPoint);
-}
-
-bool
-nsLayoutUtils::IsRectVisibleInScrollFrames(nsIFrame* aFrame, const nsRect& aRect)
-{
-  return !ClampRectToScrollFrames(aFrame, aRect).IsEmpty();
 }
 
 nsRect

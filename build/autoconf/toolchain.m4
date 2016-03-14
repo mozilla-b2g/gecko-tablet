@@ -107,9 +107,9 @@ AC_SUBST(CLANG_CXX)
 AC_SUBST(CLANG_CL)
 
 if test -n "$GNU_CC" -a -z "$CLANG_CC" ; then
-    if test "$GCC_MAJOR_VERSION" -eq 4 -a "$GCC_MINOR_VERSION" -lt 7 ||
+    if test "$GCC_MAJOR_VERSION" -eq 4 -a "$GCC_MINOR_VERSION" -lt 8 ||
        test "$GCC_MAJOR_VERSION" -lt 4; then
-        AC_MSG_ERROR([Only GCC 4.7 or newer supported])
+        AC_MSG_ERROR([Only GCC 4.8 or newer supported])
     fi
 fi
 ])
@@ -225,6 +225,18 @@ if test "$GNU_CXX"; then
         AC_MSG_ERROR([Your toolchain does not support C++0x/C++11 mode properly. Please upgrade your toolchain])
     fi
 
+    if test -n "$CLANG_CC"; then
+        dnl We'd normally just check for the version from CC_VERSION (fed
+        dnl from __clang_major__ and __clang_minor__), but the clang that
+        dnl comes with Xcode has a completely different version scheme
+        dnl despite exposing the version with the same defines.
+        dnl So instead of a version check, check for one of the C++11
+        dnl features that was added in clang 3.3.
+        AC_TRY_COMPILE([], [#if !__has_feature(cxx_inheriting_constructors)
+                            #error inheriting constructors are not supported
+                            #endif],,AC_MSG_ERROR([Only clang/llvm 3.3 or newer supported]))
+    fi
+
     AC_CACHE_CHECK([whether 64-bits std::atomic requires -latomic],
         ac_cv_needs_atomic,
         AC_TRY_LINK(
@@ -286,9 +298,9 @@ EOF
             HOST_GCC_MINOR_VERSION=`echo ${HOST_GCC_VERSION} | $AWK -F\. '{ print <<$>>2 }'`
             changequote([,])
 
-            if test "$HOST_GCC_MAJOR_VERSION" -eq 4 -a "$HOST_GCC_MINOR_VERSION" -lt 7 ||
+            if test "$HOST_GCC_MAJOR_VERSION" -eq 4 -a "$HOST_GCC_MINOR_VERSION" -lt 8 ||
                test "$HOST_GCC_MAJOR_VERSION" -lt 4; then
-                AC_MSG_ERROR([Only GCC 4.7 or newer supported for host compiler])
+                AC_MSG_ERROR([Only GCC 4.8 or newer supported for host compiler])
             fi
         fi
 
@@ -321,6 +333,12 @@ EOF
         elif test "$ac_cv_host_cxx0x_headers_bug" = "yes"; then
             AC_MSG_ERROR([Your host toolchain does not support C++0x/C++11 mode properly. Please upgrade your toolchain])
         fi
+        if test "$host_compiler" = CLANG; then
+            AC_TRY_COMPILE([], [#if !__has_feature(cxx_inheriting_constructors)
+                                #error inheriting constructors are not supported
+                                #endif],,AC_MSG_ERROR([Only clang/llvm 3.3 or newer supported]))
+        fi
+
         CXXFLAGS="$_SAVE_CXXFLAGS"
         CPPFLAGS="$_SAVE_CPPFLAGS"
         CXX="$_SAVE_CXX"

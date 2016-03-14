@@ -1060,6 +1060,7 @@ public:
     mContainerLayer(aContainerLayer),
     mContainerBounds(aContainerBounds),
     mContainerScrollClip(aContainerScrollClip),
+    mScrollClipForPerspectiveChild(aParameters.mScrollClipForPerspectiveChild),
     mParameters(aParameters),
     mPaintedLayerDataTree(*this, aBackgroundColor),
     mFlattenToSingleLayer(aFlattenToSingleLayer)
@@ -1365,6 +1366,7 @@ protected:
   ContainerLayer*                  mContainerLayer;
   nsRect                           mContainerBounds;
   const DisplayItemScrollClip*     mContainerScrollClip;
+  const DisplayItemScrollClip*     mScrollClipForPerspectiveChild;
 #ifdef DEBUG
   nsRect                           mAccumulatedChildBounds;
 #endif
@@ -2098,6 +2100,11 @@ ContainerState::GetLayerCreationHint(AnimatedGeometryRoot* aAnimatedGeometryRoot
 {
   // Check whether the layer will be scrollable. This is used as a hint to
   // influence whether tiled layers are used or not.
+
+  // Check creation hint inherited from our parent.
+  if (mParameters.mLayerCreationHint == LayerManager::SCROLLABLE) {
+    return LayerManager::SCROLLABLE;
+  }
 
   // Check whether there's any active scroll frame on the animated geometry
   // root chain.
@@ -3646,43 +3653,49 @@ ContainerState::ComputeOpaqueRect(nsDisplayItem* aItem,
 {
   bool snapOpaque;
   nsRegion opaque = aItem->GetOpaqueRegion(mBuilder, &snapOpaque);
-  nsIntRegion opaquePixels;
-  if (!opaque.IsEmpty()) {
-    nsRegion opaqueClipped;
-    for (auto iter = opaque.RectIter(); !iter.Done(); iter.Next()) {
-      opaqueClipped.Or(opaqueClipped,
-                       aClip.ApproximateIntersectInward(iter.Get()));
-    }
-    if (aAnimatedGeometryRoot == mContainerAnimatedGeometryRoot &&
-        opaqueClipped.Contains(mContainerBounds)) {
-      *aHideAllLayersBelow = true;
-      aList->SetIsOpaque();
-    }
-    // Add opaque areas to the "exclude glass" region. Only do this when our
-    // container layer is going to be the rootmost layer, otherwise transforms
-    // etc will mess us up (and opaque contributions from other containers are
-    // not needed).
-    if (!nsLayoutUtils::GetCrossDocParentFrame(mContainerFrame)) {
-      mBuilder->AddWindowOpaqueRegion(opaqueClipped);
-    }
-    opaquePixels = ScaleRegionToInsidePixels(opaqueClipped, snapOpaque);
+  if (opaque.IsEmpty()) {
+    return nsIntRegion();
+  }
 
-    nsIScrollableFrame* sf = nsLayoutUtils::GetScrollableFrameFor(*aAnimatedGeometryRoot);
-    if (sf) {
-      nsRect displayport;
-      bool usingDisplayport =
-        nsLayoutUtils::GetDisplayPort((*aAnimatedGeometryRoot)->GetContent(), &displayport,
-          RelativeTo::ScrollFrame);
-      if (!usingDisplayport) {
-        // No async scrolling, so all that matters is that the layer contents
-        // cover the scrollport.
-        displayport = sf->GetScrollPortRect();
-      }
-      nsIFrame* scrollFrame = do_QueryFrame(sf);
-      displayport += scrollFrame->GetOffsetToCrossDoc(mContainerReferenceFrame);
-      if (opaque.Contains(displayport)) {
-        *aOpaqueForAnimatedGeometryRootParent = true;
-      }
+  nsIntRegion opaquePixels;
+  nsRegion opaqueClipped;
+  for (auto iter = opaque.RectIter(); !iter.Done(); iter.Next()) {
+    opaqueClipped.Or(opaqueClipped,
+                     aClip.ApproximateIntersectInward(iter.Get()));
+  }
+  if (aAnimatedGeometryRoot == mContainerAnimatedGeometryRoot &&
+      opaqueClipped.Contains(mContainerBounds)) {
+    *aHideAllLayersBelow = true;
+    aList->SetIsOpaque();
+  }
+  // Add opaque areas to the "exclude glass" region. Only do this when our
+  // container layer is going to be the rootmost layer, otherwise transforms
+  // etc will mess us up (and opaque contributions from other containers are
+  // not needed).
+  if (!nsLayoutUtils::GetCrossDocParentFrame(mContainerFrame)) {
+    mBuilder->AddWindowOpaqueRegion(opaqueClipped);
+  }
+  opaquePixels = ScaleRegionToInsidePixels(opaqueClipped, snapOpaque);
+
+  if (IsInInactiveLayer()) {
+    return opaquePixels;
+  }
+
+  nsIScrollableFrame* sf = nsLayoutUtils::GetScrollableFrameFor(*aAnimatedGeometryRoot);
+  if (sf) {
+    nsRect displayport;
+    bool usingDisplayport =
+      nsLayoutUtils::GetDisplayPort((*aAnimatedGeometryRoot)->GetContent(), &displayport,
+        RelativeTo::ScrollFrame);
+    if (!usingDisplayport) {
+      // No async scrolling, so all that matters is that the layer contents
+      // cover the scrollport.
+      displayport = sf->GetScrollPortRect();
+    }
+    nsIFrame* scrollFrame = do_QueryFrame(sf);
+    displayport += scrollFrame->GetOffsetToCrossDoc(mContainerReferenceFrame);
+    if (opaque.Contains(displayport)) {
+      *aOpaqueForAnimatedGeometryRootParent = true;
     }
   }
   return opaquePixels;
@@ -3815,19 +3828,6 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
     }
 
     const DisplayItemScrollClip* itemScrollClip = item->ScrollClip();
-    if (itemType == nsDisplayItem::TYPE_OPACITY && layerState == LAYER_INACTIVE) {
-      // This is an unfortunate hack. For opacity items, we usually want to
-      // apply clips and scroll transforms to their descendants. However, if
-      // an opacity is inactive and gets painted into a PaintedLayer, we can't
-      // apply async scrolling offsets to the inactive layer manager contents;
-      // instead, we need to move the opacity item itself, by moving the
-      // PaintedLayer that it gets painted into.
-      itemScrollClip = InnermostScrollClipApplicableToAGR(
-        static_cast<nsDisplayOpacity*>(item)->ScrollClipForSameAGRChildren(),
-        animatedGeometryRootForClip);
-      item->SetScrollClip(itemScrollClip);
-      item->UpdateBounds(mBuilder);
-    }
     // Now we need to separate the item's scroll clip chain into those scroll
     // clips that can  be applied to the whole layer (i.e. to all items
     // sharing the item's animated geometry root), and those that need to be
@@ -3892,11 +3892,17 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
       }
     }
     bounds = fixedToViewportClip.ApplyNonRoundedIntersection(bounds);
-    for (const DisplayItemScrollClip* scrollClip = itemScrollClip;
-         scrollClip && scrollClip != mContainerScrollClip;
-         scrollClip = scrollClip->mParent) {
-      if (scrollClip->mClip) {
-        bounds = scrollClip->mClip->ApplyNonRoundedIntersection(bounds);
+    if (!bounds.IsEmpty()) {
+      for (const DisplayItemScrollClip* scrollClip = itemScrollClip;
+           scrollClip && scrollClip != mContainerScrollClip;
+           scrollClip = scrollClip->mParent) {
+        if (scrollClip->mClip) {
+          if (scrollClip->mIsAsyncScrollable) {
+            bounds = scrollClip->mClip->GetClipRect();
+          } else {
+            bounds = scrollClip->mClip->ApplyNonRoundedIntersection(bounds);
+          }
+        }
       }
     }
     ((nsRect&)mAccumulatedChildBounds).UnionRect(mAccumulatedChildBounds, bounds);
@@ -3948,6 +3954,22 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
         continue;
       }
 
+      if (mScrollClipForPerspectiveChild) {
+        // We are the single transform child item of an nsDisplayPerspective.
+        // Our parent forwarded a scroll clip to us. Pick it up.
+        // We do this after any clipping has been applied, because this
+        // forwarded scroll clip is only used for scrolling (in the form of
+        // APZ frame metrics), not for clipping - the clip still belongs on
+        // the perspective item.
+        MOZ_ASSERT(itemType == nsDisplayItem::TYPE_TRANSFORM);
+        MOZ_ASSERT(!itemScrollClip);
+        MOZ_ASSERT(!agrScrollClip);
+        MOZ_ASSERT(DisplayItemScrollClip::IsAncestor(mContainerScrollClip,
+                                                      mScrollClipForPerspectiveChild));
+        itemScrollClip = mScrollClipForPerspectiveChild;
+        agrScrollClip = mScrollClipForPerspectiveChild;
+      }
+
       // 3D-transformed layers don't necessarily draw in the order in which
       // they're added to their parent container layer.
       bool mayDrawOutOfOrder = itemType == nsDisplayItem::TYPE_TRANSFORM &&
@@ -3964,7 +3986,8 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
       // So we'll do a little hand holding and pass the clip instead of the
       // visible rect for the two important cases.
       nscolor uniformColor = NS_RGBA(0,0,0,0);
-      nscolor* uniformColorPtr = !mayDrawOutOfOrder ? &uniformColor : nullptr;
+      nscolor* uniformColorPtr = (mayDrawOutOfOrder || IsInInactiveLayer()) ? nullptr :
+                                                                              &uniformColor;
       nsIntRect clipRectUntyped;
       const DisplayItemClip& layerClip = shouldFixToViewport ? fixedToViewportClip : itemClip;
       ParentLayerIntRect layerClipRect;
@@ -3999,16 +4022,33 @@ ContainerState::ProcessDisplayItems(nsDisplayList* aList)
                                              &itemVisibleRect, uniformColorPtr);
       }
 
-      mParameters.mBackgroundColor = uniformColor;
-      mParameters.mScrollClip = DisplayItemScrollClip::PickInnermost(agrScrollClip, mContainerScrollClip);
+      ContainerLayerParameters params = mParameters;
+      params.mBackgroundColor = uniformColor;
+      params.mLayerCreationHint = GetLayerCreationHint(animatedGeometryRoot);
+      params.mScrollClip = agrScrollClip;
+      params.mScrollClipForPerspectiveChild = nullptr;
+
+      if (itemType == nsDisplayItem::TYPE_PERSPECTIVE) {
+        // Perspective items have a single child item, an nsDisplayTransform.
+        // If the perspective item is scrolled, but the perspective-inducing
+        // frame is outside the scroll frame (indicated by this items AGR
+        // being outside that scroll frame), we have to take special care to
+        // make APZ scrolling work properly. APZ needs us to put the scroll
+        // frame's FrameMetrics on our child transform ContainerLayer instead.
+        // Our agrScrollClip is the scroll clip that's applicable to our
+        // perspective frame, so it won't be the scroll clip for the scrolled
+        // frame in the case that we care about, and we'll forward that scroll
+        // clip to our child.
+        params.mScrollClipForPerspectiveChild = itemScrollClip;
+      }
 
       // Just use its layer.
       // Set layerContentsVisibleRect.width/height to -1 to indicate we
       // currently don't know. If BuildContainerLayerFor gets called by
       // item->BuildLayer, this will be set to a proper rect.
       nsIntRect layerContentsVisibleRect(0, 0, -1, -1);
-      mParameters.mLayerContentsVisibleRect = &layerContentsVisibleRect;
-      RefPtr<Layer> ownLayer = item->BuildLayer(mBuilder, mManager, mParameters);
+      params.mLayerContentsVisibleRect = &layerContentsVisibleRect;
+      RefPtr<Layer> ownLayer = item->BuildLayer(mBuilder, mManager, params);
       if (!ownLayer) {
         continue;
       }

@@ -124,6 +124,10 @@ ScrollFrame(nsIContent* aContent,
 {
   // Scroll the window to the desired spot
   nsIScrollableFrame* sf = nsLayoutUtils::FindScrollableFrameFor(aMetrics.GetScrollId());
+  if (sf) {
+    sf->SetScrollableByAPZ(!aMetrics.IsScrollInfoLayer());
+  }
+
   bool scrollUpdated = false;
   CSSPoint apzScrollOffset = aMetrics.GetScrollOffset();
   CSSPoint actualScrollOffset = ScrollFrameTo(sf, apzScrollOffset, scrollUpdated);
@@ -532,13 +536,19 @@ APZCCallbackHelper::ApplyCallbackTransform(const LayoutDeviceIntPoint& aPoint,
 }
 
 void
-APZCCallbackHelper::ApplyCallbackTransform(WidgetTouchEvent& aEvent,
+APZCCallbackHelper::ApplyCallbackTransform(WidgetEvent& aEvent,
                                            const ScrollableLayerGuid& aGuid,
                                            const CSSToLayoutDeviceScale& aScale)
 {
-  for (size_t i = 0; i < aEvent.touches.Length(); i++) {
-    aEvent.touches[i]->mRefPoint = ApplyCallbackTransform(
-        aEvent.touches[i]->mRefPoint, aGuid, aScale);
+  if (aEvent.AsTouchEvent()) {
+    WidgetTouchEvent& event = *(aEvent.AsTouchEvent());
+    for (size_t i = 0; i < event.touches.Length(); i++) {
+      event.touches[i]->mRefPoint = ApplyCallbackTransform(
+          event.touches[i]->mRefPoint, aGuid, aScale);
+    }
+  } else {
+    aEvent.refPoint = ApplyCallbackTransform(
+        aEvent.refPoint, aGuid, aScale);
   }
 }
 
@@ -913,12 +923,16 @@ APZCCallbackHelper::NotifyFlushComplete(nsIPresShell* aShell)
 static int32_t sActiveSuppressDisplayport = 0;
 
 void
-APZCCallbackHelper::SuppressDisplayport(const bool& aEnabled)
+APZCCallbackHelper::SuppressDisplayport(const bool& aEnabled,
+                                        const nsCOMPtr<nsIPresShell>& aShell)
 {
   if (aEnabled) {
     sActiveSuppressDisplayport++;
   } else {
     sActiveSuppressDisplayport--;
+    if (sActiveSuppressDisplayport == 0 && aShell && aShell->GetRootFrame()) {
+      aShell->GetRootFrame()->SchedulePaint();
+    }
   }
 
   MOZ_ASSERT(sActiveSuppressDisplayport >= 0);

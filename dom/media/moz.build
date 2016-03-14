@@ -65,8 +65,6 @@ TEST_DIRS += [
     'gtest',
 ]
 
-MOCHITEST_CHROME_MANIFESTS += ['test/chrome.ini']
-
 MOCHITEST_MANIFESTS += [
     'test/mochitest.ini',
     'tests/mochitest/identity/mochitest.ini',
@@ -97,6 +95,7 @@ EXPORTS += [
     'AudioSampleFormat.h',
     'AudioSegment.h',
     'AudioStream.h',
+    'Benchmark.h',
     'BufferMediaResource.h',
     'CubebUtils.h',
     'DecoderTraits.h',
@@ -132,6 +131,7 @@ EXPORTS += [
     'MP3Demuxer.h',
     'MP3FrameParser.h',
     'nsIDocumentActivity.h',
+    'QueueObject.h',
     'RtspMediaResource.h',
     'SeekTarget.h',
     'SelfRef.h',
@@ -201,6 +201,7 @@ UNIFIED_SOURCES += [
     'AudioStreamTrack.cpp',
     'AudioTrack.cpp',
     'AudioTrackList.cpp',
+    'Benchmark.cpp',
     'CanvasCaptureMediaStream.cpp',
     'CubebUtils.cpp',
     'DOMMediaStream.cpp',
@@ -231,6 +232,7 @@ UNIFIED_SOURCES += [
     'MP3Decoder.cpp',
     'MP3Demuxer.cpp',
     'MP3FrameParser.cpp',
+    'QueueObject.cpp',
     'RtspMediaResource.cpp',
     'StreamBuffer.cpp',
     'TextTrack.cpp',

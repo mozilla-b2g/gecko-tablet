@@ -141,7 +141,8 @@ const DownloadMap = {
         let self = this;
         return list.addView({
           onDownloadAdded(download) {
-            self.newFromDownload(download, null);
+            const item = self.newFromDownload(download, null);
+            self.emit("create", item);
           },
 
           onDownloadRemoved(download) {
@@ -445,6 +446,17 @@ extensions.registerSchemaAPI("downloads", "downloads", (extension, context) => {
         });
       },
 
+      showDefaultFolder() {
+        Downloads.getPreferredDownloadsDirectory().then(dir => {
+          let dirobj = new FileUtils.File(dir);
+          if (dirobj.isDirectory()) {
+            dirobj.launch();
+          } else {
+            throw new Error(`Download directory ${dirobj.path} is not actually a directory`);
+          }
+        }).catch(Cu.reportError);
+      },
+
       // When we do open(), check for additional downloads.open permission.
       // i.e.:
       // open(downloadId) {
@@ -478,7 +490,20 @@ extensions.registerSchemaAPI("downloads", "downloads", (extension, context) => {
         };
       }).api(),
 
-      onCreated: ignoreEvent(context, "downloads.onCreated"),
+      onCreated: new SingletonEventManager(context, "downloads.onCreated", fire => {
+        const handler = (what, item) => {
+          runSafeSync(context, fire, item.serialize());
+        };
+        let registerPromise = DownloadMap.getDownloadList().then(() => {
+          DownloadMap.on("create", handler);
+        });
+        return () => {
+          registerPromise.then(() => {
+            DownloadMap.off("create", handler);
+          });
+        };
+      }).api(),
+
       onErased: ignoreEvent(context, "downloads.onErased"),
       onDeterminingFilename: ignoreEvent(context, "downloads.onDeterminingFilename"),
     },

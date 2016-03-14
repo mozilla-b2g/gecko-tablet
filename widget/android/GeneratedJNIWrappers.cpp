@@ -1538,6 +1538,9 @@ auto NativePanZoomController::Destroy() const -> void
 constexpr char NativePanZoomController::DisposeNative_t::name[];
 constexpr char NativePanZoomController::DisposeNative_t::signature[];
 
+constexpr char NativePanZoomController::HandleHoverEvent_t::name[];
+constexpr char NativePanZoomController::HandleHoverEvent_t::signature[];
+
 constexpr char NativePanZoomController::HandleMotionEvent_t::name[];
 constexpr char NativePanZoomController::HandleMotionEvent_t::signature[];
 
@@ -1549,6 +1552,14 @@ constexpr char NativePanZoomController::AbortAnimation_t::signature[];
 
 constexpr char NativePanZoomController::SetIsLongpressEnabled_t::name[];
 constexpr char NativePanZoomController::SetIsLongpressEnabled_t::signature[];
+
+constexpr char NativePanZoomController::OnSelectionDragState_t::name[];
+constexpr char NativePanZoomController::OnSelectionDragState_t::signature[];
+
+auto NativePanZoomController::OnSelectionDragState(bool a0) const -> void
+{
+    return mozilla::jni::Method<OnSelectionDragState_t>::Call(NativePanZoomController::mCtx, nullptr, a0);
+}
 
 constexpr char NativePanZoomController::RequestContentRepaintWrapper_t::name[];
 constexpr char NativePanZoomController::RequestContentRepaintWrapper_t::signature[];

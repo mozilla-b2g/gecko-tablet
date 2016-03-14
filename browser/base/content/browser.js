@@ -408,10 +408,8 @@ const gSessionHistoryObserver = {
     // Hide session restore button on about:home
     window.messageManager.broadcastAsyncMessage("Browser:HideSessionRestoreButton");
 
-    if (gURLBar) {
-      // Clear undo history of the URL bar
-      gURLBar.editor.transactionManager.clear()
-    }
+    // Clear undo history of the URL bar
+    gURLBar.editor.transactionManager.clear()
   }
 };
 
@@ -462,13 +460,12 @@ var gPopupBlockerObserver = {
     if (aEvent.originalTarget != gBrowser.selectedBrowser)
       return;
 
-    if (!this._reportButton && gURLBar)
+    if (!this._reportButton)
       this._reportButton = document.getElementById("page-report-button");
 
     if (!gBrowser.selectedBrowser.blockedPopups) {
       // Hide the icon in the location bar (if the location bar exists)
-      if (gURLBar)
-        this._reportButton.hidden = true;
+      this._reportButton.hidden = true;
 
       // Hide the notification box (if it's visible).
       let notificationBox = gBrowser.getNotificationBox();
@@ -479,8 +476,7 @@ var gPopupBlockerObserver = {
       return;
     }
 
-    if (gURLBar)
-      this._reportButton.hidden = false;
+    this._reportButton.hidden = false;
 
     // Only show the notification again if we've not already shown it. Since
     // notifications are per-browser, we don't need to worry about re-adding
@@ -830,10 +826,16 @@ function _loadURIWithFlags(browser, uri, params) {
     browser.userTypedClear++;
   }
 
+  let wasRemote = browser.isRemoteBrowser;
+
   let process = browser.isRemoteBrowser ? Ci.nsIXULRuntime.PROCESS_TYPE_CONTENT
                                         : Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT;
   let mustChangeProcess = gMultiProcessBrowser &&
                           !E10SUtils.canLoadURIInProcess(uri, process);
+  if ((!wasRemote && !mustChangeProcess) ||
+      (wasRemote && mustChangeProcess)) {
+    browser.inLoadURI = true;
+  }
   try {
     if (!mustChangeProcess) {
       browser.webNavigation.loadURIWithOptions(uri, flags,
@@ -867,6 +869,10 @@ function _loadURIWithFlags(browser, uri, params) {
       throw e;
     }
   } finally {
+    if ((!wasRemote && !mustChangeProcess) ||
+        (wasRemote && mustChangeProcess)) {
+      browser.inLoadURI = false;
+    }
     if (browser.userTypedClear) {
       browser.userTypedClear--;
     }
@@ -987,10 +993,8 @@ var gBrowserInit = {
 
     if (!window.toolbar.visible) {
       // adjust browser UI for popups
-      if (gURLBar) {
-        gURLBar.setAttribute("readonly", "true");
-        gURLBar.setAttribute("enablehistory", "false");
-      }
+      gURLBar.setAttribute("readonly", "true");
+      gURLBar.setAttribute("enablehistory", "false");
       goSetCommandEnabled("cmd_newNavigatorTab", false);
     }
 
@@ -4330,14 +4334,15 @@ var XULBrowserWindow = {
         this.reloadCommand.removeAttribute("disabled");
       }
 
-      if (gURLBar) {
-        URLBarSetURI(aLocationURI);
+      URLBarSetURI(aLocationURI);
 
-        BookmarkingUI.onLocationChange();
-        SocialUI.updateState();
-        UITour.onLocationChange(location);
-        gTabletModePageCounter.inc();
-      }
+      BookmarkingUI.onLocationChange();
+
+      SocialUI.updateState();
+
+      UITour.onLocationChange(location);
+
+      gTabletModePageCounter.inc();
 
       // Utility functions for disabling find
       var shouldDisableFind = function shouldDisableFind(aDocument) {
@@ -4629,18 +4634,27 @@ var CombinedStopReload = {
 };
 
 var TabsProgressListener = {
+  // Keep track of which browsers we've started load timers for, since
+  // we won't see STATE_START events for pre-rendered tabs.
+  _startedLoadTimer: new WeakSet(),
+
   onStateChange: function (aBrowser, aWebProgress, aRequest, aStateFlags, aStatus) {
     // Collect telemetry data about tab load times.
     if (aWebProgress.isTopLevel && (!aRequest.originalURI || aRequest.originalURI.spec.scheme != "about")) {
       if (aStateFlags & Ci.nsIWebProgressListener.STATE_IS_WINDOW) {
         if (aStateFlags & Ci.nsIWebProgressListener.STATE_START) {
+          this._startedLoadTimer.add(aBrowser);
           TelemetryStopwatch.start("FX_PAGE_LOAD_MS", aBrowser);
           Services.telemetry.getHistogramById("FX_TOTAL_TOP_VISITS").add(true);
-        } else if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
+        } else if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
+                   this._startedLoadTimer.has(aBrowser)) {
+          this._startedLoadTimer.delete(aBrowser);
           TelemetryStopwatch.finish("FX_PAGE_LOAD_MS", aBrowser);
         }
       } else if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
-                 aStatus == Cr.NS_BINDING_ABORTED) {
+                 aStatus == Cr.NS_BINDING_ABORTED &&
+                 this._startedLoadTimer.has(aBrowser)) {
+        this._startedLoadTimer.delete(aBrowser);
         TelemetryStopwatch.cancel("FX_PAGE_LOAD_MS", aBrowser);
       }
     }
@@ -6256,45 +6270,51 @@ var MailIntegration = {
 };
 
 function BrowserOpenAddonsMgr(aView) {
-  if (aView) {
-    let emWindow;
-    let browserWindow;
+  return new Promise(resolve => {
+    if (aView) {
+      let emWindow;
+      let browserWindow;
 
-    var receivePong = function receivePong(aSubject, aTopic, aData) {
-      let browserWin = aSubject.QueryInterface(Ci.nsIInterfaceRequestor)
-                               .getInterface(Ci.nsIWebNavigation)
-                               .QueryInterface(Ci.nsIDocShellTreeItem)
-                               .rootTreeItem
-                               .QueryInterface(Ci.nsIInterfaceRequestor)
-                               .getInterface(Ci.nsIDOMWindow);
-      if (!emWindow || browserWin == window /* favor the current window */) {
-        emWindow = aSubject;
-        browserWindow = browserWin;
+      var receivePong = function receivePong(aSubject, aTopic, aData) {
+        let browserWin = aSubject.QueryInterface(Ci.nsIInterfaceRequestor)
+                                 .getInterface(Ci.nsIWebNavigation)
+                                 .QueryInterface(Ci.nsIDocShellTreeItem)
+                                 .rootTreeItem
+                                 .QueryInterface(Ci.nsIInterfaceRequestor)
+                                 .getInterface(Ci.nsIDOMWindow);
+        if (!emWindow || browserWin == window /* favor the current window */) {
+          emWindow = aSubject;
+          browserWindow = browserWin;
+        }
+      }
+      Services.obs.addObserver(receivePong, "EM-pong", false);
+      Services.obs.notifyObservers(null, "EM-ping", "");
+      Services.obs.removeObserver(receivePong, "EM-pong");
+
+      if (emWindow) {
+        emWindow.loadView(aView);
+        browserWindow.gBrowser.selectedTab =
+          browserWindow.gBrowser._getTabForContentWindow(emWindow);
+        emWindow.focus();
+        resolve(emWindow);
+        return;
       }
     }
-    Services.obs.addObserver(receivePong, "EM-pong", false);
-    Services.obs.notifyObservers(null, "EM-ping", "");
-    Services.obs.removeObserver(receivePong, "EM-pong");
 
-    if (emWindow) {
-      emWindow.loadView(aView);
-      browserWindow.gBrowser.selectedTab =
-        browserWindow.gBrowser._getTabForContentWindow(emWindow);
-      emWindow.focus();
-      return;
+    switchToTabHavingURI("about:addons", true);
+
+    if (aView) {
+      // This must be a new load, else the ping/pong would have
+      // found the window above.
+      Services.obs.addObserver(function observer(aSubject, aTopic, aData) {
+        Services.obs.removeObserver(observer, aTopic);
+        aSubject.loadView(aView);
+        resolve(aSubject);
+      }, "EM-loaded", false);
+    } else {
+      resolve();
     }
-  }
-
-  var newLoad = !switchToTabHavingURI("about:addons", true);
-
-  if (aView) {
-    // This must be a new load, else the ping/pong would have
-    // found the window above.
-    Services.obs.addObserver(function observer(aSubject, aTopic, aData) {
-      Services.obs.removeObserver(observer, aTopic);
-      aSubject.loadView(aView);
-    }, "EM-loaded", false);
-  }
+  });
 }
 
 function AddKeywordForSearchField() {
@@ -7278,19 +7298,17 @@ var gPrivateBrowsingUI = {
       }
     }
 
-    if (gURLBar) {
-      let value = gURLBar.getAttribute("autocompletesearchparam") || "";
-      if (!PrivateBrowsingUtils.permanentPrivateBrowsing &&
-          !value.includes("disable-private-actions")) {
-        // Disable switch to tab autocompletion for private windows.
-        // We leave it enabled for permanent private browsing mode though.
-        value += " disable-private-actions";
-      }
-      if (!value.includes("private-window")) {
-        value += " private-window";
-      }
-      gURLBar.setAttribute("autocompletesearchparam", value);
+    let urlBarSearchParam = gURLBar.getAttribute("autocompletesearchparam") || "";
+    if (!PrivateBrowsingUtils.permanentPrivateBrowsing &&
+        !urlBarSearchParam.includes("disable-private-actions")) {
+      // Disable switch to tab autocompletion for private windows.
+      // We leave it enabled for permanent private browsing mode though.
+      urlBarSearchParam += " disable-private-actions";
     }
+    if (!urlBarSearchParam.includes("private-window")) {
+      urlBarSearchParam += " private-window";
+    }
+    gURLBar.setAttribute("autocompletesearchparam", urlBarSearchParam);
   }
 };
 

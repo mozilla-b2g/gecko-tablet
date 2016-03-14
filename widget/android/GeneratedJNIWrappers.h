@@ -3625,6 +3625,24 @@ public:
                 mozilla::jni::ExceptionMode::ABORT;
     };
 
+    struct HandleHoverEvent_t {
+        typedef NativePanZoomController Owner;
+        typedef bool ReturnType;
+        typedef bool SetterType;
+        typedef mozilla::jni::Args<
+                int32_t,
+                int64_t,
+                int32_t,
+                float,
+                float> Args;
+        static constexpr char name[] = "handleHoverEvent";
+        static constexpr char signature[] =
+                "(IJIFF)Z";
+        static const bool isStatic = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
     struct HandleMotionEvent_t {
         typedef NativePanZoomController Owner;
         typedef bool ReturnType;
@@ -3694,6 +3712,22 @@ public:
         static const mozilla::jni::ExceptionMode exceptionMode =
                 mozilla::jni::ExceptionMode::ABORT;
     };
+
+    struct OnSelectionDragState_t {
+        typedef NativePanZoomController Owner;
+        typedef void ReturnType;
+        typedef void SetterType;
+        typedef mozilla::jni::Args<
+                bool> Args;
+        static constexpr char name[] = "onSelectionDragState";
+        static constexpr char signature[] =
+                "(Z)V";
+        static const bool isStatic = false;
+        static const mozilla::jni::ExceptionMode exceptionMode =
+                mozilla::jni::ExceptionMode::ABORT;
+    };
+
+    auto OnSelectionDragState(bool) const -> void;
 
     struct RequestContentRepaintWrapper_t {
         typedef NativePanZoomController Owner;

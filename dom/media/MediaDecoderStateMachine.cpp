@@ -268,6 +268,8 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
                    "MediaDecoderStateMachine::mDecoderPosition (Mirror)"),
   mMediaSeekable(mTaskQueue, true,
                  "MediaDecoderStateMachine::mMediaSeekable (Mirror)"),
+  mMediaSeekableOnlyInBufferedRanges(mTaskQueue, false,
+                 "MediaDecoderStateMachine::mMediaSeekableOnlyInBufferedRanges (Mirror)"),
   mDuration(mTaskQueue, NullableTimeUnit(),
             "MediaDecoderStateMachine::mDuration (Canonical"),
   mIsShutdown(mTaskQueue, false,
@@ -350,6 +352,7 @@ MediaDecoderStateMachine::InitializationTask(MediaDecoder* aDecoder)
   mPlaybackRateReliable.Connect(aDecoder->CanonicalPlaybackRateReliable());
   mDecoderPosition.Connect(aDecoder->CanonicalDecoderPosition());
   mMediaSeekable.Connect(aDecoder->CanonicalMediaSeekable());
+  mMediaSeekableOnlyInBufferedRanges.Connect(aDecoder->CanonicalMediaSeekableOnlyInBufferedRanges());
 
   // Initialize watchers.
   mWatchManager.Watch(mBuffered, &MediaDecoderStateMachine::BufferedRangeUpdated);
@@ -862,9 +865,8 @@ MediaDecoderStateMachine::MaybeFinishDecodeFirstFrame()
   }
 
   // We can now complete the pending seek.
-  mPendingSeek.Steal(mQueuedSeek);
   SetState(DECODER_STATE_SEEKING);
-  ScheduleStateMachine();
+  InitiateSeek(Move(mQueuedSeek));
   return true;
 }
 
@@ -954,10 +956,8 @@ MediaDecoderStateMachine::OnVideoDecoded(MediaData* aVideoSample,
           // in this case, we'll just decode forward. Bug 1026330.
           mCurrentSeek.mTarget.SetType(SeekTarget::Accurate);
         }
-        if (mCurrentSeek.mTarget.IsFast() ||
-            mPendingSeek.Exists()) {
-          // Non-precise seek; or a pending seek exists ; we can stop the seek
-          // at the first sample.
+        if (mCurrentSeek.mTarget.IsFast()) {
+          // Non-precise seek. We can stop the seek at the first sample.
           Push(video, MediaData::VIDEO_DATA);
         } else {
           // We're doing an accurate seek. We still need to discard
@@ -1270,10 +1270,8 @@ MediaDecoderStateMachine::SetDormant(bool aDormant)
     if (mState == DECODER_STATE_SEEKING) {
       if (mQueuedSeek.Exists()) {
         // Keep latest seek target
-      } else if (mPendingSeek.Exists()) {
-        mQueuedSeek.Steal(mPendingSeek);
       } else if (mCurrentSeek.Exists()) {
-        mQueuedSeek.Steal(mCurrentSeek);
+        mQueuedSeek = Move(mCurrentSeek);
       } else {
         mQueuedSeek.mTarget = SeekTarget(mCurrentPosition,
                                          SeekTarget::Accurate,
@@ -1290,7 +1288,6 @@ MediaDecoderStateMachine::SetDormant(bool aDormant)
       // back to MediaDecoder when we come out of dormant?
       RefPtr<MediaDecoder::SeekPromise> unused = mQueuedSeek.mPromise.Ensure(__func__);
     }
-    mPendingSeek.RejectIfExists(__func__);
     mCurrentSeek.RejectIfExists(__func__);
     SetState(DECODER_STATE_DORMANT);
     if (IsPlaying()) {
@@ -1325,8 +1322,9 @@ MediaDecoderStateMachine::Shutdown()
   ScheduleStateMachine();
   SetState(DECODER_STATE_SHUTDOWN);
 
+  mBufferedUpdateRequest.DisconnectIfExists();
+
   mQueuedSeek.RejectIfExists(__func__);
-  mPendingSeek.RejectIfExists(__func__);
   mCurrentSeek.RejectIfExists(__func__);
 
 #ifdef MOZ_EME
@@ -1380,9 +1378,8 @@ void MediaDecoderStateMachine::StartDecoding()
                  "Return from dormant must have queued seek");
     }
     if (mQueuedSeek.Exists()) {
-      mPendingSeek.Steal(mQueuedSeek);
       SetState(DECODER_STATE_SEEKING);
-      ScheduleStateMachine();
+      InitiateSeek(Move(mQueuedSeek));
       return;
     }
   }
@@ -1480,9 +1477,8 @@ MediaDecoderStateMachine::Seek(SeekTarget aTarget)
     return MediaDecoder::SeekPromise::CreateAndReject(/* aIgnored = */ true, __func__);
   }
 
-  // We need to be able to seek both at a transport level and at a media level
-  // to seek.
-  if (!mMediaSeekable) {
+  // We need to be able to seek in some way
+  if (!mMediaSeekable && !mMediaSeekableOnlyInBufferedRanges) {
     DECODER_WARN("Seek() function should not be called on a non-seekable state machine");
     return MediaDecoder::SeekPromise::CreateAndReject(/* aIgnored = */ true, __func__);
   }
@@ -1498,14 +1494,14 @@ MediaDecoderStateMachine::Seek(SeekTarget aTarget)
     return mQueuedSeek.mPromise.Ensure(__func__);
   }
   mQueuedSeek.RejectIfExists(__func__);
-  mPendingSeek.RejectIfExists(__func__);
-  mPendingSeek.mTarget = aTarget;
 
-  DECODER_LOG("Changed state to SEEKING (to %lld)", mPendingSeek.mTarget.GetTime().ToMicroseconds());
+  DECODER_LOG("Changed state to SEEKING (to %lld)", aTarget.GetTime().ToMicroseconds());
   SetState(DECODER_STATE_SEEKING);
-  ScheduleStateMachine();
 
-  return mPendingSeek.mPromise.Ensure(__func__);
+  SeekJob seekJob;
+  seekJob.mTarget = aTarget;
+  InitiateSeek(Move(seekJob));
+  return mCurrentSeek.mPromise.Ensure(__func__);
 }
 
 RefPtr<MediaDecoder::SeekPromise>
@@ -1585,12 +1581,12 @@ MediaDecoderStateMachine::DispatchDecodeTasksIfNeeded()
 }
 
 void
-MediaDecoderStateMachine::InitiateSeek()
+MediaDecoderStateMachine::InitiateSeek(SeekJob aSeekJob)
 {
   MOZ_ASSERT(OnTaskQueue());
 
   mCurrentSeek.RejectIfExists(__func__);
-  mCurrentSeek.Steal(mPendingSeek);
+  mCurrentSeek = Move(aSeekJob);
 
   // Bound the seek time to be inside the media range.
   int64_t end = Duration().ToMicroseconds();
@@ -2020,12 +2016,25 @@ void
 MediaDecoderStateMachine::EnqueueFirstFrameLoadedEvent()
 {
   MOZ_ASSERT(OnTaskQueue());
-  MediaDecoderEventVisibility visibility =
-    mSentFirstFrameLoadedEvent ? MediaDecoderEventVisibility::Suppressed
-                               : MediaDecoderEventVisibility::Observable;
-  mFirstFrameLoadedEvent.Notify(nsAutoPtr<MediaInfo>(new MediaInfo(mInfo)),
-                                Move(visibility));
+  // Track value of mSentFirstFrameLoadedEvent from before updating it
+  bool firstFrameBeenLoaded = mSentFirstFrameLoadedEvent;
   mSentFirstFrameLoadedEvent = true;
+  RefPtr<MediaDecoderStateMachine> self = this;
+  mBufferedUpdateRequest.Begin(InvokeAsync(DecodeTaskQueue(), mReader.get(), __func__,
+    &MediaDecoderReader::UpdateBufferedWithPromise)
+    ->Then(OwnerThread(),
+    __func__,
+    // Resolve
+    [self, firstFrameBeenLoaded]() {
+      self->mBufferedUpdateRequest.Complete();
+      MediaDecoderEventVisibility visibility =
+        firstFrameBeenLoaded ? MediaDecoderEventVisibility::Suppressed
+                             : MediaDecoderEventVisibility::Observable;
+      self->mFirstFrameLoadedEvent.Notify(nsAutoPtr<MediaInfo>(new MediaInfo(self->mInfo)),
+                                          Move(visibility));
+    },
+    // Reject
+    []() { MOZ_CRASH("Should not reach"); }));
 }
 
 bool
@@ -2098,18 +2107,10 @@ MediaDecoderStateMachine::SeekCompleted()
     newCurrentTime = video ? video->mTime : seekTime;
   }
 
-  // Change state to DECODING or COMPLETED now. SeekingStopped will
-  // call MediaDecoderStateMachine::Seek to reset our state to SEEKING
-  // if we need to seek again.
-
+  // Change state to DECODING or COMPLETED now.
   bool isLiveStream = mResource->IsLiveStream();
   State nextState;
-  if (mPendingSeek.Exists()) {
-    // A new seek target came in while we were processing the old one. No rest
-    // for the seeking.
-    DECODER_LOG("A new seek came along while we were finishing the old one - staying in SEEKING");
-    nextState = DECODER_STATE_SEEKING;
-  } else if (GetMediaTime() == Duration().ToMicroseconds() && !isLiveStream) {
+  if (GetMediaTime() == Duration().ToMicroseconds() && !isLiveStream) {
     // Seeked to end of media, move to COMPLETED state. Note we don't do
     // this when playing a live stream, since the end of media will advance
     // once we download more data!
@@ -2193,6 +2194,7 @@ MediaDecoderStateMachine::FinishShutdown()
   mPlaybackRateReliable.DisconnectIfConnected();
   mDecoderPosition.DisconnectIfConnected();
   mMediaSeekable.DisconnectIfConnected();
+  mMediaSeekableOnlyInBufferedRanges.DisconnectIfConnected();
 
   mDuration.DisconnectAll();
   mIsShutdown.DisconnectAll();
@@ -2316,9 +2318,6 @@ nsresult MediaDecoderStateMachine::RunStateMachine()
     }
 
     case DECODER_STATE_SEEKING: {
-      if (mPendingSeek.Exists()) {
-        InitiateSeek();
-      }
       return NS_OK;
     }
 

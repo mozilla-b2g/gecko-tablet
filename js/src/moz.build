@@ -53,7 +53,6 @@ with Files('../public/TrackedOptimizationInfo.h'):
 if CONFIG['JS_BUNDLED_EDITLINE']:
     DIRS += ['editline']
 
-# editline needs to get built before the shell
 if not CONFIG['JS_DISABLE_SHELL']:
     DIRS += ['shell']
 
@@ -112,6 +111,7 @@ EXPORTS.js += [
     '../public/GCAPI.h',
     '../public/GCHashTable.h',
     '../public/GCPolicyAPI.h',
+    '../public/GCVariant.h',
     '../public/GCVector.h',
     '../public/HashTable.h',
     '../public/HeapAPI.h',
@@ -148,13 +148,14 @@ UNIFIED_SOURCES += [
     'asmjs/AsmJS.cpp',
     'asmjs/Wasm.cpp',
     'asmjs/WasmBinary.cpp',
+    'asmjs/WasmBinaryToText.cpp',
     'asmjs/WasmFrameIterator.cpp',
     'asmjs/WasmGenerator.cpp',
     'asmjs/WasmIonCompile.cpp',
     'asmjs/WasmModule.cpp',
     'asmjs/WasmSignalHandlers.cpp',
     'asmjs/WasmStubs.cpp',
-    'asmjs/WasmText.cpp',
+    'asmjs/WasmTextToBinary.cpp',
     'asmjs/WasmTypes.cpp',
     'builtin/AtomicsObject.cpp',
     'builtin/Eval.cpp',
@@ -291,7 +292,6 @@ UNIFIED_SOURCES += [
     'proxy/OpaqueCrossCompartmentWrapper.cpp',
     'proxy/Proxy.cpp',
     'proxy/ScriptedDirectProxyHandler.cpp',
-    'proxy/ScriptedIndirectProxyHandler.cpp',
     'proxy/SecurityWrapper.cpp',
     'proxy/Wrapper.cpp',
     'vm/ArgumentsObject.cpp',
@@ -313,7 +313,6 @@ UNIFIED_SOURCES += [
     'vm/JSONParser.cpp',
     'vm/MemoryMetrics.cpp',
     'vm/Monitor.cpp',
-    'vm/Mutex.cpp',
     'vm/NativeObject.cpp',
     'vm/ObjectGroup.cpp',
     'vm/PIC.cpp',
@@ -544,12 +543,14 @@ elif CONFIG['JS_CODEGEN_MIPS32'] or CONFIG['JS_CODEGEN_MIPS64']:
 if CONFIG['OS_ARCH'] == 'WINNT':
     SOURCES += [
         'jit/ExecutableAllocatorWin.cpp',
+        'threading/windows/Mutex.cpp',
     ]
     # _CRT_RAND_S must be #defined before #including stdlib.h to get rand_s()
     DEFINES['_CRT_RAND_S'] = True
 else:
     SOURCES += [
         'jit/ExecutableAllocatorPosix.cpp',
+        'threading/posix/Mutex.cpp',
     ]
 
 if CONFIG['JS_HAS_CTYPES']:
@@ -610,6 +611,7 @@ if CONFIG['ENABLE_INTL_API']:
     ]
 
 USE_LIBS += [
+    'fdlibm',
     'nspr',
     'zlib',
 ]
@@ -659,7 +661,6 @@ if CONFIG['_MSC_VER']:
     CXXFLAGS += ['-wd4661']
     CXXFLAGS += ['-we4067', '-we4258', '-we4275']
     CXXFLAGS += ['-wd4146'] # FIXME: unary minus operator applied to unsigned type (bug 1229189)
-    CXXFLAGS += ['-wd4273'] # FIXME: inconsistent dll linkage (bug 1229666)
 
 if CONFIG['OS_ARCH'] not in ('WINNT', 'HP-UX'):
     OS_LIBS += [

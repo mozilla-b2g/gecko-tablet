@@ -479,7 +479,7 @@ SafeInstallOperation.prototype = {
     let isDir = null;
 
     try {
-      isDir = aDirEntry.isDirectory();
+      isDir = aDirEntry.isDirectory() && !aDirEntry.isSymlink();
     }
     catch (e) {
       // If the file has already gone away then don't worry about it, this can
@@ -578,7 +578,7 @@ SafeInstallOperation.prototype = {
       if (move.isMoveTo) {
         move.newFile.moveTo(move.oldDir.parent, move.oldDir.leafName);
       }
-      else if (move.newFile.isDirectory()) {
+      else if (move.newFile.isDirectory() && !move.newFile.isSymlink()) {
         let oldDir = move.oldFile.parent.clone();
         oldDir.append(move.oldFile.leafName);
         oldDir.create(Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
@@ -889,6 +889,14 @@ var loadManifestFromWebManifest = Task.async(function*(aUri) {
   addon.optionsURL = null;
   addon.optionsType = null;
   addon.aboutURL = null;
+
+  if (manifest.options_ui) {
+    addon.optionsURL = extension.getURL(manifest.options_ui.page);
+    if (manifest.options_ui.open_in_tab)
+      addon.optionsType = AddonManager.OPTIONS_TYPE_TAB;
+    else
+      addon.optionsType = AddonManager.OPTIONS_TYPE_INLINE_BROWSER;
+  }
 
   // WebExtensions don't use iconURLs
   addon.iconURL = null;
@@ -1810,7 +1818,7 @@ function recursiveRemove(aFile) {
     return;
   }
   catch (e) {
-    if (!aFile.isDirectory()) {
+    if (!aFile.isDirectory() || aFile.isSymlink()) {
       logger.error("Failed to remove file " + aFile.path, e);
       throw e;
     }
@@ -3810,8 +3818,9 @@ this.XPIProvider = {
    * @param aFile
    *        An nsIFile for the unpacked add-on directory or XPI file.
    *
-   * @return a Promise that rejects if the add-on is not a valid restartless
-   *         add-on or if the same ID is already temporarily installed
+   * @return a Promise that resolves to an Addon object on success, or rejects
+   *         if the add-on is not a valid restartless add-on or if the
+   *         same ID is already temporarily installed
    */
   installTemporaryAddon: Task.async(function*(aFile) {
     let addon = yield loadManifestFromFile(aFile, TemporaryInstallLocation);
@@ -6919,6 +6928,7 @@ AddonWrapper.prototype = {
         return hasOptionsURL ? addon.optionsType : null;
       case AddonManager.OPTIONS_TYPE_INLINE:
       case AddonManager.OPTIONS_TYPE_INLINE_INFO:
+      case AddonManager.OPTIONS_TYPE_INLINE_BROWSER:
         return (hasOptionsXUL || hasOptionsURL) ? addon.optionsType : null;
       }
       return null;
@@ -7456,24 +7466,39 @@ DirectoryInstallLocation.prototype = {
    * @return  An nsIFile object representing the linked directory.
    */
   _readDirectoryFromFile: function(aFile) {
-    let fis = Cc["@mozilla.org/network/file-input-stream;1"].
-              createInstance(Ci.nsIFileInputStream);
-    fis.init(aFile, -1, -1, false);
-    let line = { value: "" };
-    if (fis instanceof Ci.nsILineInputStream)
-      fis.readLine(line);
-    fis.close();
-    if (line.value) {
-      let linkedDirectory = Cc["@mozilla.org/file/local;1"].
-                            createInstance(Ci.nsIFile);
-
+    let linkedDirectory;
+    if (aFile.isSymlink()) {
+      linkedDirectory = aFile.clone();
       try {
-        linkedDirectory.initWithPath(line.value);
+        linkedDirectory.normalize();
+      } catch (e) {
+        logger.warn("Symbolic link " + aFile.path + " points to a path" +
+             " which does not exist");
+        return null;
       }
-      catch (e) {
-        linkedDirectory.setRelativeDescriptor(aFile.parent, line.value);
-      }
+    }
+    else {
+      let fis = Cc["@mozilla.org/network/file-input-stream;1"].
+                createInstance(Ci.nsIFileInputStream);
+      fis.init(aFile, -1, -1, false);
+      let line = { value: "" };
+      if (fis instanceof Ci.nsILineInputStream)
+        fis.readLine(line);
+      fis.close();
+      if (line.value) {
+        linkedDirectory = Cc["@mozilla.org/file/local;1"].
+                              createInstance(Ci.nsIFile);
 
+        try {
+          linkedDirectory.initWithPath(line.value);
+        }
+        catch (e) {
+          linkedDirectory.setRelativeDescriptor(aFile.parent, line.value);
+        }
+      }
+    }
+
+    if (linkedDirectory) {
       if (!linkedDirectory.exists()) {
         logger.warn("File pointer " + aFile.path + " points to " + linkedDirectory.path +
              " which does not exist");
@@ -7520,7 +7545,7 @@ DirectoryInstallLocation.prototype = {
         continue;
       }
 
-      if (entry.isFile() && !directLoad) {
+      if (!directLoad && (entry.isFile() || entry.isSymlink())) {
         let newEntry = this._readDirectoryFromFile(entry);
         if (!newEntry) {
           logger.debug("Deleting stale pointer file " + entry.path);
