@@ -36,7 +36,7 @@ RUN yum install -y \
   file \
   flex \
   gawk \
-  gcc473_0moz1 \
+  gcc485_0moz1 \
   gettext-devel \
   glibc-devel \
   glibc-devel.i686 \
@@ -96,17 +96,18 @@ RUN mkdir -p /home/worker/bin
 COPY bin/repository-url.py /home/worker/bin/repository-url.py
 
 # Default to mozilla specific python, etc...
+ENV HOST_COMPILER_PATH gcc-4.8.5-0moz1
 ENV PATH /tools/python27-mercurial/bin:/tools/python27/bin:$PATH
 ENV PATH /tools/tools/buildfarm/utils:$PATH:/home/worker/bin/
-ENV PATH /tools/gcc-4.7.3-0moz1/bin:$PATH
+ENV PATH /tools/$HOST_COMPILER_PATH/bin:$PATH
 
 # Use the libstd++ we installed over all others...
-env LD_LIBRARY_PATH=/tools/gcc-4.7.3-0moz1/lib64:/tools/gcc-4.7.3-0moz1/lib
+env LD_LIBRARY_PATH=/tools/$HOST_COMPILER_PATH/lib64:/tools/$HOST_COMPILER_PATH/lib
 
 RUN useradd -d /home/worker -s /bin/bash -m worker
 
 # Terrible symlink hacks so cc points to the gcc version we intend to use...
-RUN ls -lah /tools/gcc-4.7.3-0moz1/bin && ln -s /tools/gcc-4.7.3-0moz1/bin/gcc /tools/gcc-4.7.3-0moz1/bin/cc
+RUN ls -lah /tools/$HOST_COMPILER_PATH/bin && ln -s /tools/$HOST_COMPILER_PATH/bin/gcc /tools/$HOST_COMPILER_PATH/bin/cc
 
 # Terrible Hack to correctly install git-2.4.1
 RUN mkdir -p /tmp/git && cd /tmp/git && \
