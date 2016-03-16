@@ -1,3 +1,5 @@
+content gaia file:///system/b2g/apps/
+
 # Scrollbars
 category agent-style-sheets browser-content-stylesheet chrome://b2g/content/content.css
 

@@ -435,10 +435,8 @@ var shell = {
     UserAgentOverrides.init();
     CaptivePortalLoginHelper.init();
 
-    Cu.import("resource://gre/modules/AppPermissions.jsm");
-    PermissionsInstaller.setAllPermissions().then(() => {
-      this.contentBrowser.src = homeURL;
-    });
+    // FIXME: make that use homeURL again.
+    this.contentBrowser.src = "chrome://gaia/content/system/index.html";
 
     this._isEventListenerReady = false;
 
