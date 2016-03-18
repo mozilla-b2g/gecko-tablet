@@ -1,13 +1,13 @@
 /**
  * HomeScreen.
  *
- * Shows your top sites.
+ * System UI element including search bar and home screen frame.
  */
 
 var HomeScreen = {
 
   /**
-   * Start the system toolbar.
+   * Start the home screen.
    */
   start: function() {
 

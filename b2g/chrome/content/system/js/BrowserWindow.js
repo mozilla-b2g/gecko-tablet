@@ -1,5 +1,7 @@
 /**
  * Browser Window.
+ *
+ * A browser window includes a URL bar and a mozbrowser frame.
  */
 
 /**
@@ -98,14 +100,17 @@ BrowserWindow.prototype.destroy = function() {
  * @param {Event} e mozbrowserlocationchange event.
  */
 BrowserWindow.prototype.handleLocationChange = function(e) {
-  this.currentURL = e.detail;
-  if (e.detail == 'about:blank') {
+  var url = e.detail;
+  if (url == 'about:blank') {
      this.urlBar.focus();
+     return;
   }
-  
-  var hostname = new URL(e.detail).hostname;
+  this.currentURL = url;
+  var hostname = new URL(url).hostname;
   this.currentTitle = hostname;
   this.urlBar.value = hostname;
+
+  Places.updateSite(url);
 };
 
 /**

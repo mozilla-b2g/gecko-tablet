@@ -72,10 +72,16 @@ chrome.jar:
   content/system/images/new-window-light.png  (content/system/images/new-window-light.png)
   content/system/js/BrowserWindow.js          (content/system/js/BrowserWindow.js)
   content/system/js/HomeScreen.js             (content/system/js/HomeScreen.js)
-  content/system/js/Shell.js                  (content/system/js/Shell.js)
+  content/system/js/System.js                  (content/system/js/System.js)
   content/system/js/StatusBar.js              (content/system/js/StatusBar.js)
   content/system/js/SystemToolbar.js          (content/system/js/SystemToolbar.js)
   content/system/js/WindowManager.js          (content/system/js/WindowManager.js)
 
 # Home Screen
   content/homescreen/index.html               (content/homescreen/index.html)
+  content/homescreen/js/HomeScreen.js         (content/homescreen/js/HomeScreen.js)
+  content/homescreen/js/Tile.js               (content/homescreen/js/Tile.js)
+  content/homescreen/css/homescreen.css       (content/homescreen/css/homescreen.css)
+
+# Shared
+  content/shared/js/Places.js                 (content/shared/js/Places.js)

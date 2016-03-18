@@ -131,8 +131,10 @@ body.task-manager-active #system-toolbar #new-window-button {
   border: none;
   text-align: center;
   margin: 2rem;
-  width: 90%;
+  width: calc(100% - 4rem);
   border-radius: 0;
+  box-sizing: border-box;
+  padding: 0;
 }
 
 #home-screen-frame {
