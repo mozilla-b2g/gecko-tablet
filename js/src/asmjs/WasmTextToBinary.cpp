@@ -28,6 +28,7 @@
 #include "jsstr.h"
 
 #include "asmjs/WasmBinary.h"
+#include "asmjs/WasmTypes.h"
 #include "ds/LifoAlloc.h"
 #include "js/CharacterEncoding.h"
 #include "js/HashTable.h"
@@ -209,6 +210,7 @@ enum class WasmAstExprKind
     Return,
     SetLocal,
     Store,
+    Trap,
     UnaryOperator,
 };
 
@@ -235,6 +237,13 @@ struct WasmAstNop : WasmAstExpr
 {
     WasmAstNop()
       : WasmAstExpr(WasmAstExprKind::Nop)
+    {}
+};
+
+struct WasmAstTrap : WasmAstExpr
+{
+    WasmAstTrap()
+      : WasmAstExpr(WasmAstExprKind::Trap)
     {}
 };
 
@@ -796,6 +805,7 @@ class WasmToken
         Store,
         Table,
         Text,
+        Trap,
         Type,
         UnaryOpcode,
         ValueType
@@ -1421,12 +1431,22 @@ WasmTokenStream::next()
                     return WasmToken(WasmToken::UnaryOpcode, Expr::F32Ceil, begin, cur_);
                 if (consume(MOZ_UTF16("const")))
                     return WasmToken(WasmToken::Const, ValType::F32, begin, cur_);
-                if (consume(MOZ_UTF16("convert_s/i32")))
+                if (consume(MOZ_UTF16("convert_s/i32"))) {
                     return WasmToken(WasmToken::ConversionOpcode, Expr::F32ConvertSI32,
                                      begin, cur_);
-                if (consume(MOZ_UTF16("convert_u/i32")))
+                }
+                if (consume(MOZ_UTF16("convert_u/i32"))) {
                     return WasmToken(WasmToken::ConversionOpcode, Expr::F32ConvertUI32,
                                      begin, cur_);
+                }
+                if (consume(MOZ_UTF16("convert_s/i64"))) {
+                    return WasmToken(WasmToken::ConversionOpcode, Expr::F32ConvertSI64,
+                                     begin, cur_);
+                }
+                if (consume(MOZ_UTF16("convert_u/i64"))) {
+                    return WasmToken(WasmToken::ConversionOpcode, Expr::F32ConvertUI64,
+                                     begin, cur_);
+                }
                 if (consume(MOZ_UTF16("copysign")))
                     return WasmToken(WasmToken::BinaryOpcode, Expr::F32CopySign, begin, cur_);
                 break;
@@ -1511,12 +1531,22 @@ WasmTokenStream::next()
                     return WasmToken(WasmToken::UnaryOpcode, Expr::F64Ceil, begin, cur_);
                 if (consume(MOZ_UTF16("const")))
                     return WasmToken(WasmToken::Const, ValType::F64, begin, cur_);
-                if (consume(MOZ_UTF16("convert_s/i32")))
+                if (consume(MOZ_UTF16("convert_s/i32"))) {
                     return WasmToken(WasmToken::ConversionOpcode, Expr::F64ConvertSI32,
                                      begin, cur_);
-                if (consume(MOZ_UTF16("convert_u/i32")))
+                }
+                if (consume(MOZ_UTF16("convert_u/i32"))) {
                     return WasmToken(WasmToken::ConversionOpcode, Expr::F64ConvertUI32,
                                      begin, cur_);
+                }
+                if (consume(MOZ_UTF16("convert_s/i64"))) {
+                    return WasmToken(WasmToken::ConversionOpcode, Expr::F64ConvertSI64,
+                                     begin, cur_);
+                }
+                if (consume(MOZ_UTF16("convert_u/i64"))) {
+                    return WasmToken(WasmToken::ConversionOpcode, Expr::F64ConvertUI64,
+                                     begin, cur_);
+                }
                 if (consume(MOZ_UTF16("copysign")))
                     return WasmToken(WasmToken::BinaryOpcode, Expr::F64CopySign, begin, cur_);
                 break;
@@ -1931,6 +1961,8 @@ WasmTokenStream::next()
             return WasmToken(WasmToken::Table, begin, cur_);
         if (consume(MOZ_UTF16("type")))
             return WasmToken(WasmToken::Type, begin, cur_);
+        if (consume(MOZ_UTF16("trap")))
+            return WasmToken(WasmToken::Trap, begin, cur_);
         break;
 
       default:
@@ -2269,6 +2301,8 @@ template <typename Float>
 static bool
 ParseFloatLiteral(WasmParseContext& c, WasmToken token, Float* result)
 {
+    *result = 0;
+
     switch (token.kind()) {
       case WasmToken::Index:
         *result = token.index();
@@ -2669,6 +2703,8 @@ ParseExprInsideParens(WasmParseContext& c)
     switch (token.kind()) {
       case WasmToken::Nop:
         return new(c.lifo) WasmAstNop;
+      case WasmToken::Trap:
+        return new(c.lifo) WasmAstTrap;
       case WasmToken::BinaryOpcode:
         return ParseBinaryOperator(c, token.expr());
       case WasmToken::Block:
@@ -3373,6 +3409,7 @@ ResolveExpr(Resolver& r, WasmAstExpr& expr)
 {
     switch (expr.kind()) {
       case WasmAstExprKind::Nop:
+      case WasmAstExprKind::Trap:
         return true;
       case WasmAstExprKind::BinaryOperator:
         return ResolveBinaryOperator(r, expr.as<WasmAstBinaryOperator>());
@@ -3703,6 +3740,8 @@ EncodeExpr(Encoder& e, WasmAstExpr& expr)
     switch (expr.kind()) {
       case WasmAstExprKind::Nop:
         return e.writeExpr(Expr::Nop);
+      case WasmAstExprKind::Trap:
+        return e.writeExpr(Expr::Unreachable);
       case WasmAstExprKind::BinaryOperator:
         return EncodeBinaryOperator(e, expr.as<WasmAstBinaryOperator>());
       case WasmAstExprKind::Block:

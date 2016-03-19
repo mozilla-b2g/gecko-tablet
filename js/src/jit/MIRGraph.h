@@ -116,7 +116,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     static MBasicBlock* NewPendingLoopHeader(MIRGraph& graph, const CompileInfo& info,
                                              MBasicBlock* pred, BytecodeSite* site,
                                              unsigned loopStateSlots);
-    static MBasicBlock* NewSplitEdge(MIRGraph& graph, const CompileInfo& info, MBasicBlock* pred);
+    static MBasicBlock* NewSplitEdge(MIRGraph& graph, const CompileInfo& info,
+                                     MBasicBlock* pred, size_t predEdgeIdx,
+                                     MBasicBlock* succ);
     static MBasicBlock* NewAsmJS(MIRGraph& graph, const CompileInfo& info,
                                  MBasicBlock* pred, Kind kind);
 
@@ -429,7 +431,11 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     bool hasUniqueBackedge() const {
         MOZ_ASSERT(isLoopHeader());
         MOZ_ASSERT(numPredecessors() >= 2);
-        return numPredecessors() == 2;
+        if (numPredecessors() == 2)
+            return true;
+        if (numPredecessors() == 3) // fixup block added by ValueNumbering phase.
+            return getPredecessor(1)->numPredecessors() == 0;
+        return false;
     }
     MBasicBlock* backedge() const {
         MOZ_ASSERT(hasUniqueBackedge());
@@ -476,6 +482,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     }
     void unmark() {
         MOZ_ASSERT(mark_, "Unarking unmarked block");
+        unmarkUnchecked();
+    }
+    void unmarkUnchecked() {
         mark_ = false;
     }
 

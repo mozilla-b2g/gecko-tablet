@@ -75,6 +75,18 @@ builds:
     types:
       opt:
         task: tasks/builds/opt_linux64_st-an_clobber.yml
+  linux64-haz:
+    platforms:
+      - Linux64
+    types:
+      debug:
+        task: tasks/builds/haz_linux.yml
+  linux64-shell-haz:
+    platforms:
+      - Linux64
+    types:
+      debug:
+        task: tasks/builds/haz_shell_linux.yml
   macosx64:
     platforms:
       - MacOSX64
@@ -228,10 +240,6 @@ tests:
     allowed_build_tasks:
       tasks/builds/dbg_linux64_clobber.yml:
         task: tasks/tests/fx_linux64_mochitest_jetpack.yml
-  mochitest-push:
-    allowed_build_tasks:
-      tasks/builds/dbg_linux64_clobber.yml:
-        task: tasks/tests/fx_linux64_mochitest_push.yml
   mochitest-media:
     allowed_build_tasks:
       tasks/builds/dbg_linux64_clobber.yml:

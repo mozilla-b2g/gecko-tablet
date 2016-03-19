@@ -182,10 +182,8 @@ js::Debug_CheckSelfHosted(JSContext* cx, HandleValue fun)
     MOZ_CRASH("self-hosted checks should only be done in Debug builds");
 #endif
 
-    MOZ_ASSERT(fun.isObject());
-
-    MOZ_ASSERT(fun.toObject().is<JSFunction>());
-    MOZ_ASSERT(fun.toObject().as<JSFunction>().isSelfHostedOrIntrinsic());
+    RootedObject funObj(cx, UncheckedUnwrap(&fun.toObject()));
+    MOZ_ASSERT(funObj->as<JSFunction>().isSelfHostedOrIntrinsic());
 
     // This is purely to police self-hosted code. There is no actual operation.
     return true;
@@ -1665,9 +1663,10 @@ Interpret(JSContext* cx, RunState& state)
 
     /* State communicated between non-local jumps: */
     bool interpReturnOK;
+    bool frameHalfInitialized;
 
     if (!activation.entryFrame()->prologue(cx))
-        goto error;
+        goto prologue_error;
 
     switch (Debugger::onEnterFrame(cx, activation.entryFrame())) {
       case JSTRAP_CONTINUE:
@@ -1901,15 +1900,21 @@ CASE(JSOP_RETRVAL)
     interpReturnOK = true;
 
   return_continuation:
+    frameHalfInitialized = false;
+
+  prologue_return_continuation:
+
     if (activation.entryFrame() != REGS.fp()) {
         // Stop the engine. (No details about which engine exactly, could be
         // interpreter, Baseline or IonMonkey.)
         TraceLogStopEvent(logger, TraceLogger_Engine);
         TraceLogStopEvent(logger, TraceLogger_Scripts);
 
-        interpReturnOK = Debugger::onLeaveFrame(cx, REGS.fp(), REGS.pc, interpReturnOK);
+        if (MOZ_LIKELY(!frameHalfInitialized)) {
+            interpReturnOK = Debugger::onLeaveFrame(cx, REGS.fp(), REGS.pc, interpReturnOK);
 
-        REGS.fp()->epilogue(cx);
+            REGS.fp()->epilogue(cx);
+        }
 
   jit_return_pop_frame:
 
@@ -2872,7 +2877,7 @@ CASE(JSOP_FUNCALL)
     }
 
     if (!REGS.fp()->prologue(cx))
-        goto error;
+        goto prologue_error;
 
     switch (Debugger::onEnterFrame(cx, REGS.fp())) {
       case JSTRAP_CONTINUE:
@@ -3995,9 +4000,11 @@ DEFAULT()
     MOZ_CRASH("Invalid HandleError continuation");
 
   exit:
-    interpReturnOK = Debugger::onLeaveFrame(cx, REGS.fp(), REGS.pc, interpReturnOK);
+    if (MOZ_LIKELY(!frameHalfInitialized)) {
+        interpReturnOK = Debugger::onLeaveFrame(cx, REGS.fp(), REGS.pc, interpReturnOK);
 
-    REGS.fp()->epilogue(cx);
+        REGS.fp()->epilogue(cx);
+    }
 
     gc::MaybeVerifyBarriers(cx, true);
 
@@ -4014,6 +4021,11 @@ DEFAULT()
         state.setReturnValue(activation.entryFrame()->returnValue());
 
     return interpReturnOK;
+
+  prologue_error:
+    interpReturnOK = false;
+    frameHalfInitialized = true;
+    goto prologue_return_continuation;
 }
 
 bool
@@ -4572,9 +4584,14 @@ js::SpreadCallOperation(JSContext* cx, HandleScript script, jsbytecode* pc, Hand
                                    constructing ? CONSTRUCT : NO_CONSTRUCT);
     }
 
+#ifdef DEBUG
     // The object must be an array with dense elements and no holes. Baseline's
     // optimized spread call stubs rely on this.
-    MOZ_ASSERT(IsPackedArray(aobj));
+    MOZ_ASSERT(!aobj->isIndexed());
+    MOZ_ASSERT(aobj->getDenseInitializedLength() == aobj->length());
+    for (size_t i = 0; i < aobj->length(); i++)
+        MOZ_ASSERT(!aobj->getDenseElement(i).isMagic(JS_ELEMENTS_HOLE));
+#endif
 
     if (constructing) {
         if (!StackCheckIsConstructorCalleeNewTarget(cx, callee, newTarget))

@@ -241,6 +241,18 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
     contents.setAttribute("flex", "1");
     contents.setAttribute("tooltiptext", unicodeUrl);
 
+    if (aSource.introductionType === "wasm") {
+      const wasm = document.createElement("box");
+      wasm.className = "dbg-wasm-item";
+      const icon = document.createElement("box");
+      icon.setAttribute("tooltiptext", L10N.getStr("experimental"));
+      icon.className = "icon";
+      wasm.appendChild(icon);
+      wasm.appendChild(contents);
+
+      contents = wasm;
+    }
+
     // If the source is blackboxed, apply the appropriate style.
     if (gThreadClient.source(aSource).isBlackBoxed) {
       contents.classList.add("black-boxed");
@@ -1168,9 +1180,10 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
    */
   _onCmdAddConditionalBreakpoint: function(e) {
     let actor = this.selectedValue;
-    let line = (e && e.sourceEvent.target.tagName == 'menuitem' ?
+    let line = (this.DebuggerView.clickedLine ?
                 this.DebuggerView.clickedLine + 1 :
                 this.DebuggerView.editor.getCursor().line + 1);
+
     let location = { actor, line };
     let bp = getBreakpoint(this.getState(), location);
 

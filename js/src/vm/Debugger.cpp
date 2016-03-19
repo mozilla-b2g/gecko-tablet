@@ -25,8 +25,6 @@
 #include "gc/Policy.h"
 #include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineJIT.h"
-#include "jit/JSONSpewer.h"
-#include "jit/MIRGraph.h"
 #include "js/GCAPI.h"
 #include "js/UbiNodeBreadthFirst.h"
 #include "js/Vector.h"
@@ -648,7 +646,7 @@ Debugger::getScriptFrameWithIter(JSContext* cx, AbstractFramePtr frame,
 Debugger::hasLiveHook(GlobalObject* global, Hook which)
 {
     if (GlobalObject::DebuggerVector* debuggers = global->getDebuggers()) {
-        for (Debugger** p = debuggers->begin(); p != debuggers->end(); p++) {
+        for (auto p = debuggers->begin(); p != debuggers->end(); p++) {
             Debugger* dbg = *p;
             if (dbg->enabled && dbg->getHook(which))
                 return true;
@@ -1558,75 +1556,6 @@ Debugger::fireOnGarbageCollectionHook(JSContext* cx,
         handleUncaughtException(ac, true);
 }
 
-JSTrapStatus
-Debugger::fireOnIonCompilationHook(JSContext* cx, Handle<ScriptVector> scripts, LSprinter& graph)
-{
-    RootedObject hook(cx, getHook(OnIonCompilation));
-    MOZ_ASSERT(hook);
-    MOZ_ASSERT(hook->isCallable());
-
-    Maybe<AutoCompartment> ac;
-    ac.emplace(cx, object);
-
-    // Copy the vector of scripts to a JS Array of Debugger.Script
-    RootedObject tmpObj(cx);
-    RootedValue tmpVal(cx);
-    AutoValueVector dbgScripts(cx);
-    for (size_t i = 0; i < scripts.length(); i++) {
-        tmpObj = wrapScript(cx, scripts[i]);
-        if (!tmpObj)
-            return handleUncaughtException(ac, false);
-
-        tmpVal.setObject(*tmpObj);
-        if (!dbgScripts.append(tmpVal))
-            return handleUncaughtException(ac, false);
-    }
-
-    RootedObject dbgScriptsArray(cx, JS_NewArrayObject(cx, dbgScripts));
-    if (!dbgScriptsArray)
-        return handleUncaughtException(ac, false);
-
-    // Copy the JSON compilation graph to a JS String which is allocated as part
-    // of the Debugger compartment.
-    Sprinter jsonPrinter(cx);
-    if (!jsonPrinter.init())
-        return handleUncaughtException(ac, false);
-
-    graph.exportInto(jsonPrinter);
-    if (jsonPrinter.hadOutOfMemory())
-        return handleUncaughtException(ac, false);
-
-    RootedString json(cx, JS_NewStringCopyZ(cx, jsonPrinter.string()));
-    if (!json)
-        return handleUncaughtException(ac, false);
-
-    // Create a JS Object which has the array of scripts, and the string of the
-    // JSON graph.
-    const char* names[] = { "scripts", "json" };
-    JS::AutoValueArray<2> values(cx);
-    values[0].setObject(*dbgScriptsArray);
-    values[1].setString(json);
-
-    RootedObject obj(cx, JS_NewObject(cx, nullptr));
-    if (!obj)
-        return handleUncaughtException(ac, false);
-
-    MOZ_ASSERT(mozilla::ArrayLength(names) == values.length());
-    for (size_t i = 0; i < mozilla::ArrayLength(names); i++) {
-        if (!JS_DefineProperty(cx, obj, names[i], values[i], JSPROP_ENUMERATE, nullptr, nullptr))
-            return handleUncaughtException(ac, false);
-    }
-
-    // Call Debugger.onIonCompilation hook.
-    JS::AutoValueArray<1> argv(cx);
-    argv[0].setObject(*obj);
-
-    RootedValue rv(cx);
-    if (!Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 1, argv.begin(), &rv))
-        return handleUncaughtException(ac, true);
-    return JSTRAP_CONTINUE;
-}
-
 template <typename HookIsEnabledFun /* bool (Debugger*) */,
           typename FireHookFun /* JSTrapStatus (Debugger*) */>
 /* static */ JSTrapStatus
@@ -1643,7 +1572,7 @@ Debugger::dispatchHook(JSContext* cx, HookIsEnabledFun hookIsEnabled, FireHookFu
     AutoValueVector triggered(cx);
     Handle<GlobalObject*> global = cx->global();
     if (GlobalObject::DebuggerVector* debuggers = global->getDebuggers()) {
-        for (Debugger** p = debuggers->begin(); p != debuggers->end(); p++) {
+        for (auto p = debuggers->begin(); p != debuggers->end(); p++) {
             Debugger* dbg = *p;
             if (dbg->enabled && hookIsEnabled(dbg)) {
                 if (!triggered.append(ObjectValue(*dbg->toJSObject())))
@@ -1824,7 +1753,7 @@ Debugger::onSingleStep(JSContext* cx, MutableHandleValue vp)
         JSScript* trappingScript = iter.script();
         GlobalObject* global = cx->global();
         if (GlobalObject::DebuggerVector* debuggers = global->getDebuggers()) {
-            for (Debugger** p = debuggers->begin(); p != debuggers->end(); p++) {
+            for (auto p = debuggers->begin(); p != debuggers->end(); p++) {
                 Debugger* dbg = *p;
                 for (FrameMap::Range r = dbg->frames.all(); !r.empty(); r.popFront()) {
                     AbstractFramePtr frame = r.front().key();
@@ -1961,7 +1890,7 @@ Debugger::slowPathOnLogAllocationSite(JSContext* cx, HandleObject obj, HandleSav
                                       double when, GlobalObject::DebuggerVector& dbgs)
 {
     MOZ_ASSERT(!dbgs.empty());
-    mozilla::DebugOnly<Debugger**> begin = dbgs.begin();
+    mozilla::DebugOnly<ReadBarriered<Debugger*>*> begin = dbgs.begin();
 
     // Root all the Debuggers while we're iterating over them;
     // appendAllocationSite calls JSCompartment::wrap, and thus can GC.
@@ -1971,17 +1900,12 @@ Debugger::slowPathOnLogAllocationSite(JSContext* cx, HandleObject obj, HandleSav
     // Handle), but in this case, we're iterating over a global's list of
     // Debuggers, and globals only hold their Debuggers weakly.
     Rooted<GCVector<JSObject*>> activeDebuggers(cx, GCVector<JSObject*>(cx));
-    for (Debugger** dbgp = dbgs.begin(); dbgp < dbgs.end(); dbgp++) {
-        // Since we're pulling these Debugger objects out of the GlobalObject's
-        // debugger array, which holds them only weakly, we need to let the
-        // incremental GC know that a possibly previously unreachable Debugger
-        // object just became reachable.
-        InternalBarrierMethods<JSObject*>::readBarrier((*dbgp)->object);
+    for (auto dbgp = dbgs.begin(); dbgp < dbgs.end(); dbgp++) {
         if (!activeDebuggers.append((*dbgp)->object))
             return false;
     }
 
-    for (Debugger** dbgp = dbgs.begin(); dbgp < dbgs.end(); dbgp++) {
+    for (auto dbgp = dbgs.begin(); dbgp < dbgs.end(); dbgp++) {
         // The set of debuggers had better not change while we're iterating,
         // such that the vector gets reallocated.
         MOZ_ASSERT(dbgs.begin() == begin);
@@ -1995,25 +1919,6 @@ Debugger::slowPathOnLogAllocationSite(JSContext* cx, HandleObject obj, HandleSav
     }
 
     return true;
-}
-
-/* static */ void
-Debugger::slowPathOnIonCompilation(JSContext* cx, Handle<ScriptVector> scripts, LSprinter& graph)
-{
-    JSTrapStatus status = dispatchHook(
-        cx,
-        [](Debugger* dbg) -> bool { return dbg->getHook(OnIonCompilation); },
-        [&](Debugger* dbg) -> JSTrapStatus {
-            (void) dbg->fireOnIonCompilationHook(cx, scripts, graph);
-            return JSTRAP_CONTINUE;
-        });
-
-    if (status == JSTRAP_ERROR) {
-        cx->clearPendingException();
-        return;
-    }
-
-    MOZ_ASSERT(status == JSTRAP_CONTINUE);
 }
 
 bool
@@ -2607,8 +2512,7 @@ Debugger::cannotTrackAllocations(const GlobalObject& global)
 Debugger::isObservedByDebuggerTrackingAllocations(const GlobalObject& debuggee)
 {
     if (auto* v = debuggee.getDebuggers()) {
-        Debugger** p;
-        for (p = v->begin(); p != v->end(); p++) {
+        for (auto p = v->begin(); p != v->end(); p++) {
             if ((*p)->trackingAllocationSites && (*p)->enabled) {
                 return true;
             }
@@ -2776,7 +2680,7 @@ Debugger::markAllIteratively(GCMarker* trc)
              */
             const GlobalObject::DebuggerVector* debuggers = global->getDebuggers();
             MOZ_ASSERT(debuggers);
-            for (Debugger * const* p = debuggers->begin(); p != debuggers->end(); p++) {
+            for (auto p = debuggers->begin(); p != debuggers->end(); p++) {
                 Debugger* dbg = *p;
 
                 /*
@@ -3319,20 +3223,6 @@ Debugger::getMemory(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
-/* static */ bool
-Debugger::getOnIonCompilation(JSContext* cx, unsigned argc, Value* vp)
-{
-    THIS_DEBUGGER(cx, argc, vp, "(get onIonCompilation)", args, dbg);
-    return getHookImpl(cx, args, *dbg, OnIonCompilation);
-}
-
-/* static */ bool
-Debugger::setOnIonCompilation(JSContext* cx, unsigned argc, Value* vp)
-{
-    THIS_DEBUGGER(cx, argc, vp, "(set onIonCompilation)", args, dbg);
-    return setHookImpl(cx, args, *dbg, OnIonCompilation);
-}
-
 /*
  * Given a value used to designate a global (there's quite a variety; see the
  * docs), return the actual designee.
@@ -3655,7 +3545,7 @@ Debugger::addDebuggeeGlobal(JSContext* cx, Handle<GlobalObject*> global)
          */
         if (c->isDebuggee()) {
             GlobalObject::DebuggerVector* v = c->maybeGlobal()->getDebuggers();
-            for (Debugger** p = v->begin(); p != v->end(); p++) {
+            for (auto p = v->begin(); p != v->end(); p++) {
                 JSCompartment* next = (*p)->object->compartment();
                 if (Find(visited, next) == visited.end() && !visited.append(next))
                     return false;
@@ -3763,11 +3653,11 @@ Debugger::recomputeDebuggeeZoneSet()
     }
 }
 
-template<typename V>
-static Debugger**
-findDebuggerInVector(Debugger* dbg, V* vec)
+template <typename T>
+static T*
+findDebuggerInVector(Debugger* dbg, Vector<T, 0, js::SystemAllocPolicy>* vec)
 {
-    Debugger** p;
+    T* p;
     for (p = vec->begin(); p != vec->end(); p++) {
         if (*p == dbg)
             break;
@@ -4959,7 +4849,6 @@ const JSPropertySpec Debugger::properties[] = {
     JS_PSGS("collectCoverageInfo", Debugger::getCollectCoverageInfo,
             Debugger::setCollectCoverageInfo, 0),
     JS_PSG("memory", Debugger::getMemory, 0),
-    JS_PSGS("onIonCompilation", Debugger::getOnIonCompilation, Debugger::setOnIonCompilation, 0),
     JS_PS_END
 };
 const JSFunctionSpec Debugger::methods[] = {
@@ -5115,7 +5004,7 @@ Debugger::wrapVariantReferent(JSContext* cx, Handle<DebuggerScriptReferent> refe
             cx, scripts, CrossCompartmentKey::DebuggerScript, referent);
     } else {
         obj = wrapVariantReferent<DebuggerScriptReferent, WasmModuleObject*, WasmModuleWeakMap>(
-            cx, wasmModuleScripts, CrossCompartmentKey::DebuggerObject, referent);
+            cx, wasmModuleScripts, CrossCompartmentKey::DebuggerWasmScript, referent);
     }
     MOZ_ASSERT_IF(obj, GetScriptReferent(obj) == referent);
     return obj;
@@ -6358,7 +6247,7 @@ Debugger::wrapVariantReferent(JSContext* cx, Handle<DebuggerSourceReferent> refe
             cx, sources, CrossCompartmentKey::DebuggerSource, referent);
     } else {
         obj = wrapVariantReferent<DebuggerSourceReferent, WasmModuleObject*, WasmModuleWeakMap>(
-            cx, wasmModuleSources, CrossCompartmentKey::DebuggerObject, referent);
+            cx, wasmModuleSources, CrossCompartmentKey::DebuggerWasmSource, referent);
     }
     MOZ_ASSERT_IF(obj, GetSourceReferent(obj) == referent);
     return obj;
@@ -8976,6 +8865,14 @@ DebuggerEnv_getVariable(JSContext* cx, unsigned argc, Value* vp)
 
         /* This can trigger getters. */
         ErrorCopier ec(ac);
+
+        bool found;
+        if (!HasProperty(cx, env, id, &found))
+            return false;
+        if (!found) {
+            args.rval().setUndefined();
+            return true;
+        }
 
         // For DebugScopeObjects, we get sentinel values for optimized out
         // slots and arguments instead of throwing (the default behavior).

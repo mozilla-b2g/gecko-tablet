@@ -467,6 +467,15 @@ class FunctionCompiler
         return ins;
     }
 
+    MDefinition* convertI64ToFloatingPoint(MDefinition* op, MIRType type, bool isUnsigned)
+    {
+        if (inDeadCode())
+            return nullptr;
+        MInt64ToFloatingPoint* ins = MInt64ToFloatingPoint::NewAsmJS(alloc(), op, type, isUnsigned);
+        curBlock_->add(ins);
+        return ins;
+    }
+
     template <class T>
     MDefinition* truncate(MDefinition* op, bool isUnsigned)
     {
@@ -863,6 +872,17 @@ class FunctionCompiler
         MAsmJSVoidReturn* ins = MAsmJSVoidReturn::New(alloc());
         curBlock_->end(ins);
         curBlock_ = nullptr;
+    }
+
+    bool unreachableTrap()
+    {
+        if (inDeadCode())
+            return true;
+
+        auto* ins = MAsmThrowUnreachable::New(alloc());
+        curBlock_->end(ins);
+        curBlock_ = nullptr;
+        return true;
     }
 
     bool branchAndStartThen(MDefinition* cond, MBasicBlock** thenBlock, MBasicBlock** elseBlock)
@@ -1432,7 +1452,9 @@ EmitHeapAddress(FunctionCompiler& f, MDefinition** base, MAsmJSHeapAccess* acces
     if (endOffset < offset)
         return false;
     bool accessNeedsBoundsCheck = true;
-    if (endOffset > f.mirGen().foldableOffsetRange(accessNeedsBoundsCheck)) {
+    // Assume worst case.
+    bool atomicAccess = true;
+    if (endOffset > f.mirGen().foldableOffsetRange(accessNeedsBoundsCheck, atomicAccess)) {
         MDefinition* rhs = f.constant(Int32Value(offset), MIRType_Int32);
         *base = f.binary<MAdd>(*base, rhs, MIRType_Int32);
         offset = 0;
@@ -2380,6 +2402,17 @@ EmitTruncate(FunctionCompiler& f, bool isUnsigned, MDefinition** def)
 }
 
 static bool
+EmitConvertI64ToFloatingPoint(FunctionCompiler& f, ValType type, bool isUnsigned,
+                              MDefinition** def)
+{
+    MDefinition* in;
+    if (!EmitExpr(f, &in))
+        return false;
+    *def = f.convertI64ToFloatingPoint(in, ToMIRType(type), isUnsigned);
+    return true;
+}
+
+static bool
 EmitSimdOp(FunctionCompiler& f, ValType type, SimdOperation op, SimdSign sign, MDefinition** def)
 {
     switch (op) {
@@ -2561,6 +2594,8 @@ EmitBrTable(FunctionCompiler& f, MDefinition** def)
     if (!EmitExpr(f, &index))
         return false;
 
+    *def = nullptr;
+
     // Empty table
     if (!numCases)
         return f.br(defaultDepth);
@@ -2592,7 +2627,6 @@ EmitBrTable(FunctionCompiler& f, MDefinition** def)
     if (!f.joinSwitch(switchBlock, cases, defaultBlock))
         return false;
 
-    *def = nullptr;
     return true;
 }
 
@@ -2615,6 +2649,13 @@ EmitReturn(FunctionCompiler& f, MDefinition** def)
 
     *def = nullptr;
     return true;
+}
+
+static bool
+EmitUnreachable(FunctionCompiler& f, MDefinition** def)
+{
+    *def = nullptr;
+    return f.unreachableTrap();
 }
 
 static bool
@@ -2690,6 +2731,8 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
         return EmitBrTable(f, def);
       case Expr::Return:
         return EmitReturn(f, def);
+      case Expr::Unreachable:
+        return EmitUnreachable(f, def);
 
       // Calls
       case Expr::Call:
@@ -2698,7 +2741,6 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
         return EmitCallIndirect(f, exprOffset, def);
       case Expr::CallImport:
         return EmitCallImport(f, exprOffset, def);
-
 
       // Locals and globals
       case Expr::GetLocal:
@@ -2880,6 +2922,10 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
         return EmitUnary<MToFloat32>(f, def);
       case Expr::F32ConvertUI32:
         return EmitUnary<MAsmJSUnsignedToFloat32>(f, def);
+      case Expr::F32ConvertSI64:
+      case Expr::F32ConvertUI64:
+        return EmitConvertI64ToFloatingPoint(f, ValType::F32,
+                                             IsUnsigned(op == Expr::F32ConvertUI64), def);
       case Expr::F32Load:
         return EmitLoad(f, Scalar::Float32, def);
       case Expr::F32Store:
@@ -2929,6 +2975,10 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
         return EmitUnary<MToDouble>(f, def);
       case Expr::F64ConvertUI32:
         return EmitUnary<MAsmJSUnsignedToDouble>(f, def);
+      case Expr::F64ConvertSI64:
+      case Expr::F64ConvertUI64:
+        return EmitConvertI64ToFloatingPoint(f, ValType::F64,
+                                             IsUnsigned(op == Expr::F64ConvertUI64), def);
       case Expr::F64Load:
         return EmitLoad(f, Scalar::Float64, def);
       case Expr::F64Store:
@@ -3004,10 +3054,6 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
       case Expr::F64CopySign:
       case Expr::F64Nearest:
       case Expr::F64Trunc:
-      case Expr::F32ConvertSI64:
-      case Expr::F32ConvertUI64:
-      case Expr::F64ConvertSI64:
-      case Expr::F64ConvertUI64:
       case Expr::I64ReinterpretF64:
       case Expr::F64ReinterpretI64:
       case Expr::I32ReinterpretF32:
@@ -3033,7 +3079,6 @@ EmitExpr(FunctionCompiler& f, MDefinition** def)
       case Expr::I64Rotl:
       case Expr::MemorySize:
       case Expr::GrowMemory:
-      case Expr::Unreachable:
         MOZ_CRASH("NYI");
         break;
       case Expr::Limit:;

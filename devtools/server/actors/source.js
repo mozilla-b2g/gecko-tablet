@@ -169,10 +169,10 @@ let SourceActor = ActorClass({
   },
 
   get isSourceMapped() {
-    return !this.isInlineSource && (
+    return !!(!this.isInlineSource && (
       this._originalURL || this._generatedSource ||
         this.threadActor.sources.isPrettyPrinted(this.url)
-    );
+    ));
   },
 
   get isInlineSource() {
@@ -211,11 +211,13 @@ let SourceActor = ActorClass({
 
     return {
       actor: this.actorID,
+      generatedUrl: this.generatedSource ? this.generatedSource.url : null,
       url: this.url ? this.url.split(" -> ").pop() : null,
       addonID: this._addonID,
       addonPath: this._addonPath,
       isBlackBoxed: this.threadActor.sources.isBlackBoxed(this.url),
       isPrettyPrinted: this.threadActor.sources.isPrettyPrinted(this.url),
+      isSourceMapped: this.isSourceMapped,
       introductionUrl: introductionUrl ? introductionUrl.split(" -> ").pop() : null,
       introductionType: source ? source.introductionType : null
     };
@@ -442,7 +444,6 @@ let SourceActor = ActorClass({
    * Handler for the "prettyPrint" packet.
    */
   prettyPrint: method(function (indent) {
-    dump("EN IS HET EEN KEER NIET KUT " + JSON.stringify(indent) + "\n");
     this.threadActor.sources.prettyPrint(this.url, indent);
     return this._getSourceText()
       .then(this._sendToPrettyPrintWorker(indent))

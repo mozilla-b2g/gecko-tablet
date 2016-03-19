@@ -269,6 +269,9 @@ using namespace mozilla::system;
 
 #include "VRManagerParent.h"            // for VRManagerParent
 
+// For VP9Benchmark::sBenchmarkFpsPref
+#include "Benchmark.h"
+
 static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
 
 #if defined(XP_WIN)
@@ -1603,12 +1606,9 @@ RemoteWindowContext::GetInterface(const nsIID& aIID, void** aSink)
 }
 
 NS_IMETHODIMP
-RemoteWindowContext::OpenURI(nsIURI* aURI, uint32_t aFlags)
+RemoteWindowContext::OpenURI(nsIURI* aURI)
 {
-  URIParams uri;
-  SerializeURI(aURI, uri);
-
-  Unused << mTabParent->SendOpenURI(uri, aFlags);
+  mTabParent->LoadURL(aURI);
   return NS_OK;
 }
 
@@ -5712,6 +5712,17 @@ ContentParent::RecvGetAndroidSystemInfo(AndroidSystemInfo* aInfo)
   MOZ_CRASH("wrong platform!");
   return false;
 #endif
+}
+
+bool
+ContentParent::RecvNotifyBenchmarkResult(const nsString& aCodecName,
+                                         const uint32_t& aDecodeFPS)
+
+{
+  if (aCodecName.EqualsLiteral("VP9")) {
+    Preferences::SetUint(VP9Benchmark::sBenchmarkFpsPref, aDecodeFPS);
+  }
+  return true;
 }
 
 void

@@ -18,8 +18,6 @@
 
 #include "asmjs/WasmTypes.h"
 
-#include "fdlibm.h"
-
 #include "jslibmath.h"
 #include "jsmath.h"
 
@@ -77,6 +75,13 @@ BadIndirectCall()
 {
     JSContext* cx = JSRuntime::innermostWasmActivation()->cx();
     JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_IND_CALL);
+}
+
+static void
+UnreachableTrap()
+{
+    JSContext* cx = JSRuntime::innermostWasmActivation()->cx();
+    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_WASM_UNREACHABLE);
 }
 
 static int32_t
@@ -186,6 +191,8 @@ wasm::AddressOf(SymbolicAddress imm, ExclusiveContext* cx)
         return FuncCast(OnImpreciseConversion, Args_General0);
       case SymbolicAddress::BadIndirectCall:
         return FuncCast(BadIndirectCall, Args_General0);
+      case SymbolicAddress::UnreachableTrap:
+        return FuncCast(UnreachableTrap, Args_General0);
       case SymbolicAddress::HandleExecutionInterrupt:
         return FuncCast(WasmHandleExecutionInterrupt, Args_General0);
       case SymbolicAddress::InvokeImport_Void:
@@ -227,30 +234,30 @@ wasm::AddressOf(SymbolicAddress imm, ExclusiveContext* cx)
         // Workaround a VS 2013 sin issue, see math_sin_uncached.
         return FuncCast<double (double)>(js::math_sin_uncached, Args_Double_Double);
 #else
-        return FuncCast<double (double)>(fdlibm::sin, Args_Double_Double);
+        return FuncCast<double (double)>(sin, Args_Double_Double);
 #endif
       case SymbolicAddress::CosD:
-        return FuncCast<double (double)>(fdlibm::cos, Args_Double_Double);
+        return FuncCast<double (double)>(cos, Args_Double_Double);
       case SymbolicAddress::TanD:
-        return FuncCast<double (double)>(fdlibm::tan, Args_Double_Double);
+        return FuncCast<double (double)>(tan, Args_Double_Double);
       case SymbolicAddress::ASinD:
-        return FuncCast<double (double)>(fdlibm::asin, Args_Double_Double);
+        return FuncCast<double (double)>(asin, Args_Double_Double);
       case SymbolicAddress::ACosD:
-        return FuncCast<double (double)>(fdlibm::acos, Args_Double_Double);
+        return FuncCast<double (double)>(acos, Args_Double_Double);
       case SymbolicAddress::ATanD:
-        return FuncCast<double (double)>(fdlibm::atan, Args_Double_Double);
+        return FuncCast<double (double)>(atan, Args_Double_Double);
       case SymbolicAddress::CeilD:
-        return FuncCast<double (double)>(fdlibm::ceil, Args_Double_Double);
+        return FuncCast<double (double)>(ceil, Args_Double_Double);
       case SymbolicAddress::CeilF:
-        return FuncCast<float (float)>(fdlibm::ceilf, Args_Float32_Float32);
+        return FuncCast<float (float)>(ceilf, Args_Float32_Float32);
       case SymbolicAddress::FloorD:
-        return FuncCast<double (double)>(fdlibm::floor, Args_Double_Double);
+        return FuncCast<double (double)>(floor, Args_Double_Double);
       case SymbolicAddress::FloorF:
-        return FuncCast<float (float)>(fdlibm::floorf, Args_Float32_Float32);
+        return FuncCast<float (float)>(floorf, Args_Float32_Float32);
       case SymbolicAddress::ExpD:
-        return FuncCast<double (double)>(fdlibm::exp, Args_Double_Double);
+        return FuncCast<double (double)>(exp, Args_Double_Double);
       case SymbolicAddress::LogD:
-        return FuncCast<double (double)>(fdlibm::log, Args_Double_Double);
+        return FuncCast<double (double)>(log, Args_Double_Double);
       case SymbolicAddress::PowD:
         return FuncCast(ecmaPow, Args_Double_DoubleDouble);
       case SymbolicAddress::ATan2D:

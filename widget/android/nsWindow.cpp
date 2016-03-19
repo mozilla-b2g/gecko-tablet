@@ -89,54 +89,12 @@ using namespace mozilla::layers;
 
 NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, nsBaseWidget)
 
-static gfx::IntSize gAndroidScreenBounds;
-
 #include "mozilla/layers/CompositorChild.h"
 #include "mozilla/layers/CompositorParent.h"
 #include "mozilla/layers/LayerTransactionParent.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Services.h"
 #include "nsThreadUtils.h"
-
-class ContentCreationNotifier;
-static StaticRefPtr<ContentCreationNotifier> gContentCreationNotifier;
-
-// A helper class to send updates when content processes
-// are created. Currently an update for the screen size is sent.
-class ContentCreationNotifier final : public nsIObserver
-{
-private:
-    ~ContentCreationNotifier() {}
-
-public:
-    NS_DECL_ISUPPORTS
-
-    NS_IMETHOD Observe(nsISupports* aSubject,
-                       const char* aTopic,
-                       const char16_t* aData) override
-    {
-        if (!strcmp(aTopic, "ipc:content-created")) {
-            nsCOMPtr<nsIObserver> cpo = do_QueryInterface(aSubject);
-            ContentParent* cp = static_cast<ContentParent*>(cpo.get());
-            Unused << cp->SendScreenSizeChanged(gAndroidScreenBounds);
-        } else if (!strcmp(aTopic, "xpcom-shutdown")) {
-            nsCOMPtr<nsIObserverService> obs =
-                mozilla::services::GetObserverService();
-            if (obs) {
-                obs->RemoveObserver(static_cast<nsIObserver*>(this),
-                                    "xpcom-shutdown");
-                obs->RemoveObserver(static_cast<nsIObserver*>(this),
-                                    "ipc:content-created");
-            }
-            gContentCreationNotifier = nullptr;
-        }
-
-        return NS_OK;
-    }
-};
-
-NS_IMPL_ISUPPORTS(ContentCreationNotifier,
-                  nsIObserver)
 
 // All the toplevel windows that have been created; these are in
 // stacking order, so the window at gTopLevelWindows[0] is the topmost
@@ -383,6 +341,7 @@ class nsWindow::NPZCSupport final
     // Lock for keeping mWindow alive when accessed off of the Gecko thread.
     Mutex mWindowLock;
     NativePanZoomController::GlobalRef mNPZC;
+    int mPreviousButtons;
 
 public:
     typedef NativePanZoomController::Natives<NPZCSupport> Base;
@@ -392,6 +351,7 @@ public:
         : mWindow(aWindow)
         , mWindowLock("NPZCSupport")
         , mNPZC(aNPZC)
+        , mPreviousButtons(0)
     {
         if (mWindow->mNPZCSupport) {
             mWindow->mNPZCSupport->DetachFromWindow();
@@ -580,8 +540,51 @@ public:
         return true;
     }
 
-    bool HandleHoverEvent(int32_t aAction, int64_t aTime, int32_t aMetaState,
-                          float aX, float aY)
+    static MouseInput::ButtonType GetButtonType(int button)
+    {
+        MouseInput::ButtonType result = MouseInput::NONE;
+
+        switch (button) {
+            case widget::sdk::MotionEvent::BUTTON_PRIMARY:
+                result = MouseInput::LEFT_BUTTON;
+                break;
+            case widget::sdk::MotionEvent::BUTTON_SECONDARY:
+                result = MouseInput::RIGHT_BUTTON;
+                break;
+            case widget::sdk::MotionEvent::BUTTON_TERTIARY:
+                result = MouseInput::MIDDLE_BUTTON;
+                break;
+            default:
+                break;
+        }
+
+        return result;
+    }
+
+    static int16_t ConvertButtons(int buttons) {
+        int16_t result = 0;
+
+        if (buttons & widget::sdk::MotionEvent::BUTTON_PRIMARY) {
+            result |= WidgetMouseEventBase::eLeftButtonFlag;
+        }
+        if (buttons & widget::sdk::MotionEvent::BUTTON_SECONDARY) {
+            result |= WidgetMouseEventBase::eRightButtonFlag;
+        }
+        if (buttons & widget::sdk::MotionEvent::BUTTON_TERTIARY) {
+            result |= WidgetMouseEventBase::eMiddleButtonFlag;
+        }
+        if (buttons & widget::sdk::MotionEvent::BUTTON_BACK) {
+            result |= WidgetMouseEventBase::e4thButtonFlag;
+        }
+        if (buttons & widget::sdk::MotionEvent::BUTTON_FORWARD) {
+            result |= WidgetMouseEventBase::e5thButtonFlag;
+        }
+
+        return result;
+    }
+
+    bool HandleMouseEvent(int32_t aAction, int64_t aTime, int32_t aMetaState,
+                          float aX, float aY, int buttons)
     {
         MOZ_ASSERT(AndroidBridge::IsJavaUiThread());
 
@@ -596,28 +599,42 @@ public:
             return false;
         }
 
-        MouseInput::MouseType type = MouseInput::MOUSE_NONE;
+        MouseInput::MouseType mouseType = MouseInput::MOUSE_NONE;
+        MouseInput::ButtonType buttonType = MouseInput::NONE;
         switch (aAction) {
+            case AndroidMotionEvent::ACTION_DOWN:
+                mouseType = MouseInput::MOUSE_DOWN;
+                buttonType = GetButtonType(buttons ^ mPreviousButtons);
+                mPreviousButtons = buttons;
+                break;
+            case AndroidMotionEvent::ACTION_UP:
+                mouseType = MouseInput::MOUSE_UP;
+                buttonType = GetButtonType(buttons ^ mPreviousButtons);
+                mPreviousButtons = buttons;
+                break;
+            case AndroidMotionEvent::ACTION_MOVE:
+                mouseType = MouseInput::MOUSE_MOVE;
+                break;
             case AndroidMotionEvent::ACTION_HOVER_MOVE:
-                type = MouseInput::MOUSE_MOVE;
+                mouseType = MouseInput::MOUSE_MOVE;
                 break;
             case AndroidMotionEvent::ACTION_HOVER_ENTER:
-                type = MouseInput::MOUSE_WIDGET_ENTER;
+                mouseType = MouseInput::MOUSE_WIDGET_ENTER;
                 break;
             case AndroidMotionEvent::ACTION_HOVER_EXIT:
-                type = MouseInput::MOUSE_WIDGET_EXIT;
+                mouseType = MouseInput::MOUSE_WIDGET_EXIT;
                 break;
             default:
                 break;
         }
 
-        if (type == MouseInput::MOUSE_NONE) {
+        if (mouseType == MouseInput::MOUSE_NONE) {
             return false;
         }
 
         ScreenPoint origin = ScreenPoint(aX, aY);
 
-        MouseInput input(type, MouseInput::NONE, 0, origin, aTime, TimeStamp(), GetModifiers(aMetaState));
+        MouseInput input(mouseType, buttonType, nsIDOMMouseEvent::MOZ_SOURCE_MOUSE, ConvertButtons(buttons), origin, aTime, TimeStamp(), GetModifiers(aMetaState));
 
         ScrollableLayerGuid guid;
         uint64_t blockId;
@@ -1014,48 +1031,6 @@ public:
 
             window.Resize(aWindowWidth, aWindowHeight, /* repaint */ false);
         }
-
-        if (aScreenWidth == gAndroidScreenBounds.width &&
-            aScreenHeight == gAndroidScreenBounds.height) {
-
-            return;
-        }
-
-        gAndroidScreenBounds.width = aScreenWidth;
-        gAndroidScreenBounds.height = aScreenHeight;
-
-        if (!XRE_IsParentProcess() &&
-            !Preferences::GetBool("browser.tabs.remote.desktopbehavior",
-                                  false)) {
-            return;
-        }
-
-        // Tell the content process the new screen size.
-        nsTArray<ContentParent*> cplist;
-        ContentParent::GetAll(cplist);
-        for (uint32_t i = 0; i < cplist.Length(); ++i) {
-            Unused << cplist[i]->SendScreenSizeChanged(gAndroidScreenBounds);
-        }
-
-        if (gContentCreationNotifier) {
-            return;
-        }
-
-        // If the content process is not created yet, wait until it's
-        // created and then tell it the screen size.
-        nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
-        if (!obs) {
-            return;
-        }
-
-        RefPtr<ContentCreationNotifier> notifier = new ContentCreationNotifier;
-        if (NS_FAILED(obs->AddObserver(notifier, "xpcom-shutdown", false)) ||
-            NS_FAILED(obs->AddObserver(
-                notifier, "ipc:content-created", false))) {
-            return;
-        }
-
-        gContentCreationNotifier = notifier;
     }
 
     void CreateCompositor(int32_t aWidth, int32_t aHeight)
@@ -1909,15 +1884,6 @@ nsWindow::SetSelectionDragState(bool aState)
     }
 }
 
-gfx::IntSize
-nsWindow::GetAndroidScreenBounds()
-{
-    if (XRE_IsContentProcess()) {
-        return ContentChild::GetSingleton()->GetScreenSize();
-    }
-    return gAndroidScreenBounds;
-}
-
 void *
 nsWindow::GetNativeData(uint32_t aDataType)
 {
@@ -1929,9 +1895,14 @@ nsWindow::GetNativeData(uint32_t aDataType)
         case NS_NATIVE_WIDGET:
             return (void *) this;
 
-        case NS_RAW_NATIVE_IME_CONTEXT:
+        case NS_RAW_NATIVE_IME_CONTEXT: {
+            void* pseudoIMEContext = GetPseudoIMEContext();
+            if (pseudoIMEContext) {
+                return pseudoIMEContext;
+            }
             // We assume that there is only one context per process on Android
             return NS_ONLY_ONE_NATIVE_IME_CONTEXT;
+        }
 
         case NS_NATIVE_NEW_EGL_SURFACE:
             if (!mGLControllerSupport) {

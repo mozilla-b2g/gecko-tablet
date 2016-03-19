@@ -12,6 +12,8 @@ const XULNS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/AppConstants.jsm");
+// Set us up to use async prefs in the parent process.
+Cu.import("resource://gre/modules/AsyncPrefs.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "AboutHome",
                                   "resource:///modules/AboutHome.jsm");
@@ -27,6 +29,12 @@ XPCOMUtils.defineLazyModuleGetter(this, "NewTabUtils",
 
 XPCOMUtils.defineLazyModuleGetter(this, "NewTabPrefsProvider",
                                   "resource:///modules/NewTabPrefsProvider.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "NewTabWebChannel",
+                                  "resource:///modules/NewTabWebChannel.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "NewTabMessages",
+                                  "resource:///modules/NewTabMessages.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "UITour",
                                   "resource:///modules/UITour.jsm");
@@ -739,6 +747,9 @@ BrowserGlue.prototype = {
     // handle any UI migration
     this._migrateUI();
 
+    // Evaluate Webapps.jsm early to resolve ts_paint regression bug 1256667.
+    Cu.import("resource://gre/modules/Webapps.jsm", {});
+
     PageThumbs.init();
     webrtcUI.init();
     AboutHome.init();
@@ -749,6 +760,8 @@ BrowserGlue.prototype = {
     AboutNewTab.init();
 
     NewTabPrefsProvider.prefs.init();
+    NewTabWebChannel.init();
+    NewTabMessages.init();
 
     SessionStore.init();
     BrowserUITelemetry.init();
@@ -1054,6 +1067,9 @@ BrowserGlue.prototype = {
 
     SelfSupportBackend.uninit();
     NewTabPrefsProvider.prefs.uninit();
+    NewTabWebChannel.uninit();
+    NewTabMessages.uninit();
+
     AboutNewTab.uninit();
     webrtcUI.uninit();
     FormValidationHandler.uninit();

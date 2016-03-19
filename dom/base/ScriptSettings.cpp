@@ -334,7 +334,9 @@ AutoJSAPI::InitInternal(JSObject* aGlobal, JSContext* aCx, bool aIsMainThread)
 {
   MOZ_ASSERT(aCx);
   MOZ_ASSERT(aIsMainThread == NS_IsMainThread());
-  MOZ_ASSERT(!JS_IsExceptionPending(aCx));
+#ifdef DEBUG
+  bool haveException = JS_IsExceptionPending(aCx);
+#endif // DEBUG
 
   mCx = aCx;
   mIsMainThread = aIsMainThread;
@@ -356,6 +358,72 @@ AutoJSAPI::InitInternal(JSObject* aGlobal, JSContext* aCx, bool aIsMainThread)
   if (aIsMainThread) {
     JS_SetErrorReporter(rt, xpc::SystemErrorReporter);
   }
+
+#ifdef DEBUG
+  if (haveException) {
+    JS::Rooted<JS::Value> exn(aCx);
+    JS_GetPendingException(aCx, &exn);
+
+    JS_ClearPendingException(aCx);
+    if (exn.isObject()) {
+      JS::Rooted<JSObject*> exnObj(aCx, &exn.toObject());
+
+      nsAutoJSString stack, filename, name, message;
+      int32_t line;
+
+      JS::Rooted<JS::Value> tmp(aCx);
+      if (!JS_GetProperty(aCx, exnObj, "filename", &tmp)) {
+        JS_ClearPendingException(aCx);
+      }
+      if (tmp.isUndefined()) {
+        if (!JS_GetProperty(aCx, exnObj, "fileName", &tmp)) {
+          JS_ClearPendingException(aCx);
+        }
+      }
+
+      if (!filename.init(aCx, tmp)) {
+        JS_ClearPendingException(aCx);
+      }
+
+      if (!JS_GetProperty(aCx, exnObj, "stack", &tmp) ||
+          !stack.init(aCx, tmp)) {
+        JS_ClearPendingException(aCx);
+      }
+
+      if (!JS_GetProperty(aCx, exnObj, "name", &tmp) ||
+          !name.init(aCx, tmp)) {
+        JS_ClearPendingException(aCx);
+      }
+
+      if (!JS_GetProperty(aCx, exnObj, "message", &tmp) ||
+          !message.init(aCx, tmp)) {
+        JS_ClearPendingException(aCx);
+      }
+
+      if (!JS_GetProperty(aCx, exnObj, "lineNumber", &tmp) ||
+          !JS::ToInt32(aCx, tmp, &line)) {
+        JS_ClearPendingException(aCx);
+        line = 0;
+      }
+
+      printf_stderr("PREEXISTING EXCEPTION OBJECT: '%s: %s'\n%s:%d\n%s\n",
+                    NS_ConvertUTF16toUTF8(name).get(),
+                    NS_ConvertUTF16toUTF8(message).get(),
+                    NS_ConvertUTF16toUTF8(filename).get(), line,
+                    NS_ConvertUTF16toUTF8(stack).get());
+    } else {
+      // It's a primitive... not much we can do other than stringify it.
+      nsAutoJSString exnStr;
+      if (!exnStr.init(aCx, exn)) {
+        JS_ClearPendingException(aCx);
+      }
+
+      printf_stderr("PREEXISTING EXCEPTION PRIMITIVE: %s\n",
+                    NS_ConvertUTF16toUTF8(exnStr).get());
+    }
+    MOZ_ASSERT(false, "We had an exception; we should not have");
+  }
+#endif // DEBUG
 }
 
 AutoJSAPI::AutoJSAPI(nsIGlobalObject* aGlobalObject,
@@ -764,27 +832,13 @@ danger::AutoCxPusher::IsStackTop() const
 AutoJSContext::AutoJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM_IN_IMPL)
   : mCx(nullptr)
 {
-  Init(false MOZ_GUARD_OBJECT_NOTIFIER_PARAM_TO_PARENT);
-}
-
-AutoJSContext::AutoJSContext(bool aSafe MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-  : mCx(nullptr)
-{
-  Init(aSafe MOZ_GUARD_OBJECT_NOTIFIER_PARAM_TO_PARENT);
-}
-
-void
-AutoJSContext::Init(bool aSafe MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-{
   JS::AutoSuppressGCAnalysis nogc;
   MOZ_ASSERT(!mCx, "mCx should not be initialized!");
 
   MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 
   nsXPConnect *xpc = nsXPConnect::XPConnect();
-  if (!aSafe) {
-    mCx = xpc->GetCurrentJSContext();
-  }
+  mCx = xpc->GetCurrentJSContext();
 
   if (!mCx) {
     mJSAPI.Init();
@@ -820,31 +874,17 @@ ThreadsafeAutoJSContext::operator JSContext*() const
 }
 
 AutoSafeJSContext::AutoSafeJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM_IN_IMPL)
-  : AutoJSContext(true MOZ_GUARD_OBJECT_NOTIFIER_PARAM_TO_PARENT)
-  , mAc(mCx, xpc::UnprivilegedJunkScope())
+  : AutoJSAPI()
 {
-}
+  MOZ_ASSERT(NS_IsMainThread());
 
-ThreadsafeAutoSafeJSContext::ThreadsafeAutoSafeJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM_IN_IMPL)
-{
   MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 
-  if (NS_IsMainThread()) {
-    mCx = nullptr;
-    mAutoSafeJSContext.emplace();
-  } else {
-    mCx = mozilla::dom::workers::GetCurrentThreadJSContext();
-    mRequest.emplace(mCx);
-  }
-}
-
-ThreadsafeAutoSafeJSContext::operator JSContext*() const
-{
-  if (mCx) {
-    return mCx;
-  } else {
-    return *mAutoSafeJSContext;
-  }
+  DebugOnly<bool> ok = Init(xpc::UnprivilegedJunkScope());
+  MOZ_ASSERT(ok,
+             "This is quite odd.  We should have crashed in the "
+             "xpc::NativeGlobal() call if xpc::UnprivilegedJunkScope() "
+             "returned null, and inited correctly otherwise!");
 }
 
 } // namespace mozilla

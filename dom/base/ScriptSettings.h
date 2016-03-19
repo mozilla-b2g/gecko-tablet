@@ -221,12 +221,20 @@ public:
   // This uses the SafeJSContext (or worker equivalent), and enters a null
   // compartment, so that the consumer is forced to select a compartment to
   // enter before manipulating objects.
+  //
+  // This variant will ensure that any errors reported by this AutoJSAPI as it
+  // comes off the stack will not fire error events or be associated with any
+  // particular web-visible global.
   void Init();
 
   // This uses the SafeJSContext (or worker equivalent), and enters the
   // compartment of aGlobalObject.
   // If aGlobalObject or its associated JS global are null then it returns
   // false and use of cx() will cause an assertion.
+  //
+  // If aGlobalObject represents a web-visible global, errors reported by this
+  // AutoJSAPI as it comes off the stack will fire the relevant error events and
+  // show up in the corresponding web console.
   bool Init(nsIGlobalObject* aGlobalObject);
 
   // This is a helper that grabs the native global associated with aObject and
@@ -237,6 +245,10 @@ public:
   // If aGlobalObject or its associated JS global are null then it returns
   // false and use of cx() will cause an assertion.
   // If aCx is null it will cause an assertion.
+  //
+  // If aGlobalObject represents a web-visible global, errors reported by this
+  // AutoJSAPI as it comes off the stack will fire the relevant error events and
+  // show up in the corresponding web console.
   bool Init(nsIGlobalObject* aGlobalObject, JSContext* aCx);
 
   // Convenience functions to take an nsPIDOMWindow* or nsGlobalWindow*,
@@ -427,13 +439,6 @@ public:
   operator JSContext*() const;
 
 protected:
-  explicit AutoJSContext(bool aSafe MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-
-  // We need this Init() method because we can't use delegating constructor for
-  // the moment. It is a C++11 feature and we do not require C++11 to be
-  // supported to be able to compile Gecko.
-  void Init(bool aSafe MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-
   JSContext* mCx;
   dom::AutoJSAPI mJSAPI;
   MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
@@ -461,28 +466,17 @@ private:
  *
  * Note - This is deprecated. Please use AutoJSAPI instead.
  */
-class MOZ_RAII AutoSafeJSContext : public AutoJSContext {
+class MOZ_RAII AutoSafeJSContext : public dom::AutoJSAPI {
 public:
   explicit AutoSafeJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
-private:
-  JSAutoCompartment mAc;
-};
-
-/**
- * Like AutoSafeJSContext but can be used safely on worker threads.
- */
-class MOZ_RAII ThreadsafeAutoSafeJSContext {
-public:
-  explicit ThreadsafeAutoSafeJSContext(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM);
-  operator JSContext*() const;
+  operator JSContext*() const
+  {
+    return cx();
+  }
 
 private:
-  JSContext* mCx; // Used on workers.  Null means mainthread.
-  Maybe<JSAutoRequest> mRequest; // Used on workers.
-  Maybe<AutoSafeJSContext> mAutoSafeJSContext; // Used on main thread.
   MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
-
 
 } // namespace mozilla
 

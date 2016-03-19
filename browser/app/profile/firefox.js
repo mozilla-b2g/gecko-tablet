@@ -64,9 +64,17 @@ pref("extensions.blocklist.itemURL", "https://blocklist.addons.mozilla.org/%LOCA
 
 // Kinto blocklist preferences
 pref("services.kinto.base", "https://firefox.settings.services.mozilla.com/v1");
+pref("services.kinto.changes.path", "/buckets/monitor/collections/changes/records");
 pref("services.kinto.bucket", "blocklists");
 pref("services.kinto.onecrl.collection", "certificates");
 pref("services.kinto.onecrl.checked", 0);
+
+// for now, let's keep kinto update out of the release channel
+#ifdef RELEASE_BUILD
+pref("services.kinto.update_enabled", false);
+#else
+pref("services.kinto.update_enabled", true);
+#endif
 
 pref("extensions.update.autoUpdateDefault", true);
 
@@ -1380,6 +1388,12 @@ pref("browser.newtabpage.remote", false);
 // Toggles endpoints allowed for remote newtab communications
 pref("browser.newtabpage.remote.mode", "production");
 
+// content-signature tests for remote newtab
+pref("browser.newtabpage.remote.content-signing-test", false);
+
+// verification keys for remote-hosted newtab page
+pref("browser.newtabpage.remote.keys", "");
+
 // Enable the DOM fullscreen API.
 pref("full-screen-api.enabled", true);
 
@@ -1593,10 +1607,8 @@ pref("browser.tabs.crashReporting.includeURL", false);
 pref("browser.tabs.crashReporting.emailMe", false);
 pref("browser.tabs.crashReporting.email", "");
 
-#ifndef RELEASE_BUILD
 #ifndef MOZ_MULET
 pref("layers.async-pan-zoom.enabled", true);
-#endif
 #endif
 
 // Enable e10s add-on interposition by default.

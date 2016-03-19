@@ -3207,6 +3207,7 @@ MustBeUInt32(MDefinition* def, MDefinition** pwrapped)
         return defConst->type() == MIRType_Int32 && defConst->toInt32() >= 0;
     }
 
+    *pwrapped = nullptr;  // silence GCC warning
     return false;
 }
 
@@ -4721,6 +4722,29 @@ MLoadElement::foldsTo(TempAllocator& alloc)
     if (store->index() != index())
         return this;
 
+    return foldsToStoredValue(alloc, store->value());
+}
+
+MDefinition*
+MLoadUnboxedObjectOrNull::foldsTo(TempAllocator& alloc)
+{
+    if (!dependency() || !dependency()->isStoreUnboxedObjectOrNull())
+        return this;
+
+    MStoreUnboxedObjectOrNull* store = dependency()->toStoreUnboxedObjectOrNull();
+    if (!store->block()->dominates(block()))
+        return this;
+
+    if (store->elements() != elements())
+        return this;
+
+    if (store->index() != index())
+        return this;
+
+    if (store->value()->type() == MIRType_ObjectOrNull)
+        return this;
+
+    MOZ_ASSERT(offsetAdjustment() == store->offsetAdjustment());
     return foldsToStoredValue(alloc, store->value());
 }
 

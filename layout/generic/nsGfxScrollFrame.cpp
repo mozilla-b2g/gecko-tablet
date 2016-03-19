@@ -326,6 +326,10 @@ nsHTMLScrollFrame::TryLayout(ScrollReflowState* aState,
   if (aAssumeVScroll != aState->mReflowedContentsWithVScrollbar ||
       (aAssumeHScroll != aState->mReflowedContentsWithHScrollbar &&
        ScrolledContentDependsOnHeight(aState))) {
+    if (aAssumeHScroll != aState->mReflowedContentsWithHScrollbar) {
+      nsLayoutUtils::MarkIntrinsicISizesDirtyIfDependentOnBSize(
+          mHelper.mScrolledFrame);
+    }
     ReflowScrolledFrame(aState, aAssumeHScroll, aAssumeVScroll, aKidMetrics,
                         false);
   }
@@ -429,7 +433,8 @@ nsHTMLScrollFrame::ScrolledContentDependsOnHeight(ScrollReflowState* aState)
 {
   // Return true if ReflowScrolledFrame is going to do something different
   // based on the presence of a horizontal scrollbar.
-  return (mHelper.mScrolledFrame->GetStateBits() & NS_FRAME_CONTAINS_RELATIVE_BSIZE) ||
+  return mHelper.mScrolledFrame->HasAnyStateBits(
+      NS_FRAME_CONTAINS_RELATIVE_BSIZE | NS_FRAME_DESCENDANT_INTRINSIC_ISIZE_DEPENDS_ON_BSIZE) ||
     aState->mReflowState.ComputedBSize() != NS_UNCONSTRAINEDSIZE ||
     aState->mReflowState.ComputedMinBSize() > 0 ||
     aState->mReflowState.ComputedMaxBSize() != NS_UNCONSTRAINEDSIZE;
@@ -2017,8 +2022,13 @@ ScrollFrameHelper::CompleteAsyncScroll(const nsRect &aRange, nsIAtom* aOrigin)
 
 #if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
 struct PluginSearchCtx {
+  enum PluginAction {
+    UPDATE, // Update the scroll visibility of any plugin frames using |value|
+    QUERY   // Set |value| to true if plugin frames were found
+  };
+  PluginAction action;
   nsIFrame* outer;
-  bool begin;
+  bool value;
 };
 static void
 NotifyPluginFramesCallback(nsISupports* aSupports, void* aCtx)
@@ -2033,7 +2043,11 @@ NotifyPluginFramesCallback(nsISupports* aSupports, void* aCtx)
         // Check to be sure this plugin is contained within a subframe of
         // the nsGfxScrollFrame that initiated this callback.
         if (nsLayoutUtils::IsAncestorFrameCrossDoc(pCtx->outer, plugin, nullptr)) {
-          plugin->SetScrollVisibility(pCtx->begin);
+          if (pCtx->action == PluginSearchCtx::UPDATE) {
+            plugin->SetScrollVisibility(pCtx->value);
+          } else if (pCtx->action == PluginSearchCtx::QUERY) {
+            pCtx->value = true;
+          }
         }
       }
     }
@@ -2063,7 +2077,7 @@ ScrollFrameHelper::NotifyPluginFrames(AsyncScrollEventType aEvent)
     }
     if (aEvent != mAsyncScrollEvent) {
       nsPresContext* presContext = mOuter->PresContext();
-      PluginSearchCtx ctx = { mOuter, (aEvent == BEGIN_APZ || aEvent == BEGIN_DOM) };
+      PluginSearchCtx ctx = { PluginSearchCtx::UPDATE, mOuter, (aEvent == BEGIN_APZ || aEvent == BEGIN_DOM) };
       presContext->Document()->EnumerateActivityObservers(NotifyPluginFramesCallback,
                                                           (void*)&ctx);
       presContext->Document()->EnumerateSubDocuments(NotifyPluginSubframesCallback,
@@ -2073,6 +2087,28 @@ ScrollFrameHelper::NotifyPluginFrames(AsyncScrollEventType aEvent)
     }
   }
 #endif
+}
+
+bool
+ScrollFrameHelper::HasPluginFrames()
+{
+#if defined(XP_WIN) || defined(MOZ_WIDGET_GTK)
+  if (XRE_IsContentProcess()) {
+    nsPresContext* presContext = mOuter->PresContext();
+    PluginSearchCtx ctx = { PluginSearchCtx::QUERY, mOuter, false };
+    presContext->Document()->EnumerateActivityObservers(NotifyPluginFramesCallback,
+                                                        (void*)&ctx);
+    if (ctx.value) {
+      return true;
+    }
+    presContext->Document()->EnumerateSubDocuments(NotifyPluginSubframesCallback,
+                                                   (void*)&ctx);
+    if (ctx.value) {
+      return true;
+    }
+  }
+#endif
+  return false;
 }
 
 void
@@ -2671,7 +2707,8 @@ ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange, nsIAtom* aOri
   }
 
   nsRect oldDisplayPort;
-  nsLayoutUtils::GetDisplayPort(mOuter->GetContent(), &oldDisplayPort);
+  nsIContent* content = mOuter->GetContent();
+  nsLayoutUtils::GetDisplayPort(content, &oldDisplayPort);
   oldDisplayPort.MoveBy(-mScrolledFrame->GetPosition());
 
   // Update frame position for scrolling
@@ -2697,24 +2734,26 @@ ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange, nsIAtom* aOri
     // skip the paint.
     nsRect displayPort;
     bool usingDisplayPort =
-      nsLayoutUtils::GetDisplayPort(mOuter->GetContent(), &displayPort);
+      nsLayoutUtils::GetDisplayPort(content, &displayPort);
     displayPort.MoveBy(-mScrolledFrame->GetPosition());
 
-    PAINT_SKIP_LOG("New scrollpos %s usingDP %d dpEqual %d scrollableByApz %d\n",
+    PAINT_SKIP_LOG("New scrollpos %s usingDP %d dpEqual %d scrollableByApz %d plugins %d sle %d\n",
         Stringify(CSSPoint::FromAppUnits(GetScrollPosition())).c_str(),
         usingDisplayPort, displayPort.IsEqualEdges(oldDisplayPort),
-        mScrollableByAPZ);
+        mScrollableByAPZ, HasPluginFrames(),
+        content->GetComposedDoc()->HasScrollLinkedEffect());
     if (usingDisplayPort && displayPort.IsEqualEdges(oldDisplayPort)) {
       if (LastScrollOrigin() == nsGkAtoms::apz) {
         schedulePaint = false;
         PAINT_SKIP_LOG("Skipping due to APZ scroll\n");
-      } else if (mScrollableByAPZ) {
+      } else if (mScrollableByAPZ && !HasPluginFrames() &&
+                 !content->GetComposedDoc()->HasScrollLinkedEffect()) {
         nsIWidget* widget = presContext->GetNearestWidget();
         LayerManager* manager = widget ? widget->GetLayerManager() : nullptr;
         ShadowLayerForwarder* forwarder = manager ? manager->AsShadowForwarder() : nullptr;
         if (forwarder && forwarder->HasShadowManager()) {
           mozilla::layers::FrameMetrics::ViewID id;
-          DebugOnly<bool> success = nsLayoutUtils::FindIDFor(mOuter->GetContent(), &id);
+          DebugOnly<bool> success = nsLayoutUtils::FindIDFor(content, &id);
           MOZ_ASSERT(success); // we have a displayport, we better have an ID
           forwarder->GetShadowManager()->SendUpdateScrollOffset(id,
               mScrollGeneration, CSSPoint::FromAppUnits(GetScrollPosition()));

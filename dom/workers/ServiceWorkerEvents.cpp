@@ -10,6 +10,7 @@
 #include "nsIHttpChannelInternal.h"
 #include "nsINetworkInterceptController.h"
 #include "nsIOutputStream.h"
+#include "nsIScriptError.h"
 #include "nsContentPolicyUtils.h"
 #include "nsContentUtils.h"
 #include "nsComponentManagerUtils.h"
@@ -19,6 +20,8 @@
 #include "nsNetUtil.h"
 #include "nsSerializationHelper.h"
 #include "nsQueryObject.h"
+#include "ServiceWorkerClient.h"
+#include "ServiceWorkerManager.h"
 
 #include "mozilla/ErrorResult.h"
 #include "mozilla/Preferences.h"
@@ -34,6 +37,9 @@
 #include "mozilla/dom/workers/bindings/ServiceWorker.h"
 
 #ifndef MOZ_SIMPLEPUSH
+#include "mozilla/dom/PushEventBinding.h"
+#include "mozilla/dom/PushMessageDataBinding.h"
+
 #include "nsIUnicodeDecoder.h"
 #include "nsIUnicodeEncoder.h"
 
@@ -48,6 +54,48 @@
 #include "xpcpublic.h"
 
 using namespace mozilla::dom;
+using namespace mozilla::dom::workers;
+
+namespace {
+
+void
+AsyncLog(nsIInterceptedChannel *aInterceptedChannel,
+         const nsACString& aRespondWithScriptSpec,
+         uint32_t aRespondWithLineNumber, uint32_t aRespondWithColumnNumber,
+         const nsACString& aMessageName, const nsTArray<nsString>& aParams)
+{
+  MOZ_ASSERT(aInterceptedChannel);
+  nsCOMPtr<nsIConsoleReportCollector> reporter =
+    aInterceptedChannel->GetConsoleReportCollector();
+  if (reporter) {
+    reporter->AddConsoleReport(nsIScriptError::errorFlag,
+                               NS_LITERAL_CSTRING("Service Worker Interception"),
+                               nsContentUtils::eDOM_PROPERTIES,
+                               aRespondWithScriptSpec,
+                               aRespondWithLineNumber,
+                               aRespondWithColumnNumber,
+                               aMessageName, aParams);
+  }
+}
+
+template<typename... Params>
+void
+AsyncLog(nsIInterceptedChannel* aInterceptedChannel,
+         const nsACString& aRespondWithScriptSpec,
+         uint32_t aRespondWithLineNumber, uint32_t aRespondWithColumnNumber,
+         // We have to list one explicit string so that calls with an
+         // nsTArray of params won't end up in here.
+         const nsACString& aMessageName, const nsAString& aFirstParam,
+         Params&&... aParams)
+{
+  nsTArray<nsString> paramsList(sizeof...(Params) + 1);
+  StringArrayAppender::Append(paramsList, sizeof...(Params) + 1,
+                              aFirstParam, Forward<Params>(aParams)...);
+  AsyncLog(aInterceptedChannel, aRespondWithScriptSpec, aRespondWithLineNumber,
+           aRespondWithColumnNumber, aMessageName, paramsList);
+}
+
+} // anonymous namespace
 
 BEGIN_WORKERS_NAMESPACE
 
@@ -107,43 +155,6 @@ FetchEvent::Constructor(const GlobalObject& aGlobal,
 }
 
 namespace {
-
-void
-AsyncLog(nsIInterceptedChannel *aInterceptedChannel,
-         const nsACString& aRespondWithScriptSpec,
-         uint32_t aRespondWithLineNumber, uint32_t aRespondWithColumnNumber,
-         const nsACString& aMessageName, const nsTArray<nsString>& aParams)
-{
-  MOZ_ASSERT(aInterceptedChannel);
-  nsCOMPtr<nsIConsoleReportCollector> reporter =
-    aInterceptedChannel->GetConsoleReportCollector();
-  if (reporter) {
-    reporter->AddConsoleReport(nsIScriptError::errorFlag,
-                               NS_LITERAL_CSTRING("Service Worker Interception"),
-                               nsContentUtils::eDOM_PROPERTIES,
-                               aRespondWithScriptSpec,
-                               aRespondWithLineNumber,
-                               aRespondWithColumnNumber,
-                               aMessageName, aParams);
-  }
-}
-
-template<typename... Params>
-void
-AsyncLog(nsIInterceptedChannel* aInterceptedChannel,
-         const nsACString& aRespondWithScriptSpec,
-         uint32_t aRespondWithLineNumber, uint32_t aRespondWithColumnNumber,
-         // We have to list one explicit string so that calls with an
-         // nsTArray of params won't end up in here.
-         const nsACString& aMessageName, const nsAString& aFirstParam,
-         Params&&... aParams)
-{
-  nsTArray<nsString> paramsList(sizeof...(Params) + 1);
-  StringArrayAppender::Append(paramsList, sizeof...(Params) + 1,
-                              aFirstParam, Forward<Params>(aParams)...);
-  AsyncLog(aInterceptedChannel, aRespondWithScriptSpec, aRespondWithLineNumber,
-           aRespondWithColumnNumber, aMessageName, paramsList);
-}
 
 class FinishResponse final : public nsRunnable
 {
@@ -1018,6 +1029,12 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(PushMessageData)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
+JSObject*
+PushMessageData::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
+{
+  return mozilla::dom::PushMessageDataBinding::Wrap(aCx, this, aGivenProto);
+}
+
 void
 PushMessageData::Json(JSContext* cx, JS::MutableHandle<JS::Value> aRetval,
                       ErrorResult& aRv)
@@ -1126,6 +1143,12 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(PushEvent)
 NS_INTERFACE_MAP_END_INHERITING(ExtendableEvent)
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(PushEvent, ExtendableEvent, mData)
+
+JSObject*
+PushEvent::WrapObjectInternal(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
+{
+  return mozilla::dom::PushEventBinding::Wrap(aCx, this, aGivenProto);
+}
 
 #endif /* ! MOZ_SIMPLEPUSH */
 

@@ -3274,6 +3274,7 @@ void ContainerState::FinishPaintedLayerData(PaintedLayerData& aData, FindOpaqueB
         containingPaintedLayerData->mReferenceFrame);
       containingPaintedLayerData->mMaybeHitRegion.Or(
         containingPaintedLayerData->mMaybeHitRegion, rect);
+      containingPaintedLayerData->mMaybeHitRegion.SimplifyOutward(8);
     }
     nsLayoutUtils::TransformToAncestorAndCombineRegions(
       data->mHitRegion.GetBounds(),
@@ -6076,7 +6077,8 @@ ContainerState::CreateMaskLayer(Layer *aLayer,
     GetMaskLayerImageCache()->FindImageFor(&lookupKey);
 
   if (!container) {
-    IntSize surfaceSizeInt(NSToIntCeil(surfaceSize.width),
+    // Make mask image width aligned to 4. See Bug 1245552.
+    IntSize surfaceSizeInt(GetAlignedStride<4>(NSToIntCeil(surfaceSize.width)),
                            NSToIntCeil(surfaceSize.height));
     // no existing mask image, so build a new one
     RefPtr<DrawTarget> dt =

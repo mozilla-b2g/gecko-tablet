@@ -118,7 +118,7 @@ ShaderOutput(gl::GLContext* gl)
         }
     }
 
-    return SH_GLSL_OUTPUT;
+    return SH_GLSL_COMPATIBILITY_OUTPUT;
 }
 
 webgl::ShaderValidator*
@@ -129,7 +129,7 @@ WebGLContext::CreateShaderValidator(GLenum shaderType) const
 
     ShShaderSpec spec = IsWebGL2() ? SH_WEBGL2_SPEC : SH_WEBGL_SPEC;
     ShShaderOutput outputLanguage = gl->IsGLES() ? SH_ESSL_OUTPUT
-                                                 : SH_GLSL_OUTPUT;
+                                                 : SH_GLSL_COMPATIBILITY_OUTPUT;
 
     // If we're using WebGL2 we want a more specific version of GLSL
     if (IsWebGL2())
@@ -389,6 +389,21 @@ ShaderValidator::FindAttribUserNameByMappedName(const std::string& mappedName,
     for (auto itr = attribs.begin(); itr != attribs.end(); ++itr) {
         if (itr->mappedName == mappedName) {
             *out_userName = &(itr->name);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool
+ShaderValidator::FindActiveOutputMappedNameByUserName(const std::string& userName,
+                                                      const std::string** const out_mappedName) const
+{
+    const std::vector<sh::OutputVariable>& varibles = *ShGetOutputVariables(mHandle);
+    for (auto itr = varibles.begin(); itr != varibles.end(); ++itr) {
+        if (itr->name == userName) {
+            *out_mappedName = &(itr->mappedName);
             return true;
         }
     }

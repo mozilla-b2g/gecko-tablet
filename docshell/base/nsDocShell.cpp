@@ -375,7 +375,10 @@ ForEachPing(nsIContent* aContent, ForEachPingCallback aCallback, void* aClosure)
     ios->NewURI(NS_ConvertUTF16toUTF8(tokenizer.nextToken()),
                 doc->GetDocumentCharacterSet().get(),
                 baseURI, getter_AddRefs(uri));
-
+    // if we can't generate a valid URI, then there is nothing to do
+    if (!uri) {
+      continue;
+    }
     // Explicitly not allow loading data: URIs
     bool isDataScheme =
       (NS_SUCCEEDED(uri->SchemeIs("data", &isDataScheme)) && isDataScheme);
@@ -1025,16 +1028,11 @@ nsDocShell::GetInterface(const nsIID& aIID, void** aSink)
     *aSink = mFind;
     NS_ADDREF((nsISupports*)*aSink);
     return NS_OK;
-  } else if (aIID.Equals(NS_GET_IID(nsIEditingSession)) &&
-             NS_SUCCEEDED(EnsureEditorData())) {
-    nsCOMPtr<nsIEditingSession> editingSession;
-    mEditorData->GetEditingSession(getter_AddRefs(editingSession));
-    if (editingSession) {
-      editingSession.forget(aSink);
-      return NS_OK;
-    }
-
-    return NS_NOINTERFACE;
+  } else if (aIID.Equals(NS_GET_IID(nsIEditingSession))) {
+    nsCOMPtr<nsIEditingSession> es;
+    GetEditingSession(getter_AddRefs(es));
+    es.forget(aSink);
+    return *aSink ? NS_OK : NS_NOINTERFACE;
   } else if (aIID.Equals(NS_GET_IID(nsIClipboardDragDropHookList)) &&
              NS_SUCCEEDED(EnsureTransferableHookData())) {
     *aSink = mTransferableHookData;
@@ -1052,14 +1050,8 @@ nsDocShell::GetInterface(const nsIID& aIID, void** aSink)
       return treeOwner->QueryInterface(aIID, aSink);
     }
   } else if (aIID.Equals(NS_GET_IID(nsITabChild))) {
-    nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
-    nsresult rv = GetTreeOwner(getter_AddRefs(treeOwner));
-    if (NS_SUCCEEDED(rv) && treeOwner) {
-      nsCOMPtr<nsIInterfaceRequestor> ir = do_QueryInterface(treeOwner);
-      if (ir) {
-        return ir->GetInterface(aIID, aSink);
-      }
-    }
+    *aSink = GetTabChild().take();
+    return *aSink ? NS_OK : NS_ERROR_FAILURE;
   } else if (aIID.Equals(NS_GET_IID(nsIContentFrameMessageManager))) {
     nsCOMPtr<nsITabChild> tabChild =
       do_GetInterface(static_cast<nsIDocShell*>(this));
@@ -7579,6 +7571,17 @@ nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
         aStatus == NS_ERROR_INVALID_CONTENT_ENCODING) {
       DisplayLoadError(aStatus, url, nullptr, aChannel);
       return NS_OK;
+    } else if (aStatus == NS_ERROR_INVALID_SIGNATURE) {
+      // NS_ERROR_INVALID_SIGNATURE indicates a content-signature error.
+      // This currently only happens in case a remote about page fails.
+      // We have to load a fallback in this case.
+      // XXX: We always load about blank here, firefox has to overwrite this if
+      // it wants to display something else.
+      return LoadURI(MOZ_UTF16("about:blank"),  // URI string
+                     nsIChannel::LOAD_NORMAL,   // Load flags
+                     nullptr,                   // Referring URI
+                     nullptr,                   // Post data stream
+                     nullptr);                  // Headers stream
     }
 
     // Handle iframe document not loading error because source was
@@ -9549,6 +9552,27 @@ nsDocShell::CreatePrincipalFromReferrer(nsIURI* aReferrer,
   return *aResult ? NS_OK : NS_ERROR_FAILURE;
 }
 
+bool
+nsDocShell::IsAboutNewtab(nsIURI* aURI)
+{
+  if (!aURI) {
+    return false;
+  }
+  bool isAbout;
+  if (NS_WARN_IF(NS_FAILED(aURI->SchemeIs("about", &isAbout)))) {
+    return false;
+  }
+  if (!isAbout) {
+    return false;
+  }
+
+  nsAutoCString module;
+  if (NS_WARN_IF(NS_FAILED(NS_GetAboutModuleName(aURI, module)))) {
+    return false;
+  }
+  return module.Equals("newtab");
+}
+
 NS_IMETHODIMP
 nsDocShell::InternalLoad(nsIURI* aURI,
                          nsIURI* aOriginalURI,
@@ -10218,8 +10242,16 @@ nsDocShell::InternalLoad(nsIURI* aURI,
   // used to cancel attempts to load URIs in the wrong process.
   nsCOMPtr<nsIWebBrowserChrome3> browserChrome3 = do_GetInterface(mTreeOwner);
   if (browserChrome3) {
+    // In case this is a remote newtab load, set aURI to aOriginalURI (newtab).
+    // This ensures that the verifySignedContent flag is set on loadInfo in
+    // DoURILoad.
+    nsIURI* uriForShouldLoadCheck = aURI;
+    if (IsAboutNewtab(aOriginalURI)) {
+      uriForShouldLoadCheck = aOriginalURI;
+    }
     bool shouldLoad;
-    rv = browserChrome3->ShouldLoadURI(this, aURI, aReferrer, &shouldLoad);
+    rv = browserChrome3->ShouldLoadURI(this, uriForShouldLoadCheck, aReferrer,
+                                       &shouldLoad);
     if (NS_SUCCEEDED(rv) && !shouldLoad) {
       return NS_OK;
     }
@@ -10868,6 +10900,15 @@ nsDocShell::DoURILoad(nsIURI* aURI,
     if (aReferrerURI && aSendReferrer) {
       // Referrer is currenly only set for link clicks here.
       httpChannel->SetReferrerWithPolicy(aReferrerURI, aReferrerPolicy);
+    }
+    // set Content-Signature enforcing bit if aOriginalURI == about:newtab
+    if (aOriginalURI && httpChannel) {
+      if (IsAboutNewtab(aOriginalURI)) {
+        nsCOMPtr<nsILoadInfo> loadInfo = httpChannel->GetLoadInfo();
+        if (loadInfo) {
+          loadInfo->SetVerifySignedContent(true);
+        }
+      }
     }
   }
 
@@ -13442,6 +13483,11 @@ public:
   {
     nsAutoPopupStatePusher popupStatePusher(mPopupState);
 
+    // We need to set up an AutoJSAPI here for the following reason: When we do
+    // OnLinkClickSync we'll eventually end up in nsGlobalWindow::OpenInternal
+    // which only does popup blocking if !LegacyIsCallerChromeOrNativeCode().
+    // So we need to fake things so that we don't look like native code as far
+    // as LegacyIsCallerNativeCode() is concerned.
     AutoJSAPI jsapi;
     if (mIsTrusted || jsapi.Init(mContent->OwnerDoc()->GetScopeObject())) {
       mHandler->OnLinkClickSync(mContent, mURI,
@@ -14303,4 +14349,30 @@ nsDocShell::IssueWarning(uint32_t aWarning, bool aAsError)
     }
   }
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetEditingSession(nsIEditingSession** aEditSession)
+{
+  if (!NS_SUCCEEDED(EnsureEditorData())) {
+    return NS_ERROR_FAILURE;
+  }
+
+  mEditorData->GetEditingSession(aEditSession);
+  return *aEditSession ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+nsDocShell::GetScriptableTabChild(nsITabChild** aTabChild)
+{
+  *aTabChild = GetTabChild().take();
+  return *aTabChild ? NS_OK : NS_ERROR_FAILURE;
+}
+
+already_AddRefed<nsITabChild>
+nsDocShell::GetTabChild()
+{
+  nsCOMPtr<nsIDocShellTreeOwner> owner(mTreeOwner);
+  nsCOMPtr<nsITabChild> tc = do_GetInterface(owner);
+  return tc.forget();
 }

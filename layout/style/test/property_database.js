@@ -2797,8 +2797,19 @@ var gCSSProperties = {
       "caption", "icon", "menu", "message-box", "small-caption", "status-bar",
       // Gecko-specific system fonts
       "-moz-window", "-moz-document", "-moz-desktop", "-moz-info", "-moz-dialog", "-moz-button", "-moz-pull-down-menu", "-moz-list", "-moz-field", "-moz-workspace",
+      // line-height with calc()
+      "condensed bold italic small-caps 24px/calc(2px) Times New Roman, serif",
+      "condensed bold italic small-caps 24px/calc(50%) Times New Roman, serif",
+      "condensed bold italic small-caps 24px/calc(3*25px) Times New Roman, serif",
+      "condensed bold italic small-caps 24px/calc(25px*3) Times New Roman, serif",
+      "condensed bold italic small-caps 24px/calc(3*25px + 50%) Times New Roman, serif",
+      "condensed bold italic small-caps 24px/calc(1 + 2*3/4) Times New Roman, serif",
     ],
-    invalid_values: [ "9 fantasy", "-2px fantasy" ]
+    invalid_values: [ "9 fantasy", "-2px fantasy",
+      // line-height with calc()
+      "condensed bold italic small-caps 24px/calc(1 + 2px) Times New Roman, serif",
+      "condensed bold italic small-caps 24px/calc(100% + 0.1) Times New Roman, serif",
+    ]
   },
   "font-family": {
     domProp: "fontFamily",
@@ -3060,8 +3071,8 @@ var gCSSProperties = {
      */
     prerequisites: { "font-size": "19px", "font-size-adjust": "none", "font-family": "serif", "font-weight": "normal", "font-style": "normal", "height": "18px", "display": "block"},
     initial_values: [ "normal" ],
-    other_values: [ "1.0", "1", "1em", "47px", "-moz-block-height" ],
-    invalid_values: []
+    other_values: [ "1.0", "1", "1em", "47px", "-moz-block-height", "calc(2px)", "calc(50%)", "calc(3*25px)", "calc(25px*3)", "calc(3*25px + 50%)", "calc(1 + 2*3/4)" ],
+    invalid_values: [ "calc(1 + 2px)", "calc(100% + 0.1)" ]
   },
   "list-style": {
     domProp: "listStyle",
@@ -5981,15 +5992,14 @@ if (IsCSSPropertyPrefEnabled("layout.css.grid.enabled")) {
       "[a] 2.5fr [z] Repeat(4, 20px auto) [d]",
       "repeat(auto-fill, 0)",
       "[a] repeat( Auto-fill,1%)",
-      "[a] repeat(Auto-fit, 0)",
-      "repeat(Auto-fit,[] 1%)",
-      "repeat(auto-fit, [a] 1em) auto",
+      "minmax(auto,0) [a] repeat(Auto-fit, 0) minmax(0,auto)",
+      "minmax(calc(1% + 1px),auto) repeat(Auto-fit,[] 1%) minmax(auto,1%)",
       "[a] repeat( auto-fit,[a b] minmax(0,0) )",
       "[a] 40px repeat(auto-fit,[a b] minmax(1px, 0) [])",
-      "[a] auto [b] repeat(auto-fit,[a b] minmax(1mm, 1%) [c]) [c] auto",
+      "[a] calc(1%) [b] repeat(auto-fit,[a b] minmax(1mm, 1%) [c]) [c]",
       "repeat(auto-fill,minmax(1%,auto))",
-      "repeat(auto-fill,minmax(1em,min-content))",
-      "repeat(auto-fill,minmax(1fr,1em))",
+      "repeat(auto-fill,minmax(1em,min-content)) minmax(min-content,0)",
+      "repeat(auto-fill,minmax(1fr,1em)) [a] minmax(0, max-content)",
       "repeat(auto-fill,minmax(max-content,1mm))",
     ],
     invalid_values: [
@@ -6044,6 +6054,10 @@ if (IsCSSPropertyPrefEnabled("layout.css.grid.enabled")) {
       "repeat(auto-fit,minmax(auto,auto))",
       "repeat(auto-fit,minmax(min-content,1fr))",
       "repeat(auto-fit,minmax(1fr,auto))",
+      "repeat(auto-fill, 10px) auto",
+      "auto repeat(auto-fit, 10px)",
+      "minmax(min-content,max-content) repeat(auto-fit, 0)",
+      "10px [a] 10px [b a] 1fr [b] repeat(auto-fill, 0)",
     ],
     unbalanced_values: [
       "(foo] 40px",

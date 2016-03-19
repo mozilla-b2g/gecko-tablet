@@ -107,6 +107,13 @@ class FunctionDecoder
     bool fail(const char* str) {
         return Fail(cx_, d_, str);
     }
+    bool checkI64Support() {
+#ifdef JS_CPU_X64
+        return true;
+#else
+        return fail("i64 NYI on this platform");
+#endif
+    }
 
     MOZ_WARN_UNUSED_RESULT bool pushBlock() {
         return blocks_.append(AnyType);
@@ -181,6 +188,13 @@ static bool
 DecodeNop(FunctionDecoder& f, ExprType* type)
 {
     *type = ExprType::Void;
+    return true;
+}
+
+static bool
+DecodeUnreachable(FunctionDecoder& f, ExprType* type)
+{
+    *type = AnyType;
     return true;
 }
 
@@ -620,7 +634,7 @@ DecodeExpr(FunctionDecoder& f, ExprType* type)
       case Expr::I32Const:
         return DecodeConstI32(f, type);
       case Expr::I64Const:
-        return DecodeConstI64(f, type);
+        return f.checkI64Support() && DecodeConstI64(f, type);
       case Expr::F32Const:
         return DecodeConstF32(f, type);
       case Expr::F64Const:
@@ -698,7 +712,7 @@ DecodeExpr(FunctionDecoder& f, ExprType* type)
       case Expr::I64Shl:
       case Expr::I64ShrS:
       case Expr::I64ShrU:
-        return DecodeBinaryOperator(f, ValType::I64, type);
+        return f.checkI64Support() && DecodeBinaryOperator(f, ValType::I64, type);
       case Expr::I64Rotl:
       case Expr::I64Rotr:
         return f.fail("NYI: rotate");
@@ -741,7 +755,7 @@ DecodeExpr(FunctionDecoder& f, ExprType* type)
       case Expr::I64GtU:
       case Expr::I64GeS:
       case Expr::I64GeU:
-        return DecodeComparisonOperator(f, ValType::I64, type);
+        return f.checkI64Support() && DecodeComparisonOperator(f, ValType::I64, type);
       case Expr::F32Eq:
       case Expr::F32Ne:
       case Expr::F32Lt:
@@ -757,7 +771,8 @@ DecodeExpr(FunctionDecoder& f, ExprType* type)
       case Expr::F64Ge:
         return DecodeComparisonOperator(f, ValType::F64, type);
       case Expr::I32WrapI64:
-        return DecodeConversionOperator(f, ValType::I32, ValType::I64, type);
+        return f.checkI64Support() &&
+               DecodeConversionOperator(f, ValType::I32, ValType::I64, type);
       case Expr::I32TruncSF32:
       case Expr::I32TruncUF32:
         return DecodeConversionOperator(f, ValType::I32, ValType::F32, type);
@@ -768,13 +783,16 @@ DecodeExpr(FunctionDecoder& f, ExprType* type)
         return DecodeConversionOperator(f, ValType::I32, ValType::F64, type);
       case Expr::I64ExtendSI32:
       case Expr::I64ExtendUI32:
-        return DecodeConversionOperator(f, ValType::I64, ValType::I32, type);
+        return f.checkI64Support() &&
+               DecodeConversionOperator(f, ValType::I64, ValType::I32, type);
       case Expr::I64TruncSF32:
       case Expr::I64TruncUF32:
-        return DecodeConversionOperator(f, ValType::I64, ValType::F32, type);
+        return f.checkI64Support() &&
+               DecodeConversionOperator(f, ValType::I64, ValType::F32, type);
       case Expr::I64TruncSF64:
       case Expr::I64TruncUF64:
-        return DecodeConversionOperator(f, ValType::I64, ValType::F64, type);
+        return f.checkI64Support() &&
+               DecodeConversionOperator(f, ValType::I64, ValType::F64, type);
       case Expr::I64ReinterpretF64:
         return f.fail("NYI: i64");
       case Expr::F32ConvertSI32:
@@ -784,7 +802,7 @@ DecodeExpr(FunctionDecoder& f, ExprType* type)
         return f.fail("NYI: reinterpret");
       case Expr::F32ConvertSI64:
       case Expr::F32ConvertUI64:
-        return f.fail("NYI: i64") &&
+        return f.checkI64Support() &&
                DecodeConversionOperator(f, ValType::F32, ValType::I64, type);
       case Expr::F32DemoteF64:
         return DecodeConversionOperator(f, ValType::F32, ValType::F64, type);
@@ -793,9 +811,10 @@ DecodeExpr(FunctionDecoder& f, ExprType* type)
         return DecodeConversionOperator(f, ValType::F64, ValType::I32, type);
       case Expr::F64ConvertSI64:
       case Expr::F64ConvertUI64:
-      case Expr::F64ReinterpretI64:
-        return f.fail("NYI: i64") &&
+        return f.checkI64Support() &&
                DecodeConversionOperator(f, ValType::F64, ValType::I64, type);
+      case Expr::F64ReinterpretI64:
+        return f.fail("NYI: i64");
       case Expr::F64PromoteF32:
         return DecodeConversionOperator(f, ValType::F64, ValType::F32, type);
       case Expr::I32Load8S:
@@ -843,6 +862,8 @@ DecodeExpr(FunctionDecoder& f, ExprType* type)
         return DecodeBrTable(f, type);
       case Expr::Return:
         return DecodeReturn(f, type);
+      case Expr::Unreachable:
+        return DecodeUnreachable(f, type);
       default:
         // Note: it's important not to remove this default since readExpr()
         // can return Expr values for which there is no enumerator.
@@ -1035,10 +1056,14 @@ CheckTypeForJS(JSContext* cx, Decoder& d, const Sig& sig)
     for (ValType argType : sig.args()) {
         if (argType == ValType::I64)
             return Fail(cx, d, "cannot import/export i64 argument");
+        if (IsSimdType(argType))
+            return Fail(cx, d, "cannot import/export SIMD argument");
     }
 
     if (sig.ret() == ExprType::I64)
         return Fail(cx, d, "cannot import/export i64 return type");
+    if (IsSimdType(sig.ret()))
+        return Fail(cx, d, "cannot import/export SIMD return type");
 
     return true;
 }
@@ -1061,7 +1086,7 @@ typedef Vector<ImportName, 0, SystemAllocPolicy> ImportNameVector;
 static bool
 DecodeImport(JSContext* cx, Decoder& d, ModuleGeneratorData* init, ImportNameVector* importNames)
 {
-    const DeclaredSig* sig;
+    const DeclaredSig* sig = nullptr;
     if (!DecodeSignatureIndex(cx, d, *init, &sig))
         return false;
 
@@ -1572,8 +1597,12 @@ wasm::Eval(JSContext* cx, Handle<TypedArrayObject*> code, HandleObject importObj
         bytes = copy.begin();
     }
 
-    UniqueChars file;
-    if (!DescribeScriptedCaller(cx, &file))
+    JS::AutoFilename filename;
+    if (!DescribeScriptedCaller(cx, &filename))
+        return false;
+
+    UniqueChars file = DuplicateString(filename.get());
+    if (!file)
         return false;
 
     ImportNameVector importNames;

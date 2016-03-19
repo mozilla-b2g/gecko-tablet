@@ -212,6 +212,9 @@ static XP_CHAR* memoryReportPath;
 static XP_CHAR* eventsDirectory;
 static char* eventsEnv = nullptr;
 
+// The current telemetry session ID to write to the event file
+static char* currentSessionId = nullptr;
+
 // If this is false, we don't launch the crash reporter
 static bool doReport = true;
 
@@ -905,6 +908,9 @@ bool MinidumpCallback(
       WriteLiteral(eventFile, "\n");
       WriteString(eventFile, id_ascii);
       WriteLiteral(eventFile, "\n");
+      if (currentSessionId) {
+        WriteAnnotation(eventFile, "TelemetrySessionId", currentSessionId);
+      }
       if (crashEventAPIData) {
         eventFile.WriteBuffer(crashEventAPIData->get(), crashEventAPIData->Length());
       }
@@ -920,7 +926,10 @@ bool MinidumpCallback(
       apiData.WriteBuffer(crashReporterAPIData->get(), crashReporterAPIData->Length());
     }
     WriteAnnotation(apiData, "CrashTime", crashTimeString);
+    WriteAnnotation(eventFile, "CrashTime", crashTimeString);
+
     WriteAnnotation(apiData, "UptimeTS", uptimeTSString);
+    WriteAnnotation(eventFile, "UptimeTS", uptimeTSString);
 
     if (timeSinceLastCrash != 0) {
       WriteAnnotation(apiData, "SecondsSinceLastCrash",
@@ -1939,6 +1948,11 @@ nsresult UnsetExceptionHandler()
     eventsDirectory = nullptr;
   }
 
+  if (currentSessionId) {
+    free(currentSessionId);
+    currentSessionId = nullptr;
+  }
+
   if (memoryReportPath) {
     free(memoryReportPath);
     memoryReportPath = nullptr;
@@ -2646,6 +2660,19 @@ SetMemoryReportFile(nsIFile* aFile)
   aFile->GetNativePath(path);
   memoryReportPath = ToNewCString(path);
 #endif
+}
+
+
+void
+SetTelemetrySessionId(const nsACString& id)
+{
+  if (!gExceptionHandler) {
+    return;
+  }
+  if (currentSessionId) {
+    free(currentSessionId);
+  }
+  currentSessionId = ToNewCString(id);
 }
 
 static void

@@ -91,6 +91,7 @@ var hasI64 = getBuildConfiguration().x64;
 if (!hasI64) {
     assertErrorMessage(() => wasmEvalText('(module (func (param i64)))'), TypeError, /NYI/);
     assertErrorMessage(() => wasmEvalText('(module (func (result i64)))'), TypeError, /NYI/);
+    assertErrorMessage(() => wasmEvalText('(module (func (result i32) (i32.wrap/i64 (i64.add (i64.const 1) (i64.const 2)))))'), TypeError, /NYI/);
 }
 
 // ----------------------------------------------------------------------------
@@ -314,6 +315,7 @@ wasmEvalText('(module (import "a" "" (param i32)) (func (call_import 0 (i32.cons
 
 function checkF32CallImport(v) {
     assertEq(wasmEvalText('(module (import "a" "" (result f32)) (func (result f32) (call_import 0)) (export "" 0))', {a:()=>{ return v; }})(), Math.fround(v));
+    wasmEvalText('(module (import "a" "" (param f32)) (func (param f32) (call_import 0 (get_local 0))) (export "" 0))', {a:x=>{ assertEq(Math.fround(v), x); }})(v);
 }
 checkF32CallImport(13.37);
 checkF32CallImport(NaN);
@@ -342,6 +344,8 @@ assertEq(wasmEvalText(code.replace('BODY', '(call_import 0)'), imports)(), 1);
 assertEq(wasmEvalText(code.replace('BODY', '(call_import 1)'), imports)(), 2);
 assertEq(wasmEvalText(code.replace('BODY', '(call 0)'), imports)(), 3);
 assertEq(wasmEvalText(code.replace('BODY', '(call 1)'), imports)(), 4);
+
+assertEq(wasmEvalText(`(module (import "evalcx" "" (param i32) (result i32)) (func (result i32) (call_import 0 (i32.const 0))) (export "" 0))`, {evalcx})(), 0);
 
 var {v2i, i2i, i2v} = wasmEvalText(`(module
     (type (func (result i32)))

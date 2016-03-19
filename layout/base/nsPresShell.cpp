@@ -159,6 +159,7 @@
 
 #endif
 
+#include "mozilla/layers/CompositorChild.h"
 #include "GeckoProfiler.h"
 #include "gfxPlatform.h"
 #include "Layers.h"
@@ -1814,6 +1815,9 @@ PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight)
     return NS_ERROR_NOT_AVAILABLE;
   }
 
+  const bool isHeightChanging =
+    (mPresContext->GetVisibleArea().height != aHeight);
+
   mPresContext->SetVisibleArea(nsRect(0, 0, aWidth, aHeight));
 
   // There isn't anything useful we can do if the initial reflow hasn't happened.
@@ -1840,6 +1844,14 @@ PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight)
     if (!mIsDestroying && rootFrame) {
       // XXX Do a full invalidate at the beginning so that invalidates along
       // the way don't have region accumulation issues?
+
+      if (isHeightChanging) {
+        // For BSize changes driven by style, RestyleManager handles this.
+        // For height:auto BSizes (i.e. layout-controlled), descendant
+        // intrinsic sizes can't depend on them. So the only other case is
+        // viewport-controlled BSizes which we handle here.
+        nsLayoutUtils::MarkIntrinsicISizesDirtyIfDependentOnBSize(rootFrame);
+      }
 
       {
         nsAutoCauseReflowNotifier crNotifier(this);
@@ -5519,13 +5531,65 @@ PresShell::ProcessSynthMouseMoveEvent(bool aFromScroll)
   }
 }
 
+static void
+AddFrameToVisibleRegions(nsIFrame* aFrame,
+                         nsViewManager* aViewManager,
+                         Maybe<VisibleRegions>& aVisibleRegions)
+{
+  if (!aVisibleRegions) {
+    return;
+  }
+
+  MOZ_ASSERT(aFrame);
+  MOZ_ASSERT(aViewManager);
+
+  // Retrieve the view ID for this frame (which we obtain from the enclosing
+  // scrollable frame).
+  nsIScrollableFrame* scrollableFrame =
+    nsLayoutUtils::GetNearestScrollableFrame(aFrame,
+                                             nsLayoutUtils::SCROLLABLE_ONLY_ASYNC_SCROLLABLE |
+                                             nsLayoutUtils::SCROLLABLE_ALWAYS_MATCH_ROOT);
+  if (!scrollableFrame) {
+    return;
+  }
+
+  nsIFrame* scrollableFrameAsFrame = do_QueryFrame(scrollableFrame);
+  MOZ_ASSERT(scrollableFrameAsFrame);
+
+  nsIContent* scrollableFrameContent = scrollableFrameAsFrame->GetContent();
+  if (!scrollableFrameContent) {
+    return;
+  }
+
+  ViewID viewID;
+  if (!nsLayoutUtils::FindIDFor(scrollableFrameContent, &viewID)) {
+    return ;
+  }
+
+  // Update the visible region for the appropriate view ID.
+  nsRect frameRectInScrolledFrameSpace = aFrame->GetVisualOverflowRect();
+  nsLayoutUtils::TransformResult result =
+    nsLayoutUtils::TransformRect(aFrame,
+                                 scrollableFrame->GetScrolledFrame(),
+                                 frameRectInScrolledFrameSpace);
+  if (result != nsLayoutUtils::TransformResult::TRANSFORM_SUCCEEDED) {
+    return;
+  }
+
+  CSSIntRegion* regionForView = aVisibleRegions->LookupOrAdd(viewID);
+  MOZ_ASSERT(regionForView);
+
+  regionForView->OrWith(CSSPixel::FromAppUnitsRounded(frameRectInScrolledFrameSpace));
+}
+
 /* static */ void
-PresShell::MarkImagesInListVisible(const nsDisplayList& aList)
+PresShell::MarkImagesInListVisible(const nsDisplayList& aList,
+                                   Maybe<VisibleRegions>& aVisibleRegions)
 {
   for (nsDisplayItem* item = aList.GetBottom(); item; item = item->GetAbove()) {
     nsDisplayList* sublist = item->GetChildren();
     if (sublist) {
-      MarkImagesInListVisible(*sublist);
+      MarkImagesInListVisible(*sublist, aVisibleRegions);
       continue;
     }
     nsIFrame* f = item->Frame();
@@ -5542,6 +5606,8 @@ PresShell::MarkImagesInListVisible(const nsDisplayList& aList)
         // content was added to mVisibleImages, so we need to increment its visible count
         content->IncrementVisibleCount();
       }
+
+      AddFrameToVisibleRegions(f, presShell->mViewManager, aVisibleRegions);
     }
   }
 }
@@ -5549,6 +5615,9 @@ PresShell::MarkImagesInListVisible(const nsDisplayList& aList)
 void
 PresShell::ReportAnyBadState()
 {
+  if (!NS_IsMainThread()) {
+    gfxCriticalNote << "Got null image in image visibility: off-main-thread";
+  }
   if (mIsZombie) {
     gfxCriticalNote << "Got null image in image visibility: mIsZombie";
   }
@@ -5575,6 +5644,12 @@ PresShell::ReportAnyBadState()
   }
 }
 
+void
+PresShell::SetInImageVisibility(bool aState)
+{
+  mInImageVisibility = aState;
+}
+
 static void
 DecrementVisibleCount(nsTHashtable<nsRefPtrHashKey<nsIImageLoadingContent>>& aImages,
                       uint32_t aNonvisibleAction, PresShell* aPresShell)
@@ -5585,7 +5660,59 @@ DecrementVisibleCount(nsTHashtable<nsRefPtrHashKey<nsIImageLoadingContent>>& aIm
       // help debug the crash (bug 1251150)
       aPresShell->ReportAnyBadState();
     }
+    aPresShell->SetInImageVisibility(true);
     iter.Get()->GetKey()->DecrementVisibleCount(aNonvisibleAction);
+    aPresShell->SetInImageVisibility(false);
+  }
+}
+
+static void
+NotifyCompositorOfVisibleRegionsChange(PresShell* aPresShell,
+                                       const Maybe<VisibleRegions>& aRegions)
+{
+  if (!aRegions) {
+    return;
+  }
+
+  MOZ_ASSERT(aPresShell);
+
+  // Retrieve the layers ID and pres shell ID.
+  TabChild* tabChild = TabChild::GetFrom(aPresShell);
+  if (!tabChild) {
+    return;
+  }
+
+  const uint64_t layersId = tabChild->LayersId();
+  const uint32_t presShellId = aPresShell->GetPresShellId();
+
+  // Retrieve the CompositorChild.
+  LayerManager* layerManager = aPresShell->GetLayerManager();
+  if (!layerManager) {
+    return;
+  }
+
+  ClientLayerManager* clientLayerManager = layerManager->AsClientLayerManager();
+  if (!clientLayerManager) {
+    return;
+  }
+
+  CompositorChild* compositorChild = clientLayerManager->GetCompositorChild();
+  if (!compositorChild) {
+    return;
+  }
+
+  // Clear the old approximately visible regions associated with this document.
+  compositorChild->SendClearApproximatelyVisibleRegions(layersId, presShellId);
+
+  // Send the new approximately visible regions to the compositor.
+  for (auto iter = aRegions->ConstIter(); !iter.Done(); iter.Next()) {
+    const ViewID viewId = iter.Key();
+    const CSSIntRegion* region = iter.UserData();
+    MOZ_ASSERT(region);
+
+    const ScrollableLayerGuid guid(layersId, presShellId, viewId);
+
+    compositorChild->SendNotifyApproximatelyVisibleRegion(guid, *region);
   }
 }
 
@@ -5598,9 +5725,22 @@ PresShell::RebuildImageVisibilityDisplayList(const nsDisplayList& aList)
   // oldVisibleImages.
   nsTHashtable< nsRefPtrHashKey<nsIImageLoadingContent> > oldVisibleImages;
   mVisibleImages.SwapElements(oldVisibleImages);
-  MarkImagesInListVisible(aList);
+
+  // If we're visualizing visible regions, create a VisibleRegions object to
+  // store information about them. The functions we call will populate this
+  // object and send it to the compositor only if it's Some(), so we don't
+  // need to check the prefs everywhere.
+  Maybe<VisibleRegions> visibleRegions;
+  if (gfxPrefs::APZMinimap() && gfxPrefs::APZMinimapVisibilityEnabled()) {
+    visibleRegions.emplace();
+  }
+
+  MarkImagesInListVisible(aList, visibleRegions);
+
   DecrementVisibleCount(oldVisibleImages,
                         nsIImageLoadingContent::ON_NONVISIBLE_NO_ACTION, this);
+
+  NotifyCompositorOfVisibleRegionsChange(this, visibleRegions);
 }
 
 /* static */ void
@@ -5623,6 +5763,10 @@ PresShell::ClearImageVisibilityVisited(nsView* aView, bool aClear)
 void
 PresShell::ClearVisibleImagesList(uint32_t aNonvisibleAction)
 {
+  if (mInImageVisibility) {
+    gfxCriticalNoteOnce << "ClearVisibleImagesList is re-entering on "
+                        << (NS_IsMainThread() ? "" : "non-") << "main thread";
+  }
   DecrementVisibleCount(mVisibleImages, aNonvisibleAction, this);
   mVisibleImages.Clear();
 }
@@ -5630,6 +5774,7 @@ PresShell::ClearVisibleImagesList(uint32_t aNonvisibleAction)
 void
 PresShell::MarkImagesInSubtreeVisible(nsIFrame* aFrame,
                                       const nsRect& aRect,
+                                      Maybe<VisibleRegions>& aVisibleRegions,
                                       bool aRemoveOnly /* = false */)
 {
   MOZ_ASSERT(aFrame->PresContext()->PresShell() == this, "wrong presshell");
@@ -5643,6 +5788,8 @@ PresShell::MarkImagesInSubtreeVisible(nsIFrame* aFrame,
       // content was added to mVisibleImages, so we need to increment its visible count
       content->IncrementVisibleCount();
     }
+
+    AddFrameToVisibleRegions(aFrame, mViewManager, aVisibleRegions);
   }
 
   nsSubDocumentFrame* subdocFrame = do_QueryFrame(aFrame);
@@ -5711,7 +5858,7 @@ PresShell::MarkImagesInSubtreeVisible(nsIFrame* aFrame,
           }
         }
       }
-      MarkImagesInSubtreeVisible(child, r);
+      MarkImagesInSubtreeVisible(child, r, aVisibleRegions);
     }
   }
 }
@@ -5728,19 +5875,36 @@ PresShell::RebuildImageVisibility(nsRect* aRect,
     return;
   }
 
+  if (mInImageVisibility) {
+    gfxCriticalNoteOnce << "RebuildImageVisibility is re-entering on "
+                        << (NS_IsMainThread() ? "" : "non-") << "main thread";
+  }
+
   // Remove the entries of the mVisibleImages hashtable and put them in
   // oldVisibleImages.
   nsTHashtable< nsRefPtrHashKey<nsIImageLoadingContent> > oldVisibleImages;
   mVisibleImages.SwapElements(oldVisibleImages);
 
+  // If we're visualizing visible regions, create a VisibleRegions object to
+  // store information about them. The functions we call will populate this
+  // object and send it to the compositor only if it's Some(), so we don't
+  // need to check the prefs everywhere.
+  Maybe<VisibleRegions> visibleRegions;
+  if (gfxPrefs::APZMinimap() && gfxPrefs::APZMinimapVisibilityEnabled()) {
+    visibleRegions.emplace();
+  }
+
   nsRect vis(nsPoint(0, 0), rootFrame->GetSize());
   if (aRect) {
     vis = *aRect;
   }
-  MarkImagesInSubtreeVisible(rootFrame, vis, aRemoveOnly);
+
+  MarkImagesInSubtreeVisible(rootFrame, vis, visibleRegions, aRemoveOnly);
 
   DecrementVisibleCount(oldVisibleImages,
                         nsIImageLoadingContent::ON_NONVISIBLE_NO_ACTION, this);
+
+  NotifyCompositorOfVisibleRegionsChange(this, visibleRegions);
 }
 
 void
@@ -5881,6 +6045,11 @@ PresShell::EnsureImageInVisibleList(nsIImageLoadingContent* aImage)
   }
 #endif
 
+  if (mInImageVisibility) {
+    gfxCriticalNoteOnce << "EnsureImageInVisibleList is re-entering on "
+                        << (NS_IsMainThread() ? "" : "non-") << "main thread";
+  }
+
   if (!mVisibleImages.Contains(aImage)) {
     mVisibleImages.PutEntry(aImage);
     aImage->IncrementVisibleCount();
@@ -5902,6 +6071,11 @@ PresShell::RemoveImageFromVisibleList(nsIImageLoadingContent* aImage)
   if (AssumeAllImagesVisible()) {
     MOZ_ASSERT(mVisibleImages.Count() == 0, "shouldn't have any images in the table");
     return;
+  }
+
+  if (mInImageVisibility) {
+    gfxCriticalNoteOnce << "RemoveImageFromVisibleList is re-entering on "
+                        << (NS_IsMainThread() ? "" : "non-") << "main thread";
   }
 
   uint32_t count = mVisibleImages.Count();
@@ -10668,6 +10842,11 @@ PresShell::UpdateImageLockingState()
   nsresult rv = mDocument->SetImageLockingState(locked);
 
   if (locked) {
+    if (mInImageVisibility) {
+      gfxCriticalNoteOnce << "UpdateImageLockingState is re-entering on "
+                          << (NS_IsMainThread() ? "" : "non-") << "main thread";
+    }
+
     // Request decodes for visible images; we want to start decoding as
     // quickly as possible when we get foregrounded to minimize flashing.
     for (auto iter = mVisibleImages.Iter(); !iter.Done(); iter.Next()) {

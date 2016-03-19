@@ -377,7 +377,8 @@ public class DynamicToolbarAnimator {
 
         // we only care about single-finger drags here; any other kind of event
         // should reset and cause us to start over.
-        if (event.getActionMasked() != MotionEvent.ACTION_MOVE ||
+        if (event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE ||
+            event.getActionMasked() != MotionEvent.ACTION_MOVE ||
             event.getPointerCount() != 1)
         {
             if (mTouchStart != null) {
@@ -400,7 +401,6 @@ public class DynamicToolbarAnimator {
             float prevDir = mLastTouch - mTouchStart.y;
             float newDir = event.getRawY() - mLastTouch;
             if (prevDir != 0 && newDir != 0 && ((prevDir < 0) != (newDir < 0))) {
-                Log.v(LOGTAG, "Direction changed: " + mTouchStart.y + " -> " + mLastTouch + " -> " + event.getRawY());
                 // If the direction of movement changed, reset the travel
                 // distance properties.
                 mTouchStart = null;
@@ -427,7 +427,6 @@ public class DynamicToolbarAnimator {
         }
 
         float translation = decideTranslation(deltaY, metrics, travelDistance);
-        Log.v(LOGTAG, "Got vertical translation " + translation);
 
         float oldToolbarTranslation = mToolbarTranslation;
         float oldLayerViewTranslation = mLayerViewTranslation;
@@ -437,6 +436,14 @@ public class DynamicToolbarAnimator {
         if (oldToolbarTranslation == mToolbarTranslation &&
             oldLayerViewTranslation == mLayerViewTranslation) {
             return false;
+        }
+
+        if (mToolbarTranslation == mMaxTranslation) {
+            Log.v(LOGTAG, "Toolbar at maximum translation, calling shiftLayerView(" + mMaxTranslation + ")");
+            shiftLayerView(mMaxTranslation);
+        } else if (mToolbarTranslation == 0) {
+            Log.v(LOGTAG, "Toolbar at minimum translation, calling shiftLayerView(0)");
+            shiftLayerView(0);
         }
 
         fireListeners();

@@ -1630,6 +1630,7 @@ class MOZ_STACK_CLASS ModuleValidator
         return standardLibrarySimdOpNames_.putNew(atom->asPropertyName(), op);
     }
     bool newSig(Sig&& sig, uint32_t* sigIndex) {
+        *sigIndex = 0;
         if (mg_.numSigs() >= MaxSigs)
             return failCurrentOffset("too many signatures");
 
@@ -2630,16 +2631,6 @@ class MOZ_STACK_CLASS FunctionValidator
         hasAlreadyReturned_(false)
     {}
 
-    ~FunctionValidator() {
-        if (m_.hasAlreadyFailed())
-            return;
-        MOZ_ASSERT(!blockDepth_);
-        MOZ_ASSERT(breakableStack_.empty());
-        MOZ_ASSERT(continuableStack_.empty());
-        MOZ_ASSERT(breakLabels_.empty());
-        MOZ_ASSERT(continueLabels_.empty());
-    }
-
     ModuleValidator& m() const        { return m_; }
     ExclusiveContext* cx() const      { return m_.cx(); }
     ParseNode* fn() const             { return fn_; }
@@ -2656,6 +2647,11 @@ class MOZ_STACK_CLASS FunctionValidator
     }
 
     bool finish(uint32_t funcIndex, unsigned generateTime) {
+        MOZ_ASSERT(!blockDepth_);
+        MOZ_ASSERT(breakableStack_.empty());
+        MOZ_ASSERT(continuableStack_.empty());
+        MOZ_ASSERT(breakLabels_.empty());
+        MOZ_ASSERT(continueLabels_.empty());
         return m_.mg().finishFuncDef(funcIndex, generateTime, &fg_);
     }
 
@@ -2912,6 +2908,7 @@ CheckFunctionHead(ModuleValidator& m, ParseNode* fn)
 static bool
 CheckArgument(ModuleValidator& m, ParseNode* arg, PropertyName** name)
 {
+    *name = nullptr;
     if (!IsDefinition(arg))
         return m.fail(arg, "duplicate argument name not allowed");
 
@@ -3626,6 +3623,8 @@ static bool
 CheckArrayAccess(FunctionValidator& f, ParseNode* viewName, ParseNode* indexExpr,
                  bool isSimd, Scalar::Type* viewType, int32_t* mask)
 {
+    *mask = 0;
+
     if (!viewName->isKind(PNK_NAME))
         return f.fail(viewName, "base of array access must be a typed array view name");
 
@@ -8424,27 +8423,6 @@ js::IsAsmJSModuleLoadedFromCache(JSContext* cx, unsigned argc, Value* vp)
 /*****************************************************************************/
 // asm.js toString/toSource support
 
-static bool
-AppendUseStrictSource(JSContext* cx, HandleFunction fun, Handle<JSFlatString*> src, StringBuffer& out)
-{
-    // We need to add "use strict" in the body right after the opening
-    // brace.
-    size_t bodyStart = 0, bodyEnd;
-
-    // No need to test for functions created with the Function ctor as
-    // these don't implicitly inherit the "use strict" context. Strict mode is
-    // enabled for functions created with the Function ctor only if they begin with
-    // the "use strict" directive, but these functions won't validate as asm.js
-    // modules.
-
-    if (!FindBody(cx, fun, src, &bodyStart, &bodyEnd))
-        return false;
-
-    return out.appendSubstring(src, 0, bodyStart) &&
-           out.append("\n\"use strict\";\n") &&
-           out.appendSubstring(src, bodyStart, src->length() - bodyStart);
-}
-
 JSString*
 js::AsmJSModuleToString(JSContext* cx, HandleFunction fun, bool addParenToLambda)
 {
@@ -8501,13 +8479,8 @@ js::AsmJSModuleToString(JSContext* cx, HandleFunction fun, bool addParenToLambda
         if (!src)
             return nullptr;
 
-        if (module.strict()) {
-            if (!AppendUseStrictSource(cx, fun, src, out))
-                return nullptr;
-        } else {
-            if (!out.append(src))
-                return nullptr;
-        }
+        if (!out.append(src))
+            return nullptr;
 
         if (funCtor && !out.append("\n}"))
             return nullptr;
@@ -8551,27 +8524,11 @@ js::AsmJSFunctionToString(JSContext* cx, HandleFunction fun)
         // as they belong within a module.
         MOZ_ASSERT(!(begin == 0 && end == source->length() && source->argumentsNotIncluded()));
 
-        if (module.strict()) {
-            // AppendUseStrictSource expects its input to start right after the
-            // function name, so split the source chars from the src into two parts:
-            // the function name and the rest (arguments + body).
-
-            // asm.js functions can't be anonymous
-            MOZ_ASSERT(fun->atom());
-            if (!out.append(fun->atom()))
-                return nullptr;
-
-            size_t nameEnd = begin + fun->atom()->length();
-            Rooted<JSFlatString*> src(cx, source->substring(cx, nameEnd, end));
-            if (!src || !AppendUseStrictSource(cx, fun, src, out))
-                return nullptr;
-        } else {
-            Rooted<JSFlatString*> src(cx, source->substring(cx, begin, end));
-            if (!src)
-                return nullptr;
-            if (!out.append(src))
-                return nullptr;
-        }
+        Rooted<JSFlatString*> src(cx, source->substring(cx, begin, end));
+        if (!src)
+            return nullptr;
+        if (!out.append(src))
+            return nullptr;
     }
 
     return out.finishString();

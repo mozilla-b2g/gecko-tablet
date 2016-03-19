@@ -51,15 +51,11 @@ if not CONFIG['JS_STANDALONE']:
     ]
 
 DIRS += [
-    'config/external/fdlibm',
     'config/external/zlib',
     'memory',
     'mfbt',
     'mozglue',
 ]
-
-if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android' and int(CONFIG['MOZ_ANDROID_MIN_SDK_VERSION']) < 11:
-    DIRS += ['other-licenses/android']
 
 if not CONFIG['JS_STANDALONE']:
     DIRS += ['xpcom/xpidl']

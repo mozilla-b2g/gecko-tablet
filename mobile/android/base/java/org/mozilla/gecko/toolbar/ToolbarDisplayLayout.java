@@ -13,7 +13,7 @@ import android.support.v4.content.ContextCompat;
 import org.mozilla.gecko.AboutPages;
 import org.mozilla.gecko.BrowserApp;
 import org.mozilla.gecko.R;
-import org.mozilla.gecko.ReaderModeUtils;
+import org.mozilla.gecko.reader.ReaderModeUtils;
 import org.mozilla.gecko.SiteIdentity;
 import org.mozilla.gecko.SiteIdentity.MixedMode;
 import org.mozilla.gecko.SiteIdentity.SecurityMode;
@@ -125,6 +125,7 @@ public class ToolbarDisplayLayout extends ThemedLinearLayout {
     private static final int LEVEL_SEARCH_ICON = 999;
 
     private final ForegroundColorSpan mUrlColorSpan;
+    private final ForegroundColorSpan mPrivateUrlColorSpan;
     private final ForegroundColorSpan mBlockedColorSpan;
     private final ForegroundColorSpan mDomainColorSpan;
     private final ForegroundColorSpan mPrivateDomainColorSpan;
@@ -142,6 +143,7 @@ public class ToolbarDisplayLayout extends ThemedLinearLayout {
         mTitlePadding = mTitle.getPaddingRight();
 
         mUrlColorSpan = new ForegroundColorSpan(ContextCompat.getColor(context, R.color.url_bar_urltext));
+        mPrivateUrlColorSpan = new ForegroundColorSpan(ContextCompat.getColor(context, R.color.url_bar_urltext_private));
         mBlockedColorSpan = new ForegroundColorSpan(ContextCompat.getColor(context, R.color.url_bar_blockedtext));
         mDomainColorSpan = new ForegroundColorSpan(ContextCompat.getColor(context, R.color.url_bar_domaintext));
         mPrivateDomainColorSpan = new ForegroundColorSpan(ContextCompat.getColor(context, R.color.url_bar_domaintext_private));
@@ -305,6 +307,11 @@ public class ToolbarDisplayLayout extends ThemedLinearLayout {
     }
 
     private void updateAndColorTitleFromFullURL(String url, String baseDomain, boolean isPrivate) {
+        if (TextUtils.isEmpty(baseDomain)) {
+            setTitle(url);
+            return;
+        }
+
         int index = url.indexOf(baseDomain);
         if (index == -1) {
             setTitle(url);
@@ -313,7 +320,7 @@ public class ToolbarDisplayLayout extends ThemedLinearLayout {
 
         final SpannableStringBuilder builder = new SpannableStringBuilder(url);
 
-        builder.setSpan(mUrlColorSpan, 0, url.length(), Spannable.SPAN_INCLUSIVE_INCLUSIVE);
+        builder.setSpan(isPrivate ? mPrivateUrlColorSpan : mUrlColorSpan, 0, url.length(), Spannable.SPAN_INCLUSIVE_INCLUSIVE);
         builder.setSpan(isPrivate ? mPrivateDomainColorSpan : mDomainColorSpan,
                 index, index + baseDomain.length(), Spannable.SPAN_INCLUSIVE_INCLUSIVE);
 

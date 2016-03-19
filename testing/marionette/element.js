@@ -672,7 +672,7 @@ function implicitlyWaitFor(func, timeout, interval = 100) {
     let startTime = new Date().getTime();
     let endTime = startTime + timeout;
 
-    let observer = function() {
+    let elementSearch = function() {
       let res;
       try {
         res = func();
@@ -692,12 +692,19 @@ function implicitlyWaitFor(func, timeout, interval = 100) {
       }
     };
 
-    timer.init(observer, interval, Ci.nsITimer.TYPE_REPEATING_SLACK);
+    // the repeating slack timer waits |interval|
+    // before invoking |elementSearch|
+    elementSearch();
 
-  // cancel timer and return result for yielding
+    timer.init(elementSearch, interval, Ci.nsITimer.TYPE_REPEATING_SLACK);
+
+  // cancel timer and propagate result
   }).then(res => {
     timer.cancel();
     return res;
+  }, err => {
+    timer.cancel();
+    throw err;
   });
 }
 

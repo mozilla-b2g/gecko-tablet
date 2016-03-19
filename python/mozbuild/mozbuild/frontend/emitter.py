@@ -80,7 +80,7 @@ from .reader import SandboxValidationError
 from ..testing import (
     TEST_MANIFESTS,
     REFTEST_FLAVORS,
-    WEB_PATFORM_TESTS_FLAVORS,
+    WEB_PLATFORM_TESTS_FLAVORS,
 )
 
 from .context import (
@@ -571,7 +571,7 @@ class TreeMetadataEmitter(LoggingMixin):
                         defines = lib.defines.get_defines()
                     yield GeneratedFile(context, script,
                         'generate_symbols_file', lib.symbols_file,
-                        [symbols_file.full_path], defines)
+                        [symbols_file], defines)
             if static_lib:
                 lib = StaticLibrary(context, libname, **static_args)
                 self._libs[libname].append(lib)
@@ -922,6 +922,14 @@ class TreeMetadataEmitter(LoggingMixin):
         for name, data in context.get('ANDROID_ECLIPSE_PROJECT_TARGETS', {}).items():
             yield ContextWrapped(context, data)
 
+        if context.get('USE_YASM') is True:
+            yasm = context.config.substs.get('YASM')
+            if not yasm:
+                raise SandboxValidationError('yasm is not available', context)
+            passthru.variables['AS'] = yasm
+            passthru.variables['ASFLAGS'] = context.config.substs.get('YASM_ASFLAGS')
+            passthru.variables['AS_DASH_C_FLAG'] = ''
+
         for (symbol, cls) in [
                 ('ANDROID_RES_DIRS', AndroidResDirs),
                 ('ANDROID_EXTRA_RES_DIRS', AndroidExtraResDirs),
@@ -981,7 +989,7 @@ class TreeMetadataEmitter(LoggingMixin):
                                   'action', 'process_define_files.py')
             yield GeneratedFile(context, script, 'process_define_file',
                                 unicode(path),
-                                [mozpath.join(context.srcdir, path + '.in')])
+                                [Path(context, path + '.in')])
 
         generated_files = context.get('GENERATED_FILES')
         if not generated_files:
@@ -1016,7 +1024,7 @@ class TreeMetadataEmitter(LoggingMixin):
                         raise SandboxValidationError(
                             'Input for generating %s does not exist: %s'
                             % (f, p.full_path), context)
-                    inputs.append(p.full_path)
+                    inputs.append(p)
             else:
                 script = None
                 method = None
@@ -1033,10 +1041,15 @@ class TreeMetadataEmitter(LoggingMixin):
                 for obj in self._process_reftest_manifest(context, flavor, path, manifest):
                     yield obj
 
-        for flavor in WEB_PATFORM_TESTS_FLAVORS:
+        for flavor in WEB_PLATFORM_TESTS_FLAVORS:
             for path, manifest in context.get("%s_MANIFESTS" % flavor.upper().replace('-', '_'), []):
                 for obj in self._process_web_platform_tests_manifest(context, path, manifest):
                     yield obj
+
+        python_tests = context.get('PYTHON_UNIT_TESTS')
+        if python_tests:
+            for obj in self._process_python_tests(context, python_tests):
+                yield obj
 
     def _process_test_manifest(self, context, info, manifest_path, mpmanifest):
         flavor, install_root, install_subdir, package_tests = info
@@ -1238,6 +1251,36 @@ class TreeMetadataEmitter(LoggingMixin):
                     'support-files': '',
                     'subsuite': '',
                 })
+
+        yield obj
+
+    def _process_python_tests(self, context, python_tests):
+        manifest_full_path = context.main_path
+        manifest_reldir = mozpath.dirname(mozpath.relpath(manifest_full_path,
+            context.config.topsrcdir))
+
+        obj = TestManifest(context, manifest_full_path,
+                mozpath.basename(manifest_full_path),
+                flavor='python', install_prefix='python/',
+                relpath=mozpath.join(manifest_reldir,
+                    mozpath.basename(manifest_full_path)))
+
+        for test in python_tests:
+            test = mozpath.normpath(mozpath.join(context.srcdir, test))
+            if not os.path.isfile(test):
+                raise SandboxValidationError('Path specified in '
+                   'PYTHON_UNIT_TESTS does not exist: %s' % test,
+                   context)
+            obj.tests.append({
+                'path': test,
+                'here': mozpath.dirname(test),
+                'manifest': manifest_full_path,
+                'name': mozpath.basename(test),
+                'head': '',
+                'tail': '',
+                'support-files': '',
+                'subsuite': '',
+            })
 
         yield obj
 
