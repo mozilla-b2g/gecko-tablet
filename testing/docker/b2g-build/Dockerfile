@@ -100,10 +100,10 @@ ENV GCC_PATH /home/worker/workspace/gecko/gcc
 # Default to mozilla specific python, etc...
 ENV PATH /tools/python27-mercurial/bin:/tools/python27/bin:$PATH
 ENV PATH /tools/tools/buildfarm/utils:$PATH:/home/worker/bin/
-ENV PATH /tools/gcc-4.7.3-0moz1/bin:$PATH
+ENV PATH $GCC_PATH/bin:/tools/gcc-4.7.3-0moz1/bin:$PATH
 
 # Use the libstd++ we installed over all others...
-env LD_LIBRARY_PATH=/tools/gcc-4.7.3-0moz1/lib64:/tools/gcc-4.7.3-0moz1/lib
+env LD_LIBRARY_PATH=$GCC_PATH/lib64:$GCC_PATH/lib:/tools/gcc-4.7.3-0moz1/lib64:/tools/gcc-4.7.3-0moz1/lib
 
 RUN useradd -d /home/worker -s /bin/bash -m worker
 
