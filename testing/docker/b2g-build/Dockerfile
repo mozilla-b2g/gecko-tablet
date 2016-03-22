@@ -95,6 +95,8 @@ RUN yum install -y \
 RUN mkdir -p /home/worker/bin
 COPY bin/repository-url.py /home/worker/bin/repository-url.py
 
+ENV GCC_PATH /home/worker/workspace/gecko/gcc
+
 # Default to mozilla specific python, etc...
 ENV HOST_COMPILER_PATH gcc-4.8.5-0moz1
 ENV PATH /tools/python27-mercurial/bin:/tools/python27/bin:$PATH
@@ -127,7 +129,7 @@ RUN wget --no-check-certificate https://pypi.python.org/packages/source/s/setupt
     tar -xvf setuptools-1.4.2.tar.gz && \
     cd setuptools-1.4.2 && python setup.py install && \
     cd - && rm -rf setuptools-1.4.2* && \
-    curl https://raw.githubusercontent.com/pypa/pip/master/contrib/get-pip.py | python - && \
+    curl https://bootstrap.pypa.io/get-pip.py | python - && \
     pip install virtualenv
 
 # Generate machine uuid file

@@ -93,7 +93,7 @@ static const uint32_t LOW_AUDIO_USECS = 300000;
 // decoding more audio. If we increase the low audio threshold (see
 // LOW_AUDIO_USECS above) we'll also increase this value to ensure it's not
 // less than the low audio threshold.
-const int64_t AMPLE_AUDIO_USECS = 1000000;
+static const int64_t AMPLE_AUDIO_USECS = 2000000;
 
 } // namespace detail
 
@@ -238,7 +238,6 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
   mDropAudioUntilNextDiscontinuity(false),
   mDropVideoUntilNextDiscontinuity(false),
   mCurrentTimeBeforeSeek(0),
-  mCorruptFrames(60),
   mDecodingFirstFrame(true),
   mSentLoadedMetadataEvent(false),
   mSentFirstFrameLoadedEvent(false),
@@ -461,12 +460,13 @@ void MediaDecoderStateMachine::DiscardStreamData()
   }
 }
 
-bool MediaDecoderStateMachine::HaveEnoughDecodedAudio(int64_t aAmpleAudioUSecs)
+bool MediaDecoderStateMachine::HaveEnoughDecodedAudio()
 {
   MOZ_ASSERT(OnTaskQueue());
 
+  int64_t ampleAudioUSecs = mAmpleAudioThresholdUsecs * mPlaybackRate;
   if (AudioQueue().GetSize() == 0 ||
-      GetDecodedAudioDuration() < aAmpleAudioUSecs) {
+      GetDecodedAudioDuration() < ampleAudioUSecs) {
     return false;
   }
 
@@ -563,14 +563,12 @@ MediaDecoderStateMachine::NeedToDecodeAudio()
 {
   MOZ_ASSERT(OnTaskQueue());
   SAMPLE_LOG("NeedToDecodeAudio() isDec=%d minPrl=%d enufAud=%d",
-             IsAudioDecoding(), mMinimizePreroll,
-             HaveEnoughDecodedAudio(mAmpleAudioThresholdUsecs * mPlaybackRate));
+             IsAudioDecoding(), mMinimizePreroll, HaveEnoughDecodedAudio());
 
   return IsAudioDecoding() &&
          mState != DECODER_STATE_SEEKING &&
          ((IsDecodingFirstFrame() && AudioQueue().GetSize() == 0) ||
-          (!mMinimizePreroll &&
-           !HaveEnoughDecodedAudio(mAmpleAudioThresholdUsecs * mPlaybackRate)));
+          (!mMinimizePreroll && !HaveEnoughDecodedAudio()));
 }
 
 bool
@@ -893,10 +891,6 @@ MediaDecoderStateMachine::OnVideoDecoded(MediaData* aVideoSample,
              (video ? video->mTime : -1),
              (video ? video->GetEndTime() : -1),
              (video ? video->mDiscontinuity : 0));
-
-  // Check frame validity here for every decoded frame in order to have a
-  // better chance to make the decision of turning off HW acceleration.
-  CheckFrameValidity(aVideoSample->As<VideoData>());
 
   switch (mState) {
     case DECODER_STATE_BUFFERING: {
@@ -2419,33 +2413,6 @@ MediaDecoderStateMachine::Reset()
   DecodeTaskQueue()->Dispatch(resetTask.forget());
 }
 
-void
-MediaDecoderStateMachine::CheckFrameValidity(VideoData* aData)
-{
-  MOZ_ASSERT(OnTaskQueue());
-
-  // Update corrupt-frames statistics
-  if (aData->mImage && !aData->mImage->IsValid() && !gfxPrefs::HardwareVideoDecodingForceEnabled()) {
-    FrameStatistics& frameStats = *mFrameStats;
-    frameStats.NotifyCorruptFrame();
-    // If more than 10% of the last 30 frames have been corrupted, then try disabling
-    // hardware acceleration. We use 10 as the corrupt value because RollingMean<>
-    // only supports integer types.
-    mCorruptFrames.insert(10);
-    if (mReader->VideoIsHardwareAccelerated() &&
-        frameStats.GetPresentedFrames() > 60 &&
-        mCorruptFrames.mean() >= 2 /* 20% */) {
-        nsCOMPtr<nsIRunnable> task =
-          NS_NewRunnableMethod(mReader, &MediaDecoderReader::DisableHardwareAcceleration);
-        DecodeTaskQueue()->Dispatch(task.forget());
-        mCorruptFrames.clear();
-      gfxCriticalNote << "Too many dropped/corrupted frames, disabling DXVA";
-    }
-  } else {
-    mCorruptFrames.insert(0);
-  }
-}
-
 int64_t
 MediaDecoderStateMachine::GetClock(TimeStamp* aTimeStamp) const
 {
@@ -2931,6 +2898,15 @@ MediaDecoderStateMachine::SetAudioCaptured(bool aCaptured)
 
   mAudioCaptured = aCaptured;
   ScheduleStateMachine();
+
+  // Don't buffer as much when audio is captured because we don't need to worry
+  // about high latency audio devices.
+  mAmpleAudioThresholdUsecs = mAudioCaptured ?
+                              detail::AMPLE_AUDIO_USECS / 2 :
+                              detail::AMPLE_AUDIO_USECS;
+  if (mIsAudioPrerolling && DonePrerollingAudio()) {
+    StopPrerollingAudio();
+  }
 }
 
 uint32_t MediaDecoderStateMachine::GetAmpleVideoFrames() const

@@ -714,7 +714,7 @@ pref("gfx.canvas.azure.backends", "direct2d1.1,skia,cairo");
 pref("gfx.content.azure.backends", "direct2d1.1,cairo");
 #else
 #ifdef XP_MACOSX
-pref("gfx.content.azure.backends", "cg");
+pref("gfx.content.azure.backends", "skia,cg");
 pref("gfx.canvas.azure.backends", "skia");
 // Accelerated cg canvas where available (10.7+)
 pref("gfx.canvas.azure.accelerated", true);
@@ -1230,6 +1230,13 @@ pref("network.allow-experiments", true);
 // Allow the network changed event to get sent when a network topology or
 // setup change is noticed while running.
 pref("network.notify.changed", true);
+
+// Allow network detection of IPv6 related changes (bug 1245059)
+#if defined(XP_WIN)
+pref("network.notify.IPv6", false);
+#else
+pref("network.notify.IPv6", true);
+#endif
 
 // Transmit UDP busy-work to the LAN when anticipating low latency
 // network reads and on wifi to mitigate 802.11 Power Save Polling delays
@@ -2332,9 +2339,6 @@ pref("layout.css.scroll-snap.prediction-sensitivity", "0.750");
 
 // Is support for basic shapes in clip-path enabled?
 pref("layout.css.clip-path-shapes.enabled", false);
-
-// Is support for CSS sticky positioning enabled?
-pref("layout.css.sticky.enabled", true);
 
 // Is support for DOMPoint enabled?
 pref("layout.css.DOMPoint.enabled", true);

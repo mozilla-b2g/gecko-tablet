@@ -755,26 +755,6 @@ DynamicWithObject::create(JSContext* cx, HandleObject object, HandleObject enclo
     return obj;
 }
 
-/* Implements ES6 8.1.1.2.1 HasBinding steps 7-9. */
-static bool
-CheckUnscopables(JSContext *cx, HandleObject obj, HandleId id, bool *scopable)
-{
-    RootedId unscopablesId(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols()
-                                                .get(JS::SymbolCode::unscopables)));
-    RootedValue v(cx);
-    if (!GetProperty(cx, obj, obj, unscopablesId, &v))
-        return false;
-    if (v.isObject()) {
-        RootedObject unscopablesObj(cx, &v.toObject());
-        if (!GetProperty(cx, unscopablesObj, unscopablesObj, id, &v))
-            return false;
-        *scopable = !ToBoolean(v);
-    } else {
-        *scopable = true;
-    }
-    return true;
-}
-
 static bool
 with_LookupProperty(JSContext* cx, HandleObject obj, HandleId id,
                     MutableHandleObject objp, MutableHandleShape propp)
@@ -785,19 +765,7 @@ with_LookupProperty(JSContext* cx, HandleObject obj, HandleId id,
         return true;
     }
     RootedObject actual(cx, &obj->as<DynamicWithObject>().object());
-    if (!LookupProperty(cx, actual, id, objp, propp))
-        return false;
-
-    if (propp) {
-        bool scopable;
-        if (!CheckUnscopables(cx, actual, id, &scopable))
-            return false;
-        if (!scopable) {
-            objp.set(nullptr);
-            propp.set(nullptr);
-        }
-    }
-    return true;
+    return LookupProperty(cx, actual, id, objp, propp);
 }
 
 static bool
@@ -814,15 +782,7 @@ with_HasProperty(JSContext* cx, HandleObject obj, HandleId id, bool* foundp)
 {
     MOZ_ASSERT(!JSID_IS_ATOM(id, cx->names().dotThis));
     RootedObject actual(cx, &obj->as<DynamicWithObject>().object());
-
-    // ES 8.1.1.2.1 step 3-5.
-    if (!HasProperty(cx, actual, id, foundp))
-        return false;
-    if (!*foundp)
-        return true;
-
-    // Steps 7-10. (Step 6 is a no-op.)
-    return CheckUnscopables(cx, actual, id, foundp);
+    return HasProperty(cx, actual, id, foundp);
 }
 
 static bool
@@ -1984,6 +1944,21 @@ class DebugScopeProxy : public BaseProxyHandler
     }
 
     /*
+     * If the value of |this| is requested before the this-binding has been
+     * initialized by JSOP_FUNCTIONTHIS, the this-binding will be |undefined|.
+     * In that case, we have to call createMissingThis to initialize the
+     * this-binding.
+     *
+     * Note that an |undefined| this-binding is perfectly valid in strict-mode
+     * code, but that's fine: createMissingThis will do the right thing in that
+     * case.
+     */
+    static bool isMaybeUninitializedThisValue(JSContext* cx, jsid id, Value v)
+    {
+        return isThis(cx, id) && v.isUndefined();
+    }
+
+    /*
      * Create a missing arguments object. If the function returns true but
      * argsObj is null, it means the scope is dead.
      */
@@ -2016,6 +1991,9 @@ class DebugScopeProxy : public BaseProxyHandler
         if (!GetFunctionThis(cx, maybeScope->frame(), thisv))
             return false;
 
+        // Update the this-argument to avoid boxing primitive |this| more
+        // than once.
+        maybeScope->frame().thisArgument() = thisv;
         *success = true;
         return true;
     }
@@ -2190,9 +2168,15 @@ class DebugScopeProxy : public BaseProxyHandler
           case ACCESS_UNALIASED:
             if (isMagicMissingArgumentsValue(cx, *scope, vp))
                 return getMissingArguments(cx, *scope, vp);
+            if (isMaybeUninitializedThisValue(cx, id, vp))
+                return getMissingThis(cx, *scope, vp);
             return true;
           case ACCESS_GENERIC:
-            return GetProperty(cx, scope, scope, id, vp);
+            if (!GetProperty(cx, scope, scope, id, vp))
+                return false;
+            if (isMaybeUninitializedThisValue(cx, id, vp))
+                return getMissingThis(cx, *scope, vp);
+            return true;
           case ACCESS_LOST:
             ReportOptimizedOut(cx, id);
             return false;
@@ -2244,9 +2228,15 @@ class DebugScopeProxy : public BaseProxyHandler
           case ACCESS_UNALIASED:
             if (isMagicMissingArgumentsValue(cx, *scope, vp))
                 return getMissingArgumentsMaybeSentinelValue(cx, *scope, vp);
+            if (isMaybeUninitializedThisValue(cx, id, vp))
+                return getMissingThisMaybeSentinelValue(cx, *scope, vp);
             return true;
           case ACCESS_GENERIC:
-            return GetProperty(cx, scope, scope, id, vp);
+            if (!GetProperty(cx, scope, scope, id, vp))
+                return false;
+            if (isMaybeUninitializedThisValue(cx, id, vp))
+                return getMissingThisMaybeSentinelValue(cx, *scope, vp);
+            return true;
           case ACCESS_LOST:
             vp.setMagic(JS_OPTIMIZED_OUT);
             return true;
@@ -2315,24 +2305,11 @@ class DebugScopeProxy : public BaseProxyHandler
         // target object, the object would indicate that native enumeration is
         // the thing to do, but native enumeration over the DynamicWithObject
         // wrapper yields no properties.  So instead here we hack around the
-        // issue: punch a hole through to the with object target, then manually
-        // examine @@unscopables.
-        bool isWith = scope->is<DynamicWithObject>();
-        Rooted<JSObject*> target(cx, (isWith ? &scope->as<DynamicWithObject>().object() : scope));
+        // issue, and punch a hole through to the with object target.
+        Rooted<JSObject*> target(cx, (scope->is<DynamicWithObject>()
+                                      ? &scope->as<DynamicWithObject>().object() : scope));
         if (!GetPropertyKeys(cx, target, JSITER_OWNONLY, &props))
             return false;
-
-        if (isWith) {
-            size_t j = 0;
-            for (size_t i = 0; i < props.length(); i++) {
-                bool inScope;
-                if (!CheckUnscopables(cx, scope, props[i], &inScope))
-                    return false;
-                if (inScope)
-                    props[j++].set(props[i]);
-            }
-            props.resize(j);
-        }
 
         /*
          * Function scopes are optimized to not contain unaliased variables so
