@@ -9,6 +9,7 @@ var Places = {
   DB_VERSION: 1,
   SITES_STORE: 'sites',
   db: null,
+  broadcastChannel: null,
 
   /**
    * Start the Places Database.
@@ -16,6 +17,7 @@ var Places = {
    * @return {Object} The Places object.
    */
   start: function() {
+    this.broadcastChannel = new BroadcastChannel('system');
     return this.open();
   },
 
@@ -78,7 +80,7 @@ var Places = {
     var objectStore = transaction.objectStore(this.SITES_STORE);
     var hostname = new URL(url).hostname;
     var readRequest = objectStore.get(hostname);
-    readRequest.onsuccess = function() {
+    readRequest.onsuccess = (function() {
       // If site doesn't exist, create it
       if (!readRequest.result) {
         var writeRequest = objectStore.add({
@@ -93,14 +95,17 @@ var Places = {
           'frecency': frecency
         });
       }
-      writeRequest.onsuccess = function() {
+  
+      writeRequest.onsuccess = (function() {
+        this.broadcastChannel.postMessage('siteupdated'); 
         console.log('Successfully updated site ' + hostname +
           ' with frecency ' + frecency);
-      };
+      }).bind(this);
+  
       writeRequest.onerror = function() {
         console.error('Error updating site ' + hostname);
       };
-    };
+    }).bind(this);
     readRequest.onerror = function() {
       console.error('Error reading site ' + hostname);
     }

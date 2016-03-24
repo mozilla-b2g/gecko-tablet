@@ -21,6 +21,9 @@ var HomeScreen = {
     return this;
   },
 
+  /**
+   * Handle click on search box.
+   */
   handleSearchClick: function() {
     window.dispatchEvent(new CustomEvent('_openwindow'));
   }
