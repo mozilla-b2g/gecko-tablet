@@ -8,6 +8,7 @@
 
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/SizePrintfMacros.h"
 
 #include "jslibmath.h"
@@ -187,21 +188,18 @@ ICStub::trace(JSTracer* trc)
       case ICStub::Call_Scripted: {
         ICCall_Scripted* callStub = toCall_Scripted();
         TraceEdge(trc, &callStub->callee(), "baseline-callscripted-callee");
-        if (callStub->templateObject())
-            TraceEdge(trc, &callStub->templateObject(), "baseline-callscripted-template");
+        TraceNullableEdge(trc, &callStub->templateObject(), "baseline-callscripted-template");
         break;
       }
       case ICStub::Call_Native: {
         ICCall_Native* callStub = toCall_Native();
         TraceEdge(trc, &callStub->callee(), "baseline-callnative-callee");
-        if (callStub->templateObject())
-            TraceEdge(trc, &callStub->templateObject(), "baseline-callnative-template");
+        TraceNullableEdge(trc, &callStub->templateObject(), "baseline-callnative-template");
         break;
       }
       case ICStub::Call_ClassHook: {
         ICCall_ClassHook* callStub = toCall_ClassHook();
-        if (callStub->templateObject())
-            TraceEdge(trc, &callStub->templateObject(), "baseline-callclasshook-template");
+        TraceNullableEdge(trc, &callStub->templateObject(), "baseline-callclasshook-template");
         break;
       }
       case ICStub::Call_StringSplit: {
@@ -285,8 +283,7 @@ ICStub::trace(JSTracer* trc)
       }
       case ICStub::SetElem_DenseOrUnboxedArray: {
         ICSetElem_DenseOrUnboxedArray* setElemStub = toSetElem_DenseOrUnboxedArray();
-        if (setElemStub->shape())
-            TraceEdge(trc, &setElemStub->shape(), "baseline-getelem-dense-shape");
+        TraceNullableEdge(trc, &setElemStub->shape(), "baseline-getelem-dense-shape");
         TraceEdge(trc, &setElemStub->group(), "baseline-setelem-dense-group");
         break;
       }
@@ -425,10 +422,8 @@ ICStub::trace(JSTracer* trc)
         else
             propStub = toGetProp_CallDOMProxyWithGenerationNative();
         propStub->receiverGuard().trace(trc);
-        if (propStub->expandoShape()) {
-            TraceEdge(trc, &propStub->expandoShape(),
-                      "baseline-getproplistbasenative-stub-expandoshape");
-        }
+        TraceNullableEdge(trc, &propStub->expandoShape(),
+                          "baseline-getproplistbasenative-stub-expandoshape");
         TraceEdge(trc, &propStub->holder(), "baseline-getproplistbasenative-stub-holder");
         TraceEdge(trc, &propStub->holderShape(), "baseline-getproplistbasenative-stub-holdershape");
         TraceEdge(trc, &propStub->getter(), "baseline-getproplistbasenative-stub-getter");
@@ -481,8 +476,7 @@ ICStub::trace(JSTracer* trc)
         ICSetProp_NativeAdd* propStub = toSetProp_NativeAdd();
         TraceEdge(trc, &propStub->group(), "baseline-setpropnativeadd-stub-group");
         TraceEdge(trc, &propStub->newShape(), "baseline-setpropnativeadd-stub-newshape");
-        if (propStub->newGroup())
-            TraceEdge(trc, &propStub->newGroup(), "baseline-setpropnativeadd-stub-new-group");
+        TraceNullableEdge(trc, &propStub->newGroup(), "baseline-setpropnativeadd-stub-new-group");
         JS_STATIC_ASSERT(ICSetProp_NativeAdd::MAX_PROTO_CHAIN_DEPTH == 4);
         switch (propStub->protoChainDepth()) {
           case 0: propStub->toImpl<0>()->traceShapes(trc); break;
@@ -529,15 +523,13 @@ ICStub::trace(JSTracer* trc)
       }
       case ICStub::NewArray_Fallback: {
         ICNewArray_Fallback* stub = toNewArray_Fallback();
-        if (stub->templateObject())
-            TraceEdge(trc, &stub->templateObject(), "baseline-newarray-template");
+        TraceNullableEdge(trc, &stub->templateObject(), "baseline-newarray-template");
         TraceEdge(trc, &stub->templateGroup(), "baseline-newarray-template-group");
         break;
       }
       case ICStub::NewObject_Fallback: {
         ICNewObject_Fallback* stub = toNewObject_Fallback();
-        if (stub->templateObject())
-            TraceEdge(trc, &stub->templateObject(), "baseline-newobject-template");
+        TraceNullableEdge(trc, &stub->templateObject(), "baseline-newobject-template");
         break;
       }
       case ICStub::Rest_Fallback: {
@@ -2186,10 +2178,10 @@ UpdateExistingGenerationalDOMProxyStub(ICGetProp_Fallback* stub,
                 iter->toGetProp_CallDOMProxyWithGenerationNative();
             if (updateStub->expandoAndGeneration() == expandoAndGeneration) {
                 // Update generation
-                uint32_t generation = expandoAndGeneration->generation;
+                uint64_t generation = expandoAndGeneration->generation;
                 JitSpew(JitSpew_BaselineIC,
                         "  Updating existing stub with generation, old value: %i, "
-                        "new value: %i", updateStub->generation(),
+                        "new value: %" PRIu64 "", updateStub->generation(),
                         generation);
                 updateStub->setGeneration(generation);
                 return true;
@@ -3575,9 +3567,9 @@ CheckDOMProxyExpandoDoesNotShadow(JSContext* cx, MacroAssembler& masm, Register 
         masm.branchPrivatePtr(Assembler::NotEqual, expandoAddr, tempVal.scratchReg(),
                               &failDOMProxyCheck);
 
-        masm.load32(*generationAddr, scratch);
-        masm.branch32(Assembler::NotEqual,
-                      Address(tempVal.scratchReg(), offsetof(ExpandoAndGeneration, generation)),
+        masm.branch64(Assembler::NotEqual,
+                      Address(tempVal.scratchReg(), ExpandoAndGeneration::offsetOfGeneration()),
+                      *generationAddr,
                       scratch, &failDOMProxyCheck);
 
         masm.loadValue(Address(tempVal.scratchReg(), 0), tempVal);
@@ -3705,7 +3697,7 @@ ICGetPropCallDOMProxyNativeCompiler::getStub(ICStubSpace* space)
     Value expandoSlot = GetProxyExtra(proxy_, GetDOMProxyExpandoSlot());
     RootedShape expandoShape(cx, nullptr);
     ExpandoAndGeneration* expandoAndGeneration;
-    int32_t generation;
+    uint64_t generation;
     Value expandoVal;
     if (kind == ICStub::GetProp_CallDOMProxyNative) {
         expandoVal = expandoSlot;

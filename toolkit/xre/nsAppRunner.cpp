@@ -68,6 +68,7 @@
 #include "nsIIOService2.h"
 #include "nsIObserverService.h"
 #include "nsINativeAppSupport.h"
+#include "nsIPlatformInfo.h"
 #include "nsIProcess.h"
 #include "nsIProfileUnlocker.h"
 #include "nsIPromptService.h"
@@ -90,7 +91,6 @@
 #include "nsIDocShell.h"
 #include "nsAppShellCID.h"
 #include "mozilla/scache/StartupCache.h"
-#include "nsIGfxInfo.h"
 #include "gfxPrefs.h"
 
 #include "base/histogram.h"
@@ -210,8 +210,12 @@
 #include "AndroidBridge.h"
 #endif
 
-#if defined(MOZ_SANDBOX) && defined(XP_LINUX) && !defined(ANDROID)
+#if defined(MOZ_SANDBOX)
+#if defined(XP_LINUX) && !defined(ANDROID)
 #include "mozilla/SandboxInfo.h"
+#elif defined(XP_WIN)
+#include "SandboxBroker.h"
+#endif
 #endif
 
 extern uint32_t gRestartMode;
@@ -742,6 +746,7 @@ class nsXULAppInfo : public nsIXULAppInfo,
 public:
   MOZ_CONSTEXPR nsXULAppInfo() {}
   NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_NSIPLATFORMINFO
   NS_DECL_NSIXULAPPINFO
   NS_DECL_NSIXULRUNTIME
   NS_DECL_NSIOBSERVER
@@ -765,7 +770,8 @@ NS_INTERFACE_MAP_BEGIN(nsXULAppInfo)
   NS_INTERFACE_MAP_ENTRY(nsICrashReporter)
   NS_INTERFACE_MAP_ENTRY(nsIFinishDumpingCallback)
 #endif
-  NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIXULAppInfo, gAppData || 
+  NS_INTERFACE_MAP_ENTRY(nsIPlatformInfo)
+  NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIXULAppInfo, gAppData ||
                                      XRE_IsContentProcess())
 NS_INTERFACE_MAP_END
 
@@ -3723,6 +3729,12 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     int result;
 #ifdef XP_WIN
     UseParentConsole();
+#if defined(MOZ_SANDBOX)
+    if (!SandboxBroker::Initialize()) {
+      NS_WARNING("Failed to initialize broker services, sandboxed processes "
+                 "will fail to start.");
+    }
+#endif
 #endif
     // RunGTest will only be set if we're in xul-unit
     if (mozilla::RunGTest) {
@@ -4308,6 +4320,20 @@ XREMain::XRE_mainRun()
   }
 #endif /* MOZ_INSTRUMENT_EVENT_LOOP */
 
+#if defined(MOZ_SANDBOX) && defined(XP_WIN)
+  if (!SandboxBroker::Initialize()) {
+#if defined(MOZ_CONTENT_SANDBOX)
+    // If we're sandboxing content and we fail to initialize, then crashing here
+    // seems like the sensible option.
+    if (BrowserTabsRemoteAutostart()) {
+      MOZ_CRASH("Failed to initialize broker services, can't continue.");
+    }
+#endif
+    // Otherwise just warn for the moment, as most things will work.
+    NS_WARNING("Failed to initialize broker services, sandboxed processes will "
+               "fail to start.");
+  }
+#endif
 #if (defined(XP_WIN) || defined(XP_MACOSX)) && defined(MOZ_CONTENT_SANDBOX)
   SetUpSandboxEnvironment();
 #endif
@@ -4631,7 +4657,7 @@ enum {
   kE10sDisabledByUser = 2,
   // kE10sDisabledInSafeMode = 3, was removed in bug 1172491.
   kE10sDisabledForAccessibility = 4,
-  kE10sDisabledForMacGfx = 5,
+  // kE10sDisabledForMacGfx = 5, was removed in bug 1068674.
   kE10sDisabledForBidi = 6,
   kE10sDisabledForAddons = 7,
   kE10sForceDisabled = 8,
@@ -4730,41 +4756,6 @@ MultiprocessBlockPolicy() {
   }
 
 
-#if defined(XP_MACOSX)
-  // If for any reason we suspect acceleration will be disabled, disable
-  // e10s auto start on mac.
-
-  // Check prefs
-  bool accelDisabled = gfxPrefs::GetSingleton().LayersAccelerationDisabled() &&
-                       !gfxPrefs::LayersAccelerationForceEnabled();
-
-  accelDisabled = accelDisabled || !nsCocoaFeatures::AccelerateByDefault();
-
-  // Check for blocked drivers
-  if (!accelDisabled) {
-    nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
-    if (gfxInfo) {
-      int32_t status;
-      if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_OPENGL_LAYERS, &status)) &&
-          status != nsIGfxInfo::FEATURE_STATUS_OK) {
-        accelDisabled = true;
-      }
-    }
-  }
-
-  // Check env flags
-  if (accelDisabled) {
-    const char *acceleratedEnv = PR_GetEnv("MOZ_ACCELERATED");
-    if (acceleratedEnv && (*acceleratedEnv != '0')) {
-      accelDisabled = false;
-    }
-  }
-
-  if (accelDisabled) {
-    gMultiprocessBlockPolicy = kE10sDisabledForMacGfx;
-    return gMultiprocessBlockPolicy;
-  }
-#endif // defined(XP_MACOSX)
 
   /*
    * None of the blocking policies matched, so e10s is allowed to run.

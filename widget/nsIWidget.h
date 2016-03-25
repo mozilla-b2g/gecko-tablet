@@ -52,7 +52,7 @@ namespace layers {
 class AsyncDragMetrics;
 class Composer2D;
 class Compositor;
-class CompositorChild;
+class CompositorBridgeChild;
 class LayerManager;
 class LayerManagerComposite;
 class PLayerTransactionChild;
@@ -327,7 +327,7 @@ class nsIWidget : public nsISupports {
 
   public:
     typedef mozilla::layers::Composer2D Composer2D;
-    typedef mozilla::layers::CompositorChild CompositorChild;
+    typedef mozilla::layers::CompositorBridgeChild CompositorBridgeChild;
     typedef mozilla::layers::AsyncDragMetrics AsyncDragMetrics;
     typedef mozilla::layers::FrameMetrics FrameMetrics;
     typedef mozilla::layers::LayerManager LayerManager;
@@ -1324,7 +1324,8 @@ class nsIWidget : public nsISupports {
      * Create DrawTarget used as BackBuffer of the screen
      */
     virtual already_AddRefed<mozilla::gfx::DrawTarget> CreateBackBufferDrawTarget(mozilla::gfx::DrawTarget* aScreenTarget,
-                                                                                  const LayoutDeviceIntRect& aRect) = 0;
+                                                                                  const LayoutDeviceIntRect& aRect,
+                                                                                  const bool aInitModeClear) = 0;
 
     /**
      * A hook for the widget to prepare a Compositor, during the latter's initialization.
@@ -2021,7 +2022,7 @@ public:
      * If this isn't directly compositing to its window surface,
      * return the compositor which is doing that on our behalf.
      */
-    virtual CompositorChild* GetRemoteRenderer()
+    virtual CompositorBridgeChild* GetRemoteRenderer()
     { return nullptr; }
 
     /**

@@ -345,38 +345,6 @@ OnSharedPreferenceChangeListener
         // Use setResourceToOpen to specify these extras.
         Bundle intentExtras = getIntent().getExtras();
 
-        // For versions of Android lower than Honeycomb, use xml resources instead of
-        // Fragments because of an Android bug in ActionBar (described in bug 866352 and
-        // fixed in bug 833625).
-        if (Versions.preHC) {
-            // Write prefs to our custom GeckoSharedPrefs file.
-            getPreferenceManager().setSharedPreferencesName(GeckoSharedPrefs.APP_PREFS_NAME);
-
-            int res = 0;
-            if (intentExtras != null && intentExtras.containsKey(INTENT_EXTRA_RESOURCES)) {
-                // Fetch resource id from intent.
-                final String resourceName = intentExtras.getString(INTENT_EXTRA_RESOURCES);
-                Telemetry.sendUIEvent(TelemetryContract.Event.ACTION, Method.SETTINGS, resourceName);
-
-                if (resourceName != null) {
-                    res = getResources().getIdentifier(resourceName, "xml", getPackageName());
-                    if (res == 0) {
-                        Log.e(LOGTAG, "No resource found named " + resourceName);
-                    }
-                }
-            }
-            if (res == 0) {
-                // No resource specified, or the resource was invalid; use the default preferences screen.
-                Log.e(LOGTAG, "Displaying default settings.");
-                res = R.xml.preferences;
-                Telemetry.startUISession(TelemetryContract.Session.SETTINGS);
-            }
-
-            // We don't include a title in the XML, so set it here, in a locale-aware fashion.
-            updateTitleForPrefsResource(res);
-            addPreferencesFromResource(res);
-        }
-
         EventDispatcher.getInstance().registerGeckoThreadListener((GeckoEventListener) this,
             "Sanitize:Finished");
 
@@ -511,10 +479,6 @@ OnSharedPreferenceChangeListener
             return;
 
         mInitialized = true;
-        if (Versions.preHC) {
-            PreferenceScreen screen = getPreferenceScreen();
-            mPrefsRequest = setupPreferences(screen);
-        }
     }
 
     @Override
@@ -540,13 +504,6 @@ OnSharedPreferenceChangeListener
         if (mPrefsRequest != null) {
             PrefsHelper.removeObserver(mPrefsRequest);
             mPrefsRequest = null;
-        }
-
-        // The intent extras will be null if this is the top-level settings
-        // activity. In that case, we want to end the SETTINGS telmetry session.
-        // For HC+ versions of Android this is handled in GeckoPreferenceFragment.
-        if (Versions.preHC && getIntent().getExtras() == null) {
-            Telemetry.stopUISession(TelemetryContract.Session.SETTINGS);
         }
     }
 
@@ -947,10 +904,10 @@ OnSharedPreferenceChangeListener
      * Restore default search engines in Gecko and retrigger a search engine refresh.
      */
     protected void restoreDefaultSearchEngines() {
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:RestoreDefaults", null));
+        GeckoAppShell.notifyObservers("SearchEngines:RestoreDefaults", null);
 
         // Send message to Gecko to get engines. SearchPreferenceCategory listens for the response.
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:GetVisible", null));
+        GeckoAppShell.notifyObservers("SearchEngines:GetVisible", null);
     }
 
     @Override
@@ -1453,101 +1410,108 @@ OnSharedPreferenceChangeListener
     }
 
     // Initialize preferences by requesting the preference values from Gecko
-    private PrefsHelper.PrefHandler getGeckoPreferences(final PreferenceGroup screen,
-                                                        ArrayList<String> prefs) {
+    private static class PrefCallbacks extends PrefsHelper.PrefHandlerBase {
+        private final PreferenceGroup screen;
 
-        final PrefsHelper.PrefHandler prefHandler = new PrefsHelper.PrefHandlerBase() {
-            private Preference getField(String prefName) {
-                return screen.findPreference(prefName);
-            }
+        public PrefCallbacks(final PreferenceGroup screen) {
+            this.screen = screen;
+        }
 
-            // Handle v14 TwoStatePreference with backwards compatibility.
-            class CheckBoxPrefSetter {
-                public void setBooleanPref(Preference preference, boolean value) {
-                    if ((preference instanceof CheckBoxPreference) &&
-                       ((CheckBoxPreference) preference).isChecked() != value) {
-                        ((CheckBoxPreference) preference).setChecked(value);
-                    }
+        private Preference getField(String prefName) {
+            return screen.findPreference(prefName);
+        }
+
+        // Handle v14 TwoStatePreference with backwards compatibility.
+        private static class CheckBoxPrefSetter {
+            public void setBooleanPref(Preference preference, boolean value) {
+                if ((preference instanceof CheckBoxPreference) &&
+                   ((CheckBoxPreference) preference).isChecked() != value) {
+                    ((CheckBoxPreference) preference).setChecked(value);
                 }
             }
+        }
 
-            class TwoStatePrefSetter extends CheckBoxPrefSetter {
+        private static class TwoStatePrefSetter extends CheckBoxPrefSetter {
+            @Override
+            public void setBooleanPref(Preference preference, boolean value) {
+                if ((preference instanceof TwoStatePreference) &&
+                   ((TwoStatePreference) preference).isChecked() != value) {
+                    ((TwoStatePreference) preference).setChecked(value);
+                }
+            }
+        }
+
+        @Override
+        public void prefValue(String prefName, final boolean value) {
+            final Preference pref = getField(prefName);
+            final CheckBoxPrefSetter prefSetter;
+            if (Versions.preICS) {
+                prefSetter = new CheckBoxPrefSetter();
+            } else {
+                prefSetter = new TwoStatePrefSetter();
+            }
+            ThreadUtils.postToUiThread(new Runnable() {
                 @Override
-                public void setBooleanPref(Preference preference, boolean value) {
-                    if ((preference instanceof TwoStatePreference) &&
-                       ((TwoStatePreference) preference).isChecked() != value) {
-                        ((TwoStatePreference) preference).setChecked(value);
-                    }
+                public void run() {
+                    prefSetter.setBooleanPref(pref, value);
                 }
-            }
+            });
+        }
 
-            @Override
-            public void prefValue(String prefName, final boolean value) {
-                final Preference pref = getField(prefName);
-                final CheckBoxPrefSetter prefSetter;
-                if (Versions.preICS) {
-                    prefSetter = new CheckBoxPrefSetter();
-                } else {
-                    prefSetter = new TwoStatePrefSetter();
-                }
+        @Override
+        public void prefValue(String prefName, final String value) {
+            final Preference pref = getField(prefName);
+            if (pref instanceof EditTextPreference) {
                 ThreadUtils.postToUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        prefSetter.setBooleanPref(pref, value);
+                        ((EditTextPreference) pref).setText(value);
                     }
                 });
-            }
-
-            @Override
-            public void prefValue(String prefName, final String value) {
-                final Preference pref = getField(prefName);
-                if (pref instanceof EditTextPreference) {
-                    ThreadUtils.postToUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            ((EditTextPreference) pref).setText(value);
-                        }
-                    });
-                } else if (pref instanceof ListPreference) {
-                    ThreadUtils.postToUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            ((ListPreference) pref).setValue(value);
-                            // Set the summary string to the current entry
-                            CharSequence selectedEntry = ((ListPreference) pref).getEntry();
-                            ((ListPreference) pref).setSummary(selectedEntry);
-                        }
-                    });
-                } else if (pref instanceof FontSizePreference) {
-                    final FontSizePreference fontSizePref = (FontSizePreference) pref;
-                    fontSizePref.setSavedFontSize(value);
-                    final String fontSizeName = fontSizePref.getSavedFontSizeName();
-                    ThreadUtils.postToUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            fontSizePref.setSummary(fontSizeName); // Ex: "Small".
-                        }
-                    });
-                }
-            }
-
-            @Override
-            public void prefValue(String prefName, final int value) {
-                final Preference pref = getField(prefName);
-                Log.w(LOGTAG, "Unhandled int value for pref [" + pref + "]");
-            }
-
-            @Override
-            public void finish() {
-                // enable all preferences once we have them from gecko
+            } else if (pref instanceof ListPreference) {
                 ThreadUtils.postToUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        screen.setEnabled(true);
+                        ((ListPreference) pref).setValue(value);
+                        // Set the summary string to the current entry
+                        CharSequence selectedEntry = ((ListPreference) pref).getEntry();
+                        ((ListPreference) pref).setSummary(selectedEntry);
+                    }
+                });
+            } else if (pref instanceof FontSizePreference) {
+                final FontSizePreference fontSizePref = (FontSizePreference) pref;
+                fontSizePref.setSavedFontSize(value);
+                final String fontSizeName = fontSizePref.getSavedFontSizeName();
+                ThreadUtils.postToUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        fontSizePref.setSummary(fontSizeName); // Ex: "Small".
                     }
                 });
             }
-        };
+        }
+
+        @Override
+        public void prefValue(String prefName, final int value) {
+            final Preference pref = getField(prefName);
+            Log.w(LOGTAG, "Unhandled int value for pref [" + pref + "]");
+        }
+
+        @Override
+        public void finish() {
+            // enable all preferences once we have them from gecko
+            ThreadUtils.postToUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    screen.setEnabled(true);
+                }
+            });
+        }
+    }
+
+    private PrefsHelper.PrefHandler getGeckoPreferences(final PreferenceGroup screen,
+                                                            ArrayList<String> prefs) {
+        final PrefsHelper.PrefHandler prefHandler = new PrefCallbacks(screen);
         final String[] prefNames = prefs.toArray(new String[prefs.size()]);
         PrefsHelper.addObserver(prefNames, prefHandler);
         return prefHandler;
@@ -1574,14 +1538,10 @@ OnSharedPreferenceChangeListener
             return;
         }
 
-        if (Versions.preHC) {
-            intent.putExtra("resource", resource);
-        } else {
-            intent.putExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT, GeckoPreferenceFragment.class.getName());
+        intent.putExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT, GeckoPreferenceFragment.class.getName());
 
-            Bundle fragmentArgs = new Bundle();
-            fragmentArgs.putString("resource", resource);
-            intent.putExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT_ARGUMENTS, fragmentArgs);
-        }
+        Bundle fragmentArgs = new Bundle();
+        fragmentArgs.putString("resource", resource);
+        intent.putExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT_ARGUMENTS, fragmentArgs);
     }
 }

@@ -1083,9 +1083,7 @@ StructTypeDescr::maybeForwardedFieldDescr(size_t index) const
 {
     ArrayObject& fieldDescrs = *MaybeForwarded(&fieldInfoObject(JS_DESCR_SLOT_STRUCT_FIELD_TYPES));
     MOZ_ASSERT(index < fieldDescrs.getDenseInitializedLength());
-    JSObject& descr =
-        *MaybeForwarded(&fieldDescrs.getDenseElement(index).toObject());
-    return descr.as<TypeDescr>();
+    return MaybeForwarded(&fieldDescrs.getDenseElement(index).toObject())->as<TypeDescr>();
 }
 
 /******************************************************************************
@@ -1659,6 +1657,7 @@ OutlineTypedObject::obj_trace(JSTracer* trc, JSObject* object)
     // inline with it. Note that an array buffer pointing to data in an inline
     // typed object will never be used as an owner for another outline typed
     // object. In such cases, the owner will be the inline typed object itself.
+    MakeAccessibleAfterMovingGC(owner);
     MOZ_ASSERT_IF(owner->is<ArrayBufferObject>(),
                   !owner->as<ArrayBufferObject>().forInlineTypedObject());
     if (owner != oldOwner &&
@@ -2944,16 +2943,14 @@ MemoryTracingVisitor::visitReference(ReferenceTypeDescr& descr, uint8_t* mem)
       case ReferenceTypeDescr::TYPE_OBJECT:
       {
         HeapPtrObject* objectPtr = reinterpret_cast<js::HeapPtrObject*>(mem);
-        if (*objectPtr)
-            TraceEdge(trace_, objectPtr, "reference-obj");
+        TraceNullableEdge(trace_, objectPtr, "reference-obj");
         return;
       }
 
       case ReferenceTypeDescr::TYPE_STRING:
       {
         HeapPtrString* stringPtr = reinterpret_cast<js::HeapPtrString*>(mem);
-        if (*stringPtr)
-            TraceEdge(trace_, stringPtr, "reference-str");
+        TraceNullableEdge(trace_, stringPtr, "reference-str");
         return;
       }
     }

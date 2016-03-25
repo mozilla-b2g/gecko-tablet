@@ -365,7 +365,6 @@ mozJSComponentLoader::LoadModule(FileLocation& aFile)
 
     dom::AutoJSAPI jsapi;
     jsapi.Init();
-    jsapi.TakeOwnershipOfErrorReporting();
     JSContext* cx = jsapi.cx();
 
     nsAutoPtr<ModuleEntry> entry(new ModuleEntry(cx));
@@ -655,7 +654,6 @@ mozJSComponentLoader::ObjectForLocation(ComponentLoaderInfo& aInfo,
 
     dom::AutoJSAPI jsapi;
     jsapi.Init();
-    jsapi.TakeOwnershipOfErrorReporting();
     JSContext* cx = jsapi.cx();
 
     bool realFile = false;
@@ -701,6 +699,9 @@ mozJSComponentLoader::ObjectForLocation(ComponentLoaderInfo& aInfo,
             // cache. Could mean that the cache was corrupted and got removed,
             // but either way we're going to write this out.
             writeToCache = true;
+            // ReadCachedScript and ReadCachedFunction may have set a pending
+            // exception.
+            JS_ClearPendingException(cx);
         }
     }
 
@@ -980,7 +981,6 @@ mozJSComponentLoader::UnloadModules()
 
         dom::AutoJSAPI jsapi;
         jsapi.Init();
-        jsapi.TakeOwnershipOfErrorReporting();
         JSContext* cx = jsapi.cx();
         RootedObject global(cx, mLoaderGlobal->GetJSObject());
         if (global) {
@@ -1214,7 +1214,6 @@ mozJSComponentLoader::ImportInto(const nsACString& aLocation,
         // not an AutoEntryScript.
         dom::AutoJSAPI jsapi;
         jsapi.Init();
-        jsapi.TakeOwnershipOfErrorReporting();
         JSContext* cx = jsapi.cx();
         JSAutoCompartment ac(cx, mod->obj);
 
