@@ -151,11 +151,9 @@ ShadowRoot::InsertSheet(StyleSheetHandle aSheet,
     }
 
     nsINode* sheetOwningNode = mProtoBinding->StyleSheetAt(i)->GetOwnerNode();
-    if (sheetOwningNode) {
-      if (nsContentUtils::PositionIsBefore(aLinkingContent, sheetOwningNode)) {
-        mProtoBinding->InsertStyleSheetAt(i, aSheet);
-        break;
-      }
+    if (nsContentUtils::PositionIsBefore(aLinkingContent, sheetOwningNode)) {
+      mProtoBinding->InsertStyleSheetAt(i, aSheet);
+      break;
     }
   }
 
