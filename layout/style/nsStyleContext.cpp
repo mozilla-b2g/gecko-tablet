@@ -597,6 +597,21 @@ ShouldSuppressLineBreak(const nsStyleContext* aContext,
   return false;
 }
 
+// Flex & grid containers blockify their children.
+//  "The display value of a flex item is blockified"
+//    https://drafts.csswg.org/css-flexbox-1/#flex-items
+//  "The display value of a grid item is blockified"
+//    https://drafts.csswg.org/css-grid/#grid-items
+static bool
+ShouldBlockifyChildren(const nsStyleDisplay* aStyleDisp)
+{
+  auto displayVal = aStyleDisp->mDisplay;
+  return NS_STYLE_DISPLAY_FLEX == displayVal ||
+    NS_STYLE_DISPLAY_INLINE_FLEX == displayVal ||
+    NS_STYLE_DISPLAY_GRID == displayVal ||
+    NS_STYLE_DISPLAY_INLINE_GRID == displayVal;
+}
+
 void
 nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
 {
@@ -703,7 +718,7 @@ nsStyleContext::ApplyStyleFixups(bool aSkipParentDisplayBasedStyleFixup)
       containerContext = containerContext->GetParent();
       containerDisp = containerContext->StyleDisplay();
     }
-    if (containerDisp->IsFlexOrGridDisplayType() &&
+    if (ShouldBlockifyChildren(containerDisp) &&
         GetPseudo() != nsCSSAnonBoxes::mozNonElement) {
       // NOTE: Technically, we shouldn't modify the 'display' value of
       // positioned elements, since they aren't flex/grid items. However,
@@ -1076,7 +1091,10 @@ nsStyleContext::CalcStyleDifference(nsStyleContext* aOther,
       const nsStyleText* otherVisText = otherVis->StyleText();
       if (thisVisText->mTextEmphasisColorForeground !=
           otherVisText->mTextEmphasisColorForeground ||
-          thisVisText->mTextEmphasisColor != otherVisText->mTextEmphasisColor) {
+          thisVisText->mTextEmphasisColor != otherVisText->mTextEmphasisColor ||
+          thisVisText->mWebkitTextFillColorForeground !=
+          otherVisText->mWebkitTextFillColorForeground ||
+          thisVisText->mWebkitTextFillColor != otherVisText->mWebkitTextFillColor) {
         change = true;
       }
     }
@@ -1298,6 +1316,7 @@ nsStyleContext::GetVisitedDependentColor(nsCSSProperty aProperty)
                aProperty == eCSSProperty__moz_column_rule_color ||
                aProperty == eCSSProperty_text_decoration_color ||
                aProperty == eCSSProperty_text_emphasis_color ||
+               aProperty == eCSSProperty__webkit_text_fill_color ||
                aProperty == eCSSProperty_fill ||
                aProperty == eCSSProperty_stroke,
                "we need to add to nsStyleContext::CalcStyleDifference");
