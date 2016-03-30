@@ -110,7 +110,6 @@ GaiaChrome::EnsureValidPath(nsIFile* appsDir)
     nsCString path; appsDir->GetNativePath(path);
     // We don't want to continue if the apps path does not exists ...
     printf_stderr("!!! Gaia chrome package is not a directory: %s\n", path.get());
-    MOZ_ASSERT(false);
     return NS_ERROR_UNEXPECTED;
   }
 
