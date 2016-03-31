@@ -430,8 +430,7 @@ var shell = {
     UserAgentOverrides.init();
     CaptivePortalLoginHelper.init();
 
-    // FIXME: make that use homeURL again.
-    this.contentBrowser.src = "chrome://gaia/content/system/index.html";
+    this.contentBrowser.src = homeURL;
 
     this._isEventListenerReady = false;
 
