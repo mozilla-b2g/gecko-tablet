@@ -28418,38 +28418,6 @@
         "url": "/web-animations/animation-effect-timing/direction.html"
       },
       {
-        "path": "web-animations/animation-node/animation-node-after.html",
-        "url": "/web-animations/animation-node/animation-node-after.html"
-      },
-      {
-        "path": "web-animations/animation-node/animation-node-before.html",
-        "url": "/web-animations/animation-node/animation-node-before.html"
-      },
-      {
-        "path": "web-animations/animation-node/animation-node-next-sibling.html",
-        "url": "/web-animations/animation-node/animation-node-next-sibling.html"
-      },
-      {
-        "path": "web-animations/animation-node/animation-node-parent.html",
-        "url": "/web-animations/animation-node/animation-node-parent.html"
-      },
-      {
-        "path": "web-animations/animation-node/animation-node-previous-sibling.html",
-        "url": "/web-animations/animation-node/animation-node-previous-sibling.html"
-      },
-      {
-        "path": "web-animations/animation-node/animation-node-remove.html",
-        "url": "/web-animations/animation-node/animation-node-remove.html"
-      },
-      {
-        "path": "web-animations/animation-node/animation-node-replace.html",
-        "url": "/web-animations/animation-node/animation-node-replace.html"
-      },
-      {
-        "path": "web-animations/animation-node/idlharness.html",
-        "url": "/web-animations/animation-node/idlharness.html"
-      },
-      {
         "path": "web-animations/animation-timeline/document-timeline.html",
         "url": "/web-animations/animation-timeline/document-timeline.html"
       },
@@ -34867,10 +34835,29 @@
         ]
       },
       "testharness": {
+        "dom/collections/HTMLCollection-as-proto-length-get-throws.html": [
+          {
+            "path": "dom/collections/HTMLCollection-as-proto-length-get-throws.html",
+            "url": "/dom/collections/HTMLCollection-as-proto-length-get-throws.html"
+          }
+        ],
+        "dom/nodes/remove-unscopable.html": [
+          {
+            "path": "dom/nodes/remove-unscopable.html",
+            "url": "/dom/nodes/remove-unscopable.html"
+          }
+        ],
         "js/builtins/Promise-incumbent-global.sub.html": [
           {
             "path": "js/builtins/Promise-incumbent-global.sub.html",
             "url": "/js/builtins/Promise-incumbent-global.sub.html"
+          }
+        ],
+        "selection/collapse.html": [
+          {
+            "path": "selection/collapse.html",
+            "timeout": "long",
+            "url": "/selection/collapse.html"
           }
         ],
         "selection/extend.html": [

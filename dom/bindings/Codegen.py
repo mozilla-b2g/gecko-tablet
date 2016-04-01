@@ -332,11 +332,11 @@ class CGNativePropertyHooks(CGThing):
             resolveOwnProperty = "nullptr"
             enumerateOwnProperties = "nullptr"
         if self.properties.hasNonChromeOnly():
-            regular = "&sNativeProperties"
+            regular = "sNativeProperties.Upcast()"
         else:
             regular = "nullptr"
         if self.properties.hasChromeOnly():
-            chrome = "&sChromeOnlyNativeProperties"
+            chrome = "sChromeOnlyNativeProperties.Upcast()"
         else:
             chrome = "nullptr"
         constructorID = "constructors::id::"
@@ -440,7 +440,7 @@ class CGDOMJSClass(CGThing):
 
         return fill(
             """
-            static const DOMJSClass Class = {
+            static const DOMJSClass sClass = {
               { "${name}",
                 ${flags},
                 ${addProperty}, /* addProperty */
@@ -507,7 +507,7 @@ class CGDOMProxyJSClass(CGThing):
         objectMovedHook = OBJECT_MOVED_HOOK_NAME if self.descriptor.wrapperCache else 'nullptr'
         return fill(
             """
-            static const DOMJSClass Class = {
+            static const DOMJSClass sClass = {
               PROXY_CLASS_WITH_EXT("${name}",
                                    ${flags},
                                    PROXY_MAKE_EXT(false,   /* isWrappedNative */
@@ -586,7 +586,7 @@ class CGPrototypeJSClass(CGThing):
         type = "eGlobalInterfacePrototype" if self.descriptor.isGlobal() else "eInterfacePrototype"
         return fill(
             """
-            static const DOMIfaceAndProtoJSClass PrototypeClass = {
+            static const DOMIfaceAndProtoJSClass sPrototypeClass = {
               {
                 "${name}Prototype",
                 JSCLASS_IS_DOMIFACEANDPROTOJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(${slotCount}),
@@ -682,7 +682,7 @@ class CGInterfaceObjectJSClass(CGThing):
 
         return fill(
             """
-            static const DOMIfaceAndProtoJSClass InterfaceObjectClass = {
+            static const DOMIfaceAndProtoJSClass sInterfaceObjectClass = {
               {
                 "Function",
                 JSCLASS_IS_DOMIFACEANDPROTOJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(${slotCount}),
@@ -700,20 +700,7 @@ class CGInterfaceObjectJSClass(CGThing):
                 nullptr,               /* trace */
                 JS_NULL_CLASS_SPEC,
                 JS_NULL_CLASS_EXT,
-                {
-                  nullptr, /* lookupProperty */
-                  nullptr, /* defineProperty */
-                  nullptr, /* hasProperty */
-                  nullptr, /* getProperty */
-                  nullptr, /* setProperty */
-                  nullptr, /* getOwnPropertyDescriptor */
-                  nullptr, /* deleteProperty */
-                  nullptr, /* watch */
-                  nullptr, /* unwatch */
-                  nullptr, /* getElements */
-                  nullptr, /* enumerate */
-                  InterfaceObjectToString, /* funToString */
-                }
+                &sInterfaceObjectClassObjectOps
               },
               eInterface,
               ${prototypeID},
@@ -1527,7 +1514,7 @@ class CGGetJSClassMethod(CGAbstractMethod):
                                   [])
 
     def definition_body(self):
-        return "return Class.ToJSClass();\n"
+        return "return sClass.ToJSClass();\n"
 
 
 class CGAddPropertyHook(CGAbstractClassHook):
@@ -2666,28 +2653,44 @@ class CGNativeProperties(CGList):
             def check(p):
                 return p.hasChromeOnly() if chrome else p.hasNonChromeOnly()
 
-            nativeProps = []
-            for array in properties.arrayNames():
-                propertyArray = getattr(properties, array)
-                if check(propertyArray):
-                    if propertyArray.usedForXrays():
-                        ids = "%(name)s_ids"
-                    else:
-                        ids = "nullptr"
-                    props = "%(name)s, " + ids + ", %(name)s_specs"
-                    props = (props % {'name': propertyArray.variableName(chrome)})
-                else:
-                    props = "nullptr, nullptr, nullptr"
-                nativeProps.append(CGGeneric(props))
+            nativePropsInts = []
+            nativePropsTrios = []
+
             iteratorAliasIndex = -1
             for index, item in enumerate(properties.methods.regular):
                 if item.get("hasIteratorAlias"):
                     iteratorAliasIndex = index
                     break
-            nativeProps.append(CGGeneric(str(iteratorAliasIndex)))
+            nativePropsInts.append(CGGeneric(str(iteratorAliasIndex)))
+
+            offset = 0
+            for array in properties.arrayNames():
+                propertyArray = getattr(properties, array)
+                if check(propertyArray):
+                    varName = propertyArray.variableName(chrome)
+                    bitfields = "true,  %d /* %s */" % (offset, varName)
+                    offset += 1
+                    nativePropsInts.append(CGGeneric(bitfields))
+
+                    if propertyArray.usedForXrays():
+                        ids = "%(name)s_ids"
+                    else:
+                        ids = "nullptr"
+                    trio = "{ %(name)s, " + ids + ", %(name)s_specs }"
+                    trio = trio % {'name': varName}
+                    nativePropsTrios.append(CGGeneric(trio))
+                else:
+                    bitfields = "false, 0"
+                    nativePropsInts.append(CGGeneric(bitfields))
+
+            nativePropsTrios = \
+                [CGWrapper(CGIndenter(CGList(nativePropsTrios, ",\n")),
+                           pre='{\n', post='\n}')]
+            nativeProps = nativePropsInts + nativePropsTrios
+            pre = ("static const NativePropertiesN<%d> %s = {\n" %
+                   (offset, name))
             return CGWrapper(CGIndenter(CGList(nativeProps, ",\n")),
-                             pre="static const NativeProperties %s = {\n" % name,
-                             post="\n};\n")
+                             pre=pre, post="\n};\n")
 
         nativeProperties = []
         if properties.hasNonChromeOnly():
@@ -2745,13 +2748,14 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
 
     properties should be a PropertyArrays instance.
     """
-    def __init__(self, descriptor, properties):
+    def __init__(self, descriptor, properties, haveUnscopables):
         args = [Argument('JSContext*', 'aCx'),
                 Argument('JS::Handle<JSObject*>', 'aGlobal'),
                 Argument('ProtoAndIfaceCache&', 'aProtoAndIfaceCache'),
                 Argument('bool', 'aDefineOnGlobal')]
         CGAbstractMethod.__init__(self, descriptor, 'CreateInterfaceObjects', 'void', args)
         self.properties = properties
+        self.haveUnscopables = haveUnscopables
 
     def definition_body(self):
         (protoGetter, protoHandleGetter) = InterfacePrototypeObjectProtoGetter(self.descriptor)
@@ -2852,7 +2856,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             namedConstructors = "nullptr"
 
         if needInterfacePrototypeObject:
-            protoClass = "&PrototypeClass.mBase"
+            protoClass = "&sPrototypeClass.mBase"
             protoCache = "&aProtoAndIfaceCache.EntrySlotOrCreate(prototypes::id::%s)" % self.descriptor.name
             parentProto = "parentProto"
             getParentProto = CGGeneric(getParentProto)
@@ -2863,7 +2867,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             getParentProto = None
 
         if needInterfaceObject:
-            interfaceClass = "&InterfaceObjectClass.mBase"
+            interfaceClass = "&sInterfaceObjectClass.mBase"
             interfaceCache = "&aProtoAndIfaceCache.EntrySlotOrCreate(constructors::id::%s)" % self.descriptor.name
         else:
             # We don't have slots to store the named constructors.
@@ -2873,11 +2877,11 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
 
         isGlobal = self.descriptor.isGlobal() is not None
         if not isGlobal and self.properties.hasNonChromeOnly():
-            properties = "&sNativeProperties"
+            properties = "sNativeProperties.Upcast()"
         else:
             properties = "nullptr"
         if not isGlobal and self.properties.hasChromeOnly():
-            chromeProperties = "nsContentUtils::ThreadsafeIsCallerChrome() ? &sChromeOnlyNativeProperties : nullptr"
+            chromeProperties = "nsContentUtils::ThreadsafeIsCallerChrome() ? sChromeOnlyNativeProperties.Upcast() : nullptr"
         else:
             chromeProperties = "nullptr"
 
@@ -2891,7 +2895,8 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                                         interfaceCache,
                                         ${properties},
                                         ${chromeProperties},
-                                        ${name}, aDefineOnGlobal);
+                                        ${name}, aDefineOnGlobal,
+                                        ${unscopableNames});
             """,
             protoClass=protoClass,
             parentProto=parentProto,
@@ -2903,7 +2908,8 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
             interfaceCache=interfaceCache,
             properties=properties,
             chromeProperties=chromeProperties,
-            name='"' + self.descriptor.interface.identifier.name + '"' if needInterfaceObject else "nullptr")
+            name='"' + self.descriptor.interface.identifier.name + '"' if needInterfaceObject else "nullptr",
+            unscopableNames="unscopableNames" if self.haveUnscopables else "nullptr")
 
         # If we fail after here, we must clear interface and prototype caches
         # using this code: intermediate failure must not expose the interface in
@@ -2996,7 +3002,7 @@ class CGCreateInterfaceObjectsMethod(CGAbstractMethod):
                 holderClass = "nullptr"
                 holderProto = "nullptr"
             else:
-                holderClass = "Class.ToJSClass()"
+                holderClass = "sClass.ToJSClass()"
                 holderProto = "*protoCache"
             createUnforgeableHolder = CGGeneric(fill(
                 """
@@ -3263,7 +3269,7 @@ class CGDefineDOMInterfaceMethod(CGAbstractMethod):
                 if (!interfaceObject) {
                   return nullptr;
                 }
-                for (unsigned slot = DOM_INTERFACE_SLOTS_BASE; slot < JSCLASS_RESERVED_SLOTS(&InterfaceObjectClass.mBase); ++slot) {
+                for (unsigned slot = DOM_INTERFACE_SLOTS_BASE; slot < JSCLASS_RESERVED_SLOTS(&sInterfaceObjectClass.mBase); ++slot) {
                   JSObject* constructor = &js::GetReservedSlot(interfaceObject, slot).toObject();
                   if (JS_GetFunctionId(JS_GetObjectFunction(constructor)) == JSID_TO_STRING(id)) {
                     return constructor;
@@ -3362,7 +3368,7 @@ def CreateBindingJSObject(descriptor, properties):
     if descriptor.proxy:
         create = dedent(
             """
-            creator.CreateProxyObject(aCx, &Class.mBase, DOMProxyHandler::getInstance(),
+            creator.CreateProxyObject(aCx, &sClass.mBase, DOMProxyHandler::getInstance(),
                                       proto, aObject, aReflector);
             if (!aReflector) {
               return false;
@@ -3378,7 +3384,7 @@ def CreateBindingJSObject(descriptor, properties):
     else:
         create = dedent(
             """
-            creator.CreateObject(aCx, Class.ToJSClass(), proto, aObject, aReflector);
+            creator.CreateObject(aCx, sClass.ToJSClass(), proto, aObject, aReflector);
             if (!aReflector) {
               return false;
             }
@@ -3752,11 +3758,11 @@ class CGWrapGlobalMethod(CGAbstractMethod):
 
     def definition_body(self):
         if self.properties.hasNonChromeOnly():
-            properties = "&sNativeProperties"
+            properties = "sNativeProperties.Upcast()"
         else:
             properties = "nullptr"
         if self.properties.hasChromeOnly():
-            chromeProperties = "nsContentUtils::ThreadsafeIsCallerChrome() ? &sChromeOnlyNativeProperties : nullptr"
+            chromeProperties = "nsContentUtils::ThreadsafeIsCallerChrome() ? sChromeOnlyNativeProperties.Upcast() : nullptr"
         else:
             chromeProperties = "nullptr"
 
@@ -3786,7 +3792,7 @@ class CGWrapGlobalMethod(CGAbstractMethod):
               CreateGlobal<${nativeType}, GetProtoObjectHandle>(aCx,
                                              aObject,
                                              aCache,
-                                             Class.ToJSClass(),
+                                             sClass.ToJSClass(),
                                              aOptions,
                                              aPrincipal,
                                              aInitStandardClasses,
@@ -11835,6 +11841,7 @@ class CGDescriptor(CGThing):
             hasPromiseReturningMethod) = False, False, False, False, False, False
         jsonifierMethod = None
         crossOriginMethods, crossOriginGetters, crossOriginSetters = set(), set(), set()
+        unscopableNames = list()
         for n in descriptor.interface.namedConstructors:
             cgThings.append(CGClassConstructor(descriptor, n,
                                                NamedConstructorName(n)))
@@ -11847,6 +11854,9 @@ class CGDescriptor(CGThing):
             props = memberProperties(m, descriptor)
 
             if m.isMethod():
+                if m.getExtendedAttribute("Unscopable"):
+                    assert not m.isStatic()
+                    unscopableNames.append(m.identifier.name)
                 if props.isJsonifier:
                     jsonifierMethod = m
                 elif not m.isIdentifierLess() or m == descriptor.operations['Stringifier']:
@@ -11872,6 +11882,9 @@ class CGDescriptor(CGThing):
                     raise TypeError("Stringifier attributes not supported yet. "
                                     "See bug 824857.\n"
                                     "%s" % m.location)
+                if m.getExtendedAttribute("Unscopable"):
+                    assert not m.isStatic()
+                    unscopableNames.append(m.identifier.name)
                 if m.isStatic():
                     assert descriptor.interface.hasInterfaceObject()
                     cgThings.append(CGStaticGetter(descriptor, m))
@@ -12059,9 +12072,20 @@ class CGDescriptor(CGThing):
             cgThings.extend(CGClearCachedValueMethod(descriptor, m) for
                             m in clearableCachedAttrs(descriptor))
 
+        haveUnscopables = (len(unscopableNames) != 0 and
+                           descriptor.interface.hasInterfacePrototypeObject())
+        if haveUnscopables:
+            cgThings.append(
+                CGList([CGGeneric("static const char* const unscopableNames[] = {"),
+                        CGIndenter(CGList([CGGeneric('"%s"' % name) for
+                                           name in unscopableNames] +
+                                          [CGGeneric("nullptr")], ",\n")),
+                        CGGeneric("};\n")], "\n"))
+
         # CGCreateInterfaceObjectsMethod needs to come after our
-        # CGDOMJSClass, if any.
-        cgThings.append(CGCreateInterfaceObjectsMethod(descriptor, properties))
+        # CGDOMJSClass and unscopables, if any.
+        cgThings.append(CGCreateInterfaceObjectsMethod(descriptor, properties,
+                                                       haveUnscopables))
 
         # CGGetProtoObjectMethod and CGGetConstructorObjectMethod need
         # to come after CGCreateInterfaceObjectsMethod.

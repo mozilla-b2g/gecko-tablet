@@ -372,6 +372,12 @@ TabParent::SetOwnerElement(Element* aElement)
     newTopLevelWin->AddBrowser(this);
   }
 
+  if (mFrameElement) {
+    bool useGlobalHistory =
+      !mFrameElement->HasAttr(kNameSpaceID_None, nsGkAtoms::disableglobalhistory);
+    Unused << SendSetUseGlobalHistory(useGlobalHistory);
+  }
+
   AddWindowListeners();
   TryCacheDPIAndScale();
 }
@@ -2758,7 +2764,7 @@ TabParent::InjectTouchEvent(const nsAString& aType,
   }
 
   WidgetTouchEvent event(true, msg, widget);
-  event.modifiers = aModifiers;
+  event.mModifiers = aModifiers;
   event.mTime = PR_IntervalNow();
 
   nsCOMPtr<nsIContent> content = do_QueryInterface(mFrameElement);

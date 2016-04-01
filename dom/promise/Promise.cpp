@@ -96,16 +96,11 @@ protected:
     }
 
     JS::Rooted<JSObject*> asyncStack(cx, mPromise->mAllocationStack);
-    JS::Rooted<JSString*> asyncCause(cx, JS_NewStringCopyZ(cx, "Promise"));
-    if (!asyncCause) {
-      JS_ClearPendingException(cx);
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
 
     {
       Maybe<JS::AutoSetAsyncStackForNewCalls> sas;
       if (asyncStack) {
-        sas.emplace(cx, asyncStack, asyncCause);
+        sas.emplace(cx, asyncStack, "Promise");
       }
       mCallback->Call(cx, value);
     }
@@ -2729,7 +2724,7 @@ Promise::RemoveFeature()
 }
 
 bool
-PromiseReportRejectFeature::Notify(JSContext* aCx, workers::Status aStatus)
+PromiseReportRejectFeature::Notify(workers::Status aStatus)
 {
   MOZ_ASSERT(aStatus > workers::Running);
   mPromise->MaybeReportRejectedOnce();
@@ -2992,7 +2987,7 @@ PromiseWorkerProxy::RejectedCallback(JSContext* aCx,
 }
 
 bool
-PromiseWorkerProxy::Notify(JSContext* aCx, Status aStatus)
+PromiseWorkerProxy::Notify(Status aStatus)
 {
   if (aStatus >= Canceling) {
     CleanUp();

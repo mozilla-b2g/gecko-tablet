@@ -16,6 +16,7 @@
 #include "nsEventShell.h"
 #include "nsTextEquivUtils.h"
 #include "DocAccessibleChild.h"
+#include "Logging.h"
 #include "Relation.h"
 #include "Role.h"
 #include "RootAccessible.h"
@@ -1880,7 +1881,14 @@ Accessible::Shutdown()
   // other accessibles, also make sure none of its children point to this parent
   mStateFlags |= eIsDefunct;
 
-  InvalidateChildren();
+  int32_t childCount = mChildren.Length();
+  for (int32_t childIdx = 0; childIdx < childCount; childIdx++) {
+    mChildren.ElementAt(childIdx)->UnbindFromParent();
+  }
+  mChildren.Clear();
+
+  mEmbeddedObjCollector = nullptr;
+
   if (mParent)
     mParent->RemoveChild(this);
 
@@ -1959,7 +1967,18 @@ Accessible::BindToParent(Accessible* aParent, uint32_t aIndexInParent)
 
   if (mParent) {
     if (mParent != aParent) {
-      NS_ERROR("Adopting child!");
+#ifdef A11Y_LOG
+      if (logging::IsEnabled(logging::eTree)) {
+        logging::MsgBegin("TREE", "BindToParent: stealing accessible");
+        logging::AccessibleInfo("old parent", mParent);
+        logging::AccessibleInfo("new parent", aParent);
+        logging::AccessibleInfo("child", this);
+        logging::MsgEnd();
+      }
+#endif
+      // XXX: legalize adoption. As long as we don't invalidate the children,
+      // the accessibles start to steal them.
+
       mParent->InvalidateChildrenGroupInfo();
       mParent->RemoveChild(this);
     } else {
@@ -2055,19 +2074,6 @@ Accessible::Language(nsAString& aLanguage)
     mDoc->DocumentNode()->GetHeaderData(nsGkAtoms::headerContentLanguage,
                                         aLanguage);
   }
-}
-
-void
-Accessible::InvalidateChildren()
-{
-  int32_t childCount = mChildren.Length();
-  for (int32_t childIdx = 0; childIdx < childCount; childIdx++) {
-    mChildren.ElementAt(childIdx)->UnbindFromParent();
-  }
-
-  mEmbeddedObjCollector = nullptr;
-  mChildren.Clear();
-  SetChildrenFlag(eChildrenUninitialized);
 }
 
 bool
@@ -2587,7 +2593,9 @@ Accessible::EnsureChildren()
 
   // State is embedded children until text leaf accessible is appended.
   SetChildrenFlag(eEmbeddedChildren); // Prevent reentry
-  CacheChildren();
+  if (KidsFromDOM()) {
+    CacheChildren();
+  }
 }
 
 Accessible*

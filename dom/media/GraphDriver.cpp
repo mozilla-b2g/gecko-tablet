@@ -7,6 +7,7 @@
 #include "mozilla/dom/AudioContext.h"
 #include "mozilla/SharedThreadPool.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/unused.h"
 #include "CubebUtils.h"
 
 #ifdef MOZ_WEBRTC
@@ -227,7 +228,7 @@ void
 ThreadedDriver::Start()
 {
   LIFECYCLE_LOG("Starting thread for a SystemClockDriver  %p\n", mGraphImpl);
-  NS_WARN_IF(!mThread);
+  Unused << NS_WARN_IF(mThread);
   if (!mThread) { // Ensure we haven't already started it
     nsCOMPtr<nsIRunnable> event = new MediaStreamGraphInitThreadRunnable(this);
     // Note: mThread may be null during event->Run() if we pass to NewNamedThread!  See AudioInitTask
@@ -618,40 +619,43 @@ AudioCallbackDriver::Init()
   CubebUtils::AudioDeviceID input_id = nullptr, output_id = nullptr;
   // We have to translate the deviceID values to cubeb devid's since those can be
   // freed whenever enumerate is called.
-  if ((!mGraphImpl->mInputWanted
+  {
+    StaticMutexAutoLock lock(AudioInputCubeb::Mutex());
+    if ((!mGraphImpl->mInputWanted
 #ifdef MOZ_WEBRTC
-       || AudioInputCubeb::GetDeviceID(mGraphImpl->mInputDeviceID, input_id)
+         || AudioInputCubeb::GetDeviceID(mGraphImpl->mInputDeviceID, input_id)
 #endif
-       ) &&
-      (mGraphImpl->mOutputDeviceID == -1 // pass nullptr for ID for default output
+         ) &&
+        (mGraphImpl->mOutputDeviceID == -1 // pass nullptr for ID for default output
 #ifdef MOZ_WEBRTC
-       // XXX we should figure out how we would use a deviceID for output without webrtc.
-       // Currently we don't set this though, so it's ok
-       || AudioInputCubeb::GetDeviceID(mGraphImpl->mOutputDeviceID, output_id)
+         // XXX we should figure out how we would use a deviceID for output without webrtc.
+         // Currently we don't set this though, so it's ok
+         || AudioInputCubeb::GetDeviceID(mGraphImpl->mOutputDeviceID, output_id)
 #endif
-       ) &&
-      // XXX Only pass input input if we have an input listener.  Always
-      // set up output because it's easier, and it will just get silence.
-      // XXX Add support for adding/removing an input listener later.
-      cubeb_stream_init(CubebUtils::GetCubebContext(), &stream,
-                        "AudioCallbackDriver",
-                        input_id,
-                        mGraphImpl->mInputWanted ? &input : nullptr,
-                        output_id,
-                        mGraphImpl->mOutputWanted ? &output : nullptr, latency,
-                        DataCallback_s, StateCallback_s, this) == CUBEB_OK) {
-    mAudioStream.own(stream);
-  } else {
-    NS_WARNING("Could not create a cubeb stream for MediaStreamGraph, falling back to a SystemClockDriver");
-    // Fall back to a driver using a normal thread.
-    MonitorAutoLock lock(GraphImpl()->GetMonitor());
-    SetNextDriver(new SystemClockDriver(GraphImpl()));
-    NextDriver()->SetGraphTime(this, mIterationStart, mIterationEnd);
-    mGraphImpl->SetCurrentDriver(NextDriver());
-    NextDriver()->Start();
-    return;
+         ) &&
+        // XXX Only pass input input if we have an input listener.  Always
+        // set up output because it's easier, and it will just get silence.
+        // XXX Add support for adding/removing an input listener later.
+        cubeb_stream_init(CubebUtils::GetCubebContext(), &stream,
+                          "AudioCallbackDriver",
+                          input_id,
+                          mGraphImpl->mInputWanted ? &input : nullptr,
+                          output_id,
+                          mGraphImpl->mOutputWanted ? &output : nullptr, latency,
+                          DataCallback_s, StateCallback_s, this) == CUBEB_OK) {
+      mAudioStream.own(stream);
+    } else {
+      StaticMutexAutoUnlock unlock(AudioInputCubeb::Mutex());
+      NS_WARNING("Could not create a cubeb stream for MediaStreamGraph, falling back to a SystemClockDriver");
+      // Fall back to a driver using a normal thread.
+      MonitorAutoLock lock(GraphImpl()->GetMonitor());
+      SetNextDriver(new SystemClockDriver(GraphImpl()));
+      NextDriver()->SetGraphTime(this, mIterationStart, mIterationEnd);
+      mGraphImpl->SetCurrentDriver(NextDriver());
+      NextDriver()->Start();
+      return;
+    }
   }
-
   cubeb_stream_register_device_changed_callback(mAudioStream,
                                                 AudioCallbackDriver::DeviceChangedCallback_s);
 

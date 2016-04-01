@@ -333,7 +333,7 @@ public:
     return true;
   }
 
-  virtual bool Notify(JSContext* aCx, workers::Status aStatus) override
+  virtual bool Notify(workers::Status aStatus) override
   {
     // We don't care about the notification. We just want to keep the
     // mWorkerPrivate alive.
@@ -2322,14 +2322,14 @@ Console::RetrieveConsoleEvents(JSContext* aCx, nsTArray<JS::Value>& aEvents,
 }
 
 void
-Console::SetConsoleEventHandler(AnyCallback& aHandler)
+Console::SetConsoleEventHandler(AnyCallback* aHandler)
 {
   AssertIsOnOwningThread();
 
   // We don't want to expose this functionality to main-thread yet.
   MOZ_ASSERT(!NS_IsMainThread());
 
-  mConsoleEventNotifier = &aHandler;
+  mConsoleEventNotifier = aHandler;
 }
 
 void

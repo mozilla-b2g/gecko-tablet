@@ -310,7 +310,8 @@ public:
   void
   CreateSandbox(JSContext* aCx, const nsAString& aName,
                 JS::Handle<JSObject*> aPrototype,
-                JS::MutableHandle<JSObject*> aResult);
+                JS::MutableHandle<JSObject*> aResult,
+                ErrorResult& aRv);
 
   void
   LoadSubScript(JSContext* aCx, const nsAString& aURL,
@@ -339,7 +340,7 @@ public:
                         ErrorResult& aRv);
 
   void
-  SetConsoleEventHandler(JSContext* aCx, AnyCallback& aHandler,
+  SetConsoleEventHandler(JSContext* aCx, AnyCallback* aHandler,
                          ErrorResult& aRv);
 
   Console*

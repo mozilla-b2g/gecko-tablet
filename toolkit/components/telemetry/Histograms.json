@@ -2766,6 +2766,30 @@
     "kind": "boolean",
     "description": "session used autodialer"
   },
+  "NETWORK_SESSION_AT_256FD": {
+    "expires_in_version": "49",
+    "kind": "boolean",
+    "description": "session exceeded old 256 limit",
+    "bug_numbers": [1260218],
+    "alert_emails": ["necko@mozilla.com"]
+  },
+  "NETWORK_SESSION_AT_900FD": {
+    "expires_in_version": "never",
+    "kind": "boolean",
+    "description": "session reached 900 fd limit sockets",
+    "bug_numbers": [1260218],
+    "alert_emails": ["necko@mozilla.com"]
+  },
+  "NETWORK_PROBE_MAXCOUNT": {
+    "expires_in_version": "never",
+    "kind": "linear",
+    "low": 50,
+    "high": 1000,
+    "n_buckets": 10,
+    "description": "Result of nsSocketTransportService::ProbeMaxCount()",
+    "bug_numbers": [1260218],
+    "alert_emails": ["necko@mozilla.com"]
+  },
   "FIND_PLUGINS": {
     "alert_emails": ["perf-telemetry-alerts@mozilla.com"],
     "expires_in_version": "never",
@@ -5587,11 +5611,12 @@
     "kind": "enumerated",
     "keyed": true,
     "n_values": 40,
-    "description": "Usage of popup notifications, keyed by ID (0 = Offered, 1..4 = Action, 5 = Click outside, 6 = Leave page, 7 = Use 'X', 8 = Not now, 10 = Open submenu, 11 = Learn more. Add 20 if happened after reopen.)"
+    "description": "(Bug 1207089) Usage of popup notifications, keyed by ID (0 = Offered, 1..4 = Action, 5 = Click outside, 6 = Leave page, 7 = Use 'X', 8 = Not now, 10 = Open submenu, 11 = Learn more. Add 20 if happened after reopen.)"
   },
   "POPUP_NOTIFICATION_MAIN_ACTION_MS": {
     "alert_emails": ["firefox-dev@mozilla.org"],
-    "expires_in_version": "48",
+    "bug_numbers": [1207089],
+    "expires_in_version": "52",
     "kind": "exponential",
     "keyed": true,
     "low": 100,
@@ -5601,7 +5626,8 @@
   },
   "POPUP_NOTIFICATION_DISMISSAL_MS": {
     "alert_emails": ["firefox-dev@mozilla.org"],
-    "expires_in_version": "48",
+    "bug_numbers": [1207089],
+    "expires_in_version": "52",
     "kind": "exponential",
     "keyed": true,
     "low": 200,
@@ -10447,5 +10473,27 @@
     "bug_numbers": [1255934],
     "kind": "count",
     "description": "Remote JAR protocol usage"
+  },
+  "MEDIA_DECODER_BACKEND_USED": {
+    "alert_emails": ["danderson@mozilla.com"],
+    "bug_numbers": [1259695],
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 10,
+    "description": "Media decoder backend (0=WMF Software, 1=DXVA2D3D9, 2=DXVA2D3D11)"
+  },
+  "PLUGIN_BLOCKED_FOR_STABILITY": {
+    "alert_emails": ["cpeterson@mozilla.com"],
+    "expires_in_version": "52",
+    "kind": "count",
+    "bug_numbers": [1237198],
+    "description": "Count plugins blocked for stability"
+  },
+  "PLUGIN_TINY_CONTENT": {
+    "alert_emails": ["cpeterson@mozilla.com"],
+    "expires_in_version": "52",
+    "kind": "count",
+    "bug_numbers": [1237198],
+    "description": "Count tiny plugin content"
   }
 }

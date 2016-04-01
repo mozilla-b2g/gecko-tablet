@@ -8,6 +8,7 @@ interface WorkerDebuggerGlobalScope : EventTarget {
   [Throws]
   readonly attribute object global;
 
+  [Throws]
   object createSandbox(DOMString name, object prototype);
 
   [Throws]
@@ -30,7 +31,7 @@ interface WorkerDebuggerGlobalScope : EventTarget {
   sequence<any> retrieveConsoleEvents();
 
   [Throws]
-  void setConsoleEventHandler(AnyCallback handler);
+  void setConsoleEventHandler(AnyCallback? handler);
 };
 
 // So you can debug while you debug

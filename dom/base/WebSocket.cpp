@@ -2147,7 +2147,7 @@ public:
   {
   }
 
-  bool Notify(JSContext* aCx, Status aStatus) override
+  bool Notify(Status aStatus) override
   {
     MOZ_ASSERT(aStatus > workers::Running);
 
@@ -2630,8 +2630,6 @@ WebSocketImpl::CancelInternal()
   if (readyState == WebSocket::CLOSING || readyState == WebSocket::CLOSED) {
     return NS_OK;
   }
-
-  ConsoleError();
 
   return CloseConnection(nsIWebSocketChannel::CLOSE_GOING_AWAY);
 }

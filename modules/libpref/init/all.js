@@ -1191,6 +1191,7 @@ pref("javascript.options.mem.gc_high_frequency_heap_growth_min", 150);
 pref("javascript.options.mem.gc_low_frequency_heap_growth", 150);
 pref("javascript.options.mem.gc_dynamic_heap_growth", true);
 pref("javascript.options.mem.gc_dynamic_mark_slice", true);
+pref("javascript.options.mem.gc_refresh_frame_slices_enabled", true);
 pref("javascript.options.mem.gc_allocation_threshold_mb", 30);
 pref("javascript.options.mem.gc_decommit_threshold_mb", 32);
 pref("javascript.options.mem.gc_min_empty_chunk_count", 1);
@@ -1323,10 +1324,13 @@ pref("network.http.keep-alive.timeout", 115);
 pref("network.http.response.timeout", 300);
 
 // Limit the absolute number of http connections.
-// Note: the socket transport service will clamp the number below 256 if the OS
-// cannot allocate that many FDs, and it also always tries to reserve up to 250
-// file descriptors for things other than sockets.
+// Note: the socket transport service will clamp the number below this if the OS
+// cannot allocate that many FDs
+#ifdef ANDROID
 pref("network.http.max-connections", 256);
+#else
+pref("network.http.max-connections", 900);
+#endif
 
 // If NOT connecting via a proxy, then
 // a new connection will only be attempted if the number of active persistent
@@ -3257,7 +3261,7 @@ pref("plugin.mousewheel.enabled", true);
 
 // Help Windows NT, 2000, and XP dialup a RAS connection
 // when a network address is unreachable.
-pref("network.autodial-helper.enabled", true);
+pref("network.autodial-helper.enabled", false);
 
 // Switch the keyboard layout per window
 pref("intl.keyboard.per_window_layout", false);
@@ -4479,7 +4483,7 @@ pref("gfx.direct2d.force-enabled", false);
 pref("layers.prefer-opengl", false);
 pref("layers.prefer-d3d9", false);
 pref("layers.d3d11.force-warp", false);
-pref("layers.d3d11.disable-warp", false);
+pref("layers.d3d11.disable-warp", true);
 #endif
 
 // Force all possible layers to be always active layers
@@ -4944,7 +4948,7 @@ pref("urlclassifier.malwareTable", "goog-malware-shavar,goog-unwanted-shavar,tes
 pref("urlclassifier.phishTable", "goog-phish-shavar,test-phish-simple");
 pref("urlclassifier.downloadBlockTable", "");
 pref("urlclassifier.downloadAllowTable", "");
-pref("urlclassifier.disallow_completions", "test-malware-simple,test-phish-simple,test-unwanted-simple,test-track-simple,test-trackwhite-simple,test-forbid-simple,goog-downloadwhite-digest256,mozstd-track-digest256,mozstd-trackwhite-digest256,mozfull-track-digest256");
+pref("urlclassifier.disallow_completions", "test-malware-simple,test-phish-simple,test-unwanted-simple,test-track-simple,test-trackwhite-simple,test-forbid-simple,goog-downloadwhite-digest256,mozstd-track-digest256,mozstd-trackwhite-digest256,mozfull-track-digest256,test-block-simple,mozplugin-block-digest256,mozplugin2-block-digest256");
 
 // The table and update/gethash URLs for Safebrowsing phishing and malware
 // checks.
@@ -4955,7 +4959,11 @@ pref("urlclassifier.trackingWhitelistTable", "test-trackwhite-simple,mozstd-trac
 pref("browser.safebrowsing.forbiddenURIs.enabled", false);
 pref("urlclassifier.forbiddenTable", "test-forbid-simple");
 
-pref("browser.safebrowsing.provider.mozilla.lists", "mozstd-track-digest256,mozstd-trackwhite-digest256,mozfull-track-digest256");
+// The table and global pref for blocking plugin content
+pref("browser.safebrowsing.blockedURIs.enabled", false);
+pref("urlclassifier.blockedTable", "test-block-simple,mozplugin-block-digest256");
+
+pref("browser.safebrowsing.provider.mozilla.lists", "mozstd-track-digest256,mozstd-trackwhite-digest256,mozfull-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256");
 pref("browser.safebrowsing.provider.mozilla.updateURL", "https://shavar.services.mozilla.com/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
 pref("browser.safebrowsing.provider.mozilla.gethashURL", "https://shavar.services.mozilla.com/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
 // Set to a date in the past to force immediate download in new profiles.
