@@ -1280,26 +1280,24 @@ protected:
    */
   nsTArray<OwningFileOrDirectory> mFilesOrDirectories;
 
-#ifndef MOZ_CHILD_PERMISSIONS
   /**
    * Hack for bug 1086684: Stash the .value when we're a file picker.
    */
   nsString mFirstFilePath;
-#endif
 
   RefPtr<FileList>  mFileList;
   RefPtr<Promise> mFilesAndDirectoriesPromise;
 
   nsString mStaticDocFileList;
-  
-  /** 
+
+  /**
    * The value of the input element when first initialized and it is updated
-   * when the element is either changed through a script, focused or dispatches   
+   * when the element is either changed through a script, focused or dispatches
    * a change event. This is to ensure correct future change event firing.
    * NB: This is ONLY applicable where the element is a text control. ie,
    * where type= "text", "email", "search", "tel", "url" or "password".
    */
-  nsString mFocusedValue;  
+  nsString mFocusedValue;
 
   /**
    * If mIsDraggingRange is true, this is the value that the input had before
@@ -1407,7 +1405,7 @@ private:
         return false;
       }
     }
-    
+
     // Filter mask, using values defined in nsIFilePicker
     int32_t mFilterMask;
     // If mFilterMask is defined, mTitle and mFilter are useless and should be
