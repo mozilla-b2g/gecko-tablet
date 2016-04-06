@@ -980,6 +980,16 @@ nsComputedDOMStyle::DoGetColor()
 }
 
 already_AddRefed<CSSValue>
+nsComputedDOMStyle::DoGetColorAdjust()
+{
+  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
+  val->SetIdent(
+    nsCSSProps::ValueToKeywordEnum(StyleVisibility()->mColorAdjust,
+                                   nsCSSProps::kColorAdjustKTable));
+  return val.forget();
+}
+
+already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetOpacity()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
@@ -3918,10 +3928,7 @@ already_AddRefed<CSSValue>
 nsComputedDOMStyle::DoGetWebkitTextFillColor()
 {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  const nsStyleText* text = StyleText();
-  nscolor color = text->mWebkitTextFillColorForeground ?
-    StyleColor()->mColor : text->mWebkitTextFillColor;
-  SetToRGBAColor(val, color);
+  SetToRGBAColor(val, mStyleContext->GetTextFillColor());
   return val.forget();
 }
 

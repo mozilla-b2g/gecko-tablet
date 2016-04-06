@@ -624,7 +624,7 @@ inline ClassObjectCreationOp DELEGATED_CLASSSPEC(const ClassSpec* spec) {
     return reinterpret_cast<ClassObjectCreationOp>(const_cast<ClassSpec*>(spec));
 }
 
-#define JS_NULL_CLASS_SPEC  {nullptr,nullptr,nullptr,nullptr,nullptr,nullptr}
+#define JS_NULL_CLASS_SPEC  nullptr
 #define JS_NULL_CLASS_EXT   {false,nullptr}
 
 struct ObjectOps
@@ -654,11 +654,11 @@ typedef void (*JSClassInternal)();
 struct JSClass {
     JS_CLASS_MEMBERS(JSFinalizeOp);
 
-    void*               reserved[12];
+    void*               reserved[5];
 };
 
 #define JSCLASS_HAS_PRIVATE             (1<<0)  // objects have private slot
-#define JSCLASS_DELAY_METADATA_CALLBACK (1<<1)  // class's initialization code
+#define JSCLASS_DELAY_METADATA_BUILDER  (1<<1)  // class's initialization code
                                                 // will call
                                                 // SetNewObjectMetadata itself
 #define JSCLASS_PRIVATE_IS_NSISUPPORTS  (1<<3)  // private is (nsISupports*)
@@ -756,7 +756,7 @@ namespace js {
 struct Class
 {
     JS_CLASS_MEMBERS(FinalizeOp);
-    ClassSpec          spec;
+    const ClassSpec*    spec;
     ClassExtension      ext;
     const ObjectOps*    ops;
 
@@ -798,11 +798,31 @@ struct Class
         return flags & JSCLASS_IS_DOMJSCLASS;
     }
 
-    bool shouldDelayMetadataCallback() const {
-        return flags & JSCLASS_DELAY_METADATA_CALLBACK;
+    bool shouldDelayMetadataBuilder() const {
+        return flags & JSCLASS_DELAY_METADATA_BUILDER;
     }
 
     static size_t offsetOfFlags() { return offsetof(Class, flags); }
+
+    bool specDefined()         const { return spec ? spec->defined()   : false; }
+    bool specDependent()       const { return spec ? spec->dependent() : false; }
+    JSProtoKey specParentKey() const { return spec ? spec->parentKey() : JSProto_Null; }
+    bool specShouldDefineConstructor()
+                               const { return spec ? spec->shouldDefineConstructor() : true; }
+    ClassObjectCreationOp specCreateConstructorHook()
+                               const { return spec ? spec->createConstructorHook()   : nullptr; }
+    ClassObjectCreationOp specCreatePrototypeHook()
+                               const { return spec ? spec->createPrototypeHook()     : nullptr; }
+    const JSFunctionSpec* specConstructorFunctions()
+                               const { return spec ? spec->constructorFunctions()    : nullptr; }
+    const JSPropertySpec* specConstructorProperties()
+                               const { return spec ? spec->constructorProperties()   : nullptr; }
+    const JSFunctionSpec* specPrototypeFunctions()
+                               const { return spec ? spec->prototypeFunctions()      : nullptr; }
+    const JSPropertySpec* specPrototypeProperties()
+                               const { return spec ? spec->prototypeProperties()     : nullptr; }
+    FinishClassInitOp specFinishInitHook()
+                               const { return spec ? spec->finishInitHook()          : nullptr; }
 
     LookupPropertyOp getOpsLookupProperty() const { return ops ? ops->lookupProperty : nullptr; }
     DefinePropertyOp getOpsDefineProperty() const { return ops ? ops->defineProperty : nullptr; }

@@ -289,6 +289,17 @@ SavedFrame::finishSavedFrameInit(JSContext* cx, HandleObject ctor, HandleObject 
     return FreezeObject(cx, proto);
 }
 
+const ClassSpec SavedFrame::classSpec_ = {
+    GenericCreateConstructor<SavedFrame::construct, 0, gc::AllocKind::FUNCTION>,
+    GenericCreatePrototype,
+    SavedFrame::staticFunctions,
+    nullptr,
+    SavedFrame::protoFunctions,
+    SavedFrame::protoAccessors,
+    SavedFrame::finishSavedFrameInit,
+    ClassSpec::DontDefineConstructor
+};
+
 /* static */ const Class SavedFrame::class_ = {
     "SavedFrame",
     JSCLASS_HAS_PRIVATE |
@@ -307,18 +318,7 @@ SavedFrame::finishSavedFrameInit(JSContext* cx, HandleObject ctor, HandleObject 
     nullptr,                    // hasInstance
     nullptr,                    // construct
     nullptr,                    // trace
-
-    // ClassSpec
-    {
-        GenericCreateConstructor<SavedFrame::construct, 0, gc::AllocKind::FUNCTION>,
-        GenericCreatePrototype,
-        SavedFrame::staticFunctions,
-        nullptr,
-        SavedFrame::protoFunctions,
-        SavedFrame::protoAccessors,
-        SavedFrame::finishSavedFrameInit,
-        ClassSpec::DontDefineConstructor
-    }
+    &SavedFrame::classSpec_
 };
 
 /* static */ const JSFunctionSpec
@@ -487,7 +487,7 @@ SavedFrame::create(JSContext* cx)
     assertSameCompartment(cx, global);
 
     // Ensure that we don't try to capture the stack again in the
-    // `SavedStacksMetadataCallback` for this new SavedFrame object, and
+    // `SavedStacksMetadataBuilder` for this new SavedFrame object, and
     // accidentally cause O(n^2) behavior.
     SavedStacks::AutoReentrancyGuard guard(cx->compartment()->savedStacks());
 
@@ -1475,7 +1475,8 @@ SavedStacks::chooseSamplingProbability(JSCompartment* compartment)
 }
 
 JSObject*
-SavedStacksMetadataCallback(JSContext* cx, HandleObject target)
+SavedStacks::MetadataBuilder::build(JSContext* cx, HandleObject target,
+                                    AutoEnterOOMUnsafeRegion& oomUnsafe) const
 {
     RootedObject obj(cx, target);
 
@@ -1483,17 +1484,18 @@ SavedStacksMetadataCallback(JSContext* cx, HandleObject target)
     if (!stacks.bernoulli.trial())
         return nullptr;
 
-    AutoEnterOOMUnsafeRegion oomUnsafe;
     RootedSavedFrame frame(cx);
     if (!stacks.saveCurrentStack(cx, &frame))
-        oomUnsafe.crash("SavedStacksMetadataCallback");
+        oomUnsafe.crash("SavedStacksMetadataBuilder");
 
     if (!Debugger::onLogAllocationSite(cx, obj, frame, JS_GetCurrentEmbedderTime()))
-        oomUnsafe.crash("SavedStacksMetadataCallback");
+        oomUnsafe.crash("SavedStacksMetadataBuilder");
 
     MOZ_ASSERT_IF(frame, !frame->is<WrapperObject>());
     return frame;
 }
+
+const SavedStacks::MetadataBuilder SavedStacks::metadataBuilder;
 
 #ifdef JS_CRASH_DIAGNOSTICS
 void

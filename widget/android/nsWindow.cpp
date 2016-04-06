@@ -817,6 +817,11 @@ public:
         mNPZC->UpdateOverscrollOffset(x, y);
     }
 
+    void SetScrollingRootContent(const bool isRootContent)
+    {
+        mNPZC->SetScrollingRootContent(isRootContent);
+    }
+
     void SetSelectionDragState(const bool aState)
     {
         mNPZC->OnSelectionDragState(aState);
@@ -1877,6 +1882,17 @@ nsWindow::UpdateOverscrollOffset(const float aX, const float aY)
 }
 
 void
+nsWindow::SetScrollingRootContent(const bool isRootContent)
+{
+    // On Android, the Controller thread and UI thread are the same.
+    MOZ_ASSERT(APZThreadUtils::IsControllerThread(), "nsWindow::SetScrollingRootContent must be called from the controller thread");
+
+    if (mNPZCSupport) {
+        mNPZCSupport->SetScrollingRootContent(isRootContent);
+    }
+}
+
+void
 nsWindow::SetSelectionDragState(bool aState)
 {
     if (mNPZCSupport) {
@@ -1991,14 +2007,14 @@ nsWindow::OnLongTapEvent(AndroidGeckoEvent *ae)
 void
 nsWindow::DispatchHitTest(const WidgetTouchEvent& aEvent)
 {
-    if (aEvent.mMessage == eTouchStart && aEvent.touches.Length() == 1) {
+    if (aEvent.mMessage == eTouchStart && aEvent.mTouches.Length() == 1) {
         // Since touch events don't get retargeted by PositionedEventTargeting.cpp
         // code on Fennec, we dispatch a dummy mouse event that *does* get
         // retargeted. The Fennec browser.js code can use this to activate the
         // highlight element in case the this touchstart is the start of a tap.
         WidgetMouseEvent hittest(true, eMouseHitTest, this,
                                  WidgetMouseEvent::eReal);
-        hittest.refPoint = aEvent.touches[0]->mRefPoint;
+        hittest.refPoint = aEvent.mTouches[0]->mRefPoint;
         hittest.ignoreRootScrollFrame = true;
         hittest.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
         nsEventStatus status;
