@@ -7,7 +7,7 @@
 /**
  * Browser Window Constructor.
  */
-var BrowserWindow = function(id) {
+var BrowserWindow = function(id, url) {
   if (id === undefined) {
     return null;
   }
@@ -15,7 +15,7 @@ var BrowserWindow = function(id) {
   this.id = id;
   this.currentURL = '';
   this.currentTitle = '';
-  this.render();
+  this.render(url);
   return this;
 };
 
@@ -38,8 +38,10 @@ BrowserWindow.prototype.view = function() {
 
 /**
  * Render the window.
+ *
+ * @param {String} url URL to navigate window to.
  */
-BrowserWindow.prototype.render = function() {
+BrowserWindow.prototype.render = function(url) {
   this.container.insertAdjacentHTML('beforeend', this.view());
 
   // Get DOM elements
@@ -53,12 +55,19 @@ BrowserWindow.prototype.render = function() {
   // Add event listeners
  this.frame.addEventListener('mozbrowserlocationchange',
     this.handleLocationChange.bind(this));
+ this.frame.addEventListener('mozbrowseropenwindow',
+    this.handleOpenWindow.bind(this));
  this.urlBar.addEventListener('focus', this.handleUrlBarFocus.bind(this));
  this.urlBar.addEventListener('blur', this.handleUrlBarBlur.bind(this));
  this.urlBarForm.addEventListener('submit',
     this.handleUrlSubmit.bind(this));
  this.closeButton.addEventListener('click', this.close.bind(this));
  this.scrim.addEventListener('click', this.handleScrimClick.bind(this));
+
+ // Navigate to URL
+ if (url) {
+  this.frame.src = url;
+ }
 };
 
 /**
@@ -111,6 +120,18 @@ BrowserWindow.prototype.handleLocationChange = function(e) {
   this.urlBar.value = hostname;
 
   Places.updateSite(url);
+};
+
+/**
+ * Handle open window.
+ *
+ * @param {Event} mozbrowseropenwindow event.
+ */
+BrowserWindow.prototype.handleOpenWindow = function(e) {
+  e.preventDefault();
+  window.dispatchEvent(new CustomEvent('_openwindow', {
+    'detail': e.detail
+  }));
 };
 
 /**
