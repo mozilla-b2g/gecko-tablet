@@ -138,25 +138,37 @@ tests:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
         task: tasks/tests/mulet_build_test.yml
+      tasks/builds/mulet_linux_dbg.yml:
+        task: tasks/tests/mulet_build_test.yml
   gaia-build-unit:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
+        task: tasks/tests/mulet_build_unit.yml
+      tasks/builds/mulet_linux_dbg.yml:
         task: tasks/tests/mulet_build_unit.yml
   gaia-js-integration:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
         task: tasks/tests/mulet_gaia_js_integration_tests.yml
+      tasks/builds/mulet_linux_dbg.yml:
+        task: tasks/tests/mulet_gaia_js_integration_tests.yml
   gaia-linter:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
+        task: tasks/tests/mulet_linter.yml
+      tasks/builds/mulet_linux_dbg.yml:
         task: tasks/tests/mulet_linter.yml
   gaia-unit:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
         task: tasks/tests/mulet_gaia_unit.yml
+      tasks/builds/mulet_linux_dbg.yml:
+        task: tasks/tests/mulet_gaia_unit.yml
   gaia-unit-oop:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
+        task: tasks/tests/mulet_gaia_unit_oop.yml
+      tasks/builds/mulet_linux_dbg.yml:
         task: tasks/tests/mulet_gaia_unit_oop.yml
   gtest:
     allowed_build_tasks:
@@ -189,6 +201,8 @@ tests:
   mochitest:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
+        task: tasks/tests/mulet_mochitests.yml
+      tasks/builds/mulet_linux_dbg.yml:
         task: tasks/tests/mulet_mochitests.yml
       tasks/builds/b2g_emulator_x86_kk_opt.yml:
         task: tasks/tests/b2g_emulator_mochitest.yml
@@ -237,6 +251,8 @@ tests:
   reftest:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
+        task: tasks/tests/mulet_reftests.yml
+      tasks/builds/mulet_linux_dbg.yml:
         task: tasks/tests/mulet_reftests.yml
       tasks/builds/b2g_emulator_kk_opt.yml:
         task: tasks/tests/b2g_emulator_reftest.yml
