@@ -78,13 +78,16 @@ var Places = {
   updateSite: function(url) {
     var transaction = this.db.transaction(this.SITES_STORE, 'readwrite');
     var objectStore = transaction.objectStore(this.SITES_STORE);
-    var hostname = new URL(url).hostname;
+    var urlObject = new URL(url);
+    var hostname = urlObject.hostname;
+    var startUrl = urlObject.origin + '/';
     var readRequest = objectStore.get(hostname);
     readRequest.onsuccess = (function() {
       // If site doesn't exist, create it
       if (!readRequest.result) {
         var writeRequest = objectStore.add({
           'hostname': hostname,
+          'startUrl': startUrl,
           'frecency': 1
         });
       // Otherwise update site frecency
@@ -92,6 +95,7 @@ var Places = {
         var frecency = ++readRequest.result.frecency;
         var writeRequest = objectStore.put({
           'hostname': hostname,
+          'startUrl': startUrl,
           'frecency': frecency
         });
       }
@@ -99,7 +103,7 @@ var Places = {
       writeRequest.onsuccess = (function() {
         this.broadcastChannel.postMessage('siteupdated'); 
         console.log('Successfully updated site ' + hostname +
-          ' with frecency ' + frecency);
+          ' with frecency ' + frecency + ' and start_url ' + startUrl);
       }).bind(this);
   
       writeRequest.onerror = function() {
