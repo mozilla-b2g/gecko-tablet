@@ -14,9 +14,12 @@ var HomeScreen = {
     // Get DOM elements
     this.element = document.getElementById('home-screen');
     this.searchBar = document.getElementById('search-bar');
+    this.frame = document.getElementById('home-screen-frame');
     
     // Register event listeners
     this.searchBar.addEventListener('click', this.handleSearchClick);
+    this.frame.addEventListener('mozbrowseropenwindow',
+      this.handleOpenWindow.bind(this));
 
     return this;
   },
@@ -26,6 +29,18 @@ var HomeScreen = {
    */
   handleSearchClick: function() {
     window.dispatchEvent(new CustomEvent('_openwindow'));
+  },
+
+  /**
+   * Handle open window event.
+   *
+   * @param {Event} e mozbrowseropenwindow event.
+   */
+  handleOpenWindow: function(e) {
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent('_openwindow', {
+      'detail': e.detail
+    }));
   }
 
 };

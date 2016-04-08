@@ -19,7 +19,8 @@ var Tile = function(siteObject) {
  * Tile View.
  */
 Tile.prototype.view = function() {
-  return '<li class="tile"><span class="tile-name">' + this.siteObject.hostname
+  return '<li id="tile-' + this.siteObject.hostname +'" class="tile"><span class="tile-name">' +
+    this.siteObject.hostname
     + '</span></li>';
 };
 
@@ -28,4 +29,10 @@ Tile.prototype.view = function() {
  */
 Tile.prototype.render = function() {
   this.container.insertAdjacentHTML('beforeend', this.view());
+  this.element = document.getElementById('tile-' + this.siteObject.hostname);
+  this.element.addEventListener('click', this.open.bind(this));
+};
+
+Tile.prototype.open = function() {
+  window.open(this.siteObject.startUrl);
 };

@@ -57,6 +57,8 @@ var WindowManager = {
   handleOpenWindow: function(e) {
     if (e.detail && e.detail.id != null) {
       this.switchWindow(e.detail.id);
+    } else if (e.detail && e.detail.url) {
+      this.createWindow(e.detail.url);
     } else {
       this.createWindow();
     }
@@ -115,10 +117,12 @@ var WindowManager = {
 
   /**
    * Create a new window.
+   *
+   * @param {String} url URL to create window at.
    */
-  createWindow: function() {
+  createWindow: function(url) {
     var id = this.windowCount;
-    var newWindow = new BrowserWindow(id);
+    var newWindow = new BrowserWindow(id, url);
     this.windows[id] = newWindow;
     this.element.classList.remove('no-windows');
     this.switchWindow(id);
