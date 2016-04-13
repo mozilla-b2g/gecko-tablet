@@ -38,7 +38,7 @@ wasmEvalText(`(module
   (func (result i32) (param i32) (param i32) (i32.const 0))
   (func (result i32)
    (call 0 (i32.const 1) (call 0 (i32.const 2) (i32.const 3)))
-   (call 0 (trap) (i32.const 4))
+   (call 0 (unreachable) (i32.const 4))
   )
 )`);
 
@@ -99,5 +99,32 @@ wasmEvalText(`(module (func
   (loop (i32.const 1))
   (loop (i32.const 2))
   (i32.const 3)
+ )
+))`);
+
+wasmEvalText(`(module (func
+ (block $return
+  (block $beforeReturn
+   (loop $out $in
+    (block $otherTable
+      (br_table
+       $return
+       $return
+       $otherTable
+       $beforeReturn
+       (i32.const 0)
+      )
+    )
+    (block $backTop
+     (br_table
+      $backTop
+      $backTop
+      $beforeReturn
+      (i32.const 0)
+     )
+    )
+    (br $in)
+   )
+  )
  )
 ))`);

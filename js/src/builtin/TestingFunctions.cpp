@@ -1225,7 +1225,6 @@ ResetOOMFailure(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setBoolean(js::oom::HadSimulatedOOM());
-    HelperThreadState().waitForAllThreads();
     js::oom::ResetSimulatedOOM();
     return true;
 }
@@ -2445,6 +2444,13 @@ ReportOutOfMemory(JSContext* cx, unsigned argc, Value* vp)
     cx->clearPendingException();
     args.rval().setUndefined();
     return true;
+}
+
+static bool
+ThrowOutOfMemory(JSContext* cx, unsigned argc, Value* vp)
+{
+    JS_ReportOutOfMemory(cx);
+    return false;
 }
 
 static bool
@@ -3858,6 +3864,10 @@ gc::ZealModeHelpText),
     JS_FN_HELP("reportOutOfMemory", ReportOutOfMemory, 0, 0,
 "reportOutOfMemory()",
 "  Report OOM, then clear the exception and return undefined. For crash testing."),
+
+    JS_FN_HELP("throwOutOfMemory", ThrowOutOfMemory, 0, 0,
+"throwOutOfMemory()",
+"  Throw out of memory exception, for OOM handling testing."),
 
     JS_FN_HELP("reportLargeAllocationFailure", ReportLargeAllocationFailure, 0, 0,
 "reportLargeAllocationFailure()",

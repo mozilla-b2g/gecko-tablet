@@ -2533,6 +2533,7 @@ pref("layout.frame_rate", -1);
 
 // pref to dump the display list to the log. Useful for debugging drawing.
 pref("layout.display-list.dump", false);
+pref("layout.display-list.dump-content", false);
 
 // pref to control precision of the frame rate timer. When true,
 // we use a "precise" timer, which means each notification fires
@@ -4413,6 +4414,7 @@ pref("layers.low-precision-buffer", false);
 pref("layers.progressive-paint", false);
 pref("layers.tile-width", 256);
 pref("layers.tile-height", 256);
+pref("layers.child-process-shutdown", true);
 // Max number of layers per container. See Overwrite in mobile prefs.
 pref("layers.max-active", -1);
 // If this is set the tile size will only be treated as a suggestion.
@@ -4422,8 +4424,6 @@ pref("layers.max-active", -1);
 // if you change the tile size.
 pref("layers.tiles.adjust", true);
 
-// Set the default values, and then override per-platform as needed
-pref("layers.offmainthreadcomposition.enabled", true);
 // Compositor target frame rate. NOTE: If vsync is enabled the compositor
 // frame rate will still be capped.
 // -1 -> default (match layout.frame_rate or 60 FPS)
@@ -4485,6 +4485,9 @@ pref("layers.prefer-opengl", false);
 pref("layers.prefer-d3d9", false);
 pref("layers.d3d11.force-warp", false);
 pref("layers.d3d11.disable-warp", true);
+
+// cf. Bug 1215265
+pref("layers.child-process-shutdown", false);
 #endif
 
 // Force all possible layers to be always active layers
@@ -5015,6 +5018,10 @@ pref("layout.accessiblecaret.always_tilt", false);
 // AccessibleCarets and close UI interaction by default.
 pref("layout.accessiblecaret.allow_script_change_updates", false);
 
+// Allow one caret to be dragged across the other caret without any limitation.
+// This matches the built-in convention for all desktop platforms.
+pref("layout.accessiblecaret.allow_dragging_across_other_caret", true);
+
 // Optionally provide haptic feedback on longPress selection events.
 pref("layout.accessiblecaret.hapticfeedback", false);
 
@@ -5061,6 +5068,7 @@ pref("dom.presentation.tcp_server.debug", false);
 pref("dom.presentation.discovery.enabled", false);
 pref("dom.presentation.discovery.timeout_ms", 10000);
 pref("dom.presentation.discoverable", false);
+pref("dom.presentation.session_transport.data_channel.enable", false);
 
 #ifdef XP_MACOSX
 #if !defined(RELEASE_BUILD) || defined(DEBUG)

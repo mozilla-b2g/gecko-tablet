@@ -626,7 +626,7 @@ Layer::SnapTransformTranslation(const Matrix4x4& aTransform,
 
   Matrix matrix2D;
   Matrix4x4 result;
-  if (aTransform.Is2D(&matrix2D) &&
+  if (aTransform.CanDraw2D(&matrix2D) &&
       !matrix2D.HasNonTranslation() &&
       matrix2D.HasNonIntegerTranslation()) {
     IntPoint snappedTranslation = RoundedToInt(matrix2D.GetTranslation());
@@ -1931,7 +1931,7 @@ Layer::PrintInfo(std::stringstream& aStream, const char* aPrefix)
   if (1.0 != mOpacity) {
     aStream << nsPrintfCString(" [opacity=%g]", mOpacity).get();
   }
-  if (GetContentFlags() & CONTENT_OPAQUE) {
+  if (IsOpaque()) {
     aStream << " [opaqueContent]";
   }
   if (GetContentFlags() & CONTENT_COMPONENT_ALPHA) {

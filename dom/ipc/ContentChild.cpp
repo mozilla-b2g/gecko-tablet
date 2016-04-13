@@ -176,8 +176,6 @@
 #include "mozilla/dom/mobileconnection/MobileConnectionChild.h"
 #include "mozilla/dom/mobilemessage/SmsChild.h"
 #include "mozilla/dom/devicestorage/DeviceStorageRequestChild.h"
-#include "mozilla/dom/PFileSystemRequestChild.h"
-#include "mozilla/dom/FileSystemTaskBase.h"
 #include "mozilla/dom/bluetooth/PBluetoothChild.h"
 #include "mozilla/dom/PFMRadioChild.h"
 #include "mozilla/dom/PPresentationChild.h"
@@ -852,11 +850,16 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
   nsTArray<FrameScriptInfo> frameScripts;
   nsCString urlToLoad;
 
+  PRenderFrameChild* renderFrame = newChild->SendPRenderFrameConstructor();
+  TextureFactoryIdentifier textureFactoryIdentifier;
+  uint64_t layersId = 0;
+
   if (aIframeMoz) {
     MOZ_ASSERT(aTabOpener);
-    newChild->SendBrowserFrameOpenWindow(aTabOpener, NS_ConvertUTF8toUTF16(url),
+    newChild->SendBrowserFrameOpenWindow(aTabOpener, renderFrame, NS_ConvertUTF8toUTF16(url),
                                          name, NS_ConvertUTF8toUTF16(features),
-                                         aWindowIsNew);
+                                         aWindowIsNew, &textureFactoryIdentifier,
+                                         &layersId);
   } else {
     nsAutoCString baseURIString;
     if (aTabOpener) {
@@ -885,7 +888,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
     }
 
     nsresult rv;
-    if (!SendCreateWindow(aTabOpener, newChild,
+    if (!SendCreateWindow(aTabOpener, newChild, renderFrame,
                           aChromeFlags, aCalledFromJS, aPositionSpecified,
                           aSizeSpecified, url,
                           name, features,
@@ -897,25 +900,25 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
                           &rv,
                           aWindowIsNew,
                           &frameScripts,
-                          &urlToLoad)) {
+                          &urlToLoad,
+                          &textureFactoryIdentifier,
+                          &layersId)) {
+      PRenderFrameChild::Send__delete__(renderFrame);
       return NS_ERROR_NOT_AVAILABLE;
     }
 
     if (NS_FAILED(rv)) {
+      PRenderFrameChild::Send__delete__(renderFrame);
+      PBrowserChild::Send__delete__(newChild);
       return rv;
     }
   }
   if (!*aWindowIsNew) {
+    PRenderFrameChild::Send__delete__(renderFrame);
     PBrowserChild::Send__delete__(newChild);
     return NS_ERROR_ABORT;
   }
 
-  TextureFactoryIdentifier textureFactoryIdentifier;
-  uint64_t layersId = 0;
-  PRenderFrameChild* renderFrame = newChild->SendPRenderFrameConstructor();
-  newChild->SendGetRenderFrameInfo(renderFrame,
-                                   &textureFactoryIdentifier,
-                                   &layersId);
   if (layersId == 0) { // if renderFrame is invalid.
     PRenderFrameChild::Send__delete__(renderFrame);
     renderFrame = nullptr;
@@ -1823,24 +1826,6 @@ ContentChild::DeallocPDeviceStorageRequestChild(PDeviceStorageRequestChild* aDev
   return true;
 }
 
-PFileSystemRequestChild*
-ContentChild::AllocPFileSystemRequestChild(const FileSystemParams& aParams)
-{
-  MOZ_CRASH("Should never get here!");
-  return nullptr;
-}
-
-bool
-ContentChild::DeallocPFileSystemRequestChild(PFileSystemRequestChild* aFileSystem)
-{
-  mozilla::dom::FileSystemTaskBase* child =
-    static_cast<mozilla::dom::FileSystemTaskBase*>(aFileSystem);
-  // The reference is increased in FileSystemTaskBase::Start of
-  // FileSystemTaskBase.cpp. We should decrease it after IPC.
-  NS_RELEASE(child);
-  return true;
-}
-
 PMobileConnectionChild*
 ContentChild::SendPMobileConnectionConstructor(PMobileConnectionChild* aActor,
                                                const uint32_t& aClientId)
@@ -2317,7 +2302,15 @@ void
 ContentChild::QuickExit()
 {
   NS_WARNING("content process _exit()ing");
+
+#ifdef XP_WIN
+  // In bug 1254829, the destructor got called when dll got detached on windows,
+  // switch to TerminateProcess to bypass dll detach handler during the process
+  // termination.
+  TerminateProcess(GetCurrentProcess(), 0);
+#else
   _exit(0);
+#endif
 }
 
 nsresult
@@ -2428,9 +2421,9 @@ ContentChild::RecvLoadProcessScript(const nsString& aURL)
 
 bool
 ContentChild::RecvAsyncMessage(const nsString& aMsg,
-                               const ClonedMessageData& aData,
                                InfallibleTArray<CpowEntry>&& aCpows,
-                               const IPC::Principal& aPrincipal)
+                               const IPC::Principal& aPrincipal,
+                               const ClonedMessageData& aData)
 {
   RefPtr<nsFrameMessageManager> cpm =
     nsFrameMessageManager::GetChildProcessManager();
@@ -3080,7 +3073,6 @@ ContentChild::RecvUpdateWindow(const uintptr_t& aChildId)
   NS_ASSERTION(aChildId, "Expected child hwnd value for remote plugin instance.");
   mozilla::plugins::PluginInstanceParent* parentInstance =
   mozilla::plugins::PluginInstanceParent::LookupPluginInstanceByID(aChildId);
-  NS_ASSERTION(parentInstance, "Expected matching plugin instance");
   if (parentInstance) {
   // sync! update call to the plugin instance that forces the
   // plugin to paint its child window.

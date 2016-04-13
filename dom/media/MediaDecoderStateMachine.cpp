@@ -267,6 +267,8 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
                   "MediaDecoderStateMachine::mPreservesPitch (Mirror)"),
   mSameOriginMedia(mTaskQueue, false,
                    "MediaDecoderStateMachine::mSameOriginMedia (Mirror)"),
+  mMediaPrincipalHandle(mTaskQueue, PRINCIPAL_HANDLE_NONE,
+                        "MediaDecoderStateMachine::mMediaPrincipalHandle (Mirror)"),
   mPlaybackBytesPerSecond(mTaskQueue, 0.0,
                           "MediaDecoderStateMachine::mPlaybackBytesPerSecond (Mirror)"),
   mPlaybackRateReliable(mTaskQueue, true,
@@ -293,11 +295,6 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
   MOZ_COUNT_CTOR(MediaDecoderStateMachine);
   NS_ASSERTION(NS_IsMainThread(), "Should be on main thread.");
 
-  // Dispatch initialization that needs to happen on that task queue.
-  nsCOMPtr<nsIRunnable> r = NS_NewRunnableMethodWithArg<RefPtr<MediaDecoder>>(
-    this, &MediaDecoderStateMachine::InitializationTask, aDecoder);
-  mTaskQueue->Dispatch(r.forget());
-
   InitVideoQueuePrefs();
 
   mBufferingWait = IsRealTime() ? 0 : 15;
@@ -310,22 +307,6 @@ MediaDecoderStateMachine::MediaDecoderStateMachine(MediaDecoder* aDecoder,
   // function per-process is OK, provided each call is matched by a corresponding
   // timeEndPeriod() call.
   timeBeginPeriod(1);
-#endif
-
-  mAudioQueueListener = AudioQueue().PopEvent().Connect(
-    mTaskQueue, this, &MediaDecoderStateMachine::OnAudioPopped);
-  mVideoQueueListener = VideoQueue().PopEvent().Connect(
-    mTaskQueue, this, &MediaDecoderStateMachine::OnVideoPopped);
-
-  mMetadataManager.Connect(mReader->TimedMetadataEvent(), OwnerThread());
-
-  mMediaSink = CreateMediaSink(mAudioCaptured);
-
-#ifdef MOZ_EME
-  mCDMProxyPromise.Begin(aDecoder->RequestCDMProxy()->Then(
-    OwnerThread(), __func__, this,
-    &MediaDecoderStateMachine::OnCDMProxyReady,
-    &MediaDecoderStateMachine::OnCDMProxyNotReady));
 #endif
 }
 
@@ -355,6 +336,7 @@ MediaDecoderStateMachine::InitializationTask(MediaDecoder* aDecoder)
   mLogicalPlaybackRate.Connect(aDecoder->CanonicalPlaybackRate());
   mPreservesPitch.Connect(aDecoder->CanonicalPreservesPitch());
   mSameOriginMedia.Connect(aDecoder->CanonicalSameOriginMedia());
+  mMediaPrincipalHandle.Connect(aDecoder->CanonicalMediaPrincipalHandle());
   mPlaybackBytesPerSecond.Connect(aDecoder->CanonicalPlaybackBytesPerSecond());
   mPlaybackRateReliable.Connect(aDecoder->CanonicalPlaybackRateReliable());
   mDecoderPosition.Connect(aDecoder->CanonicalDecoderPosition());
@@ -394,7 +376,8 @@ MediaDecoderStateMachine::CreateMediaSink(bool aAudioCaptured)
 {
   RefPtr<media::MediaSink> audioSink = aAudioCaptured
     ? new DecodedStream(mTaskQueue, mAudioQueue, mVideoQueue,
-                        mOutputStreamManager, mSameOriginMedia.Ref())
+                        mOutputStreamManager, mSameOriginMedia.Ref(),
+                        mMediaPrincipalHandle.Ref())
     : CreateAudioSink();
 
   RefPtr<media::MediaSink> mediaSink =
@@ -781,7 +764,11 @@ MediaDecoderStateMachine::OnNotDecoded(MediaData::Type aType,
       ->Then(OwnerThread(), __func__,
              [self] (MediaData::Type aType) -> void {
                self->WaitRequestRef(aType).Complete();
-               self->DispatchDecodeTasksIfNeeded();
+               if (aType == MediaData::AUDIO_DATA) {
+                 self->EnsureAudioDecodeTaskQueued();
+               } else {
+                 self->EnsureVideoDecodeTaskQueued();
+               }
              },
              [self] (WaitForDataRejectValue aRejection) -> void {
                self->WaitRequestRef(aRejection.mType).Complete();
@@ -802,7 +789,11 @@ MediaDecoderStateMachine::OnNotDecoded(MediaData::Type aType,
   }
 
   if (aReason == MediaDecoderReader::CANCELED) {
-    DispatchDecodeTasksIfNeeded();
+    if (isAudio) {
+      EnsureAudioDecodeTaskQueued();
+    } else {
+      EnsureVideoDecodeTaskQueued();
+    }
     return;
   }
 
@@ -1060,14 +1051,35 @@ bool MediaDecoderStateMachine::IsPlaying() const
   return mMediaSink->IsPlaying();
 }
 
-nsresult MediaDecoderStateMachine::Init()
+nsresult MediaDecoderStateMachine::Init(MediaDecoder* aDecoder)
 {
   MOZ_ASSERT(NS_IsMainThread());
+
+  // Dispatch initialization that needs to happen on that task queue.
+  nsCOMPtr<nsIRunnable> r = NS_NewRunnableMethodWithArg<RefPtr<MediaDecoder>>(
+    this, &MediaDecoderStateMachine::InitializationTask, aDecoder);
+  mTaskQueue->Dispatch(r.forget());
+
+  mAudioQueueListener = AudioQueue().PopEvent().Connect(
+    mTaskQueue, this, &MediaDecoderStateMachine::OnAudioPopped);
+  mVideoQueueListener = VideoQueue().PopEvent().Connect(
+    mTaskQueue, this, &MediaDecoderStateMachine::OnVideoPopped);
+
+  mMetadataManager.Connect(mReader->TimedMetadataEvent(), OwnerThread());
+
+  mMediaSink = CreateMediaSink(mAudioCaptured);
+
+#ifdef MOZ_EME
+  mCDMProxyPromise.Begin(aDecoder->RequestCDMProxy()->Then(
+    OwnerThread(), __func__, this,
+    &MediaDecoderStateMachine::OnCDMProxyReady,
+    &MediaDecoderStateMachine::OnCDMProxyNotReady));
+#endif
+
   nsresult rv = mReader->Init();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIRunnable> r = NS_NewRunnableMethod(
-    this, &MediaDecoderStateMachine::ReadMetadata);
+  r = NS_NewRunnableMethod(this, &MediaDecoderStateMachine::ReadMetadata);
   OwnerThread()->Dispatch(r.forget());
 
   return NS_OK;
@@ -2154,6 +2166,7 @@ MediaDecoderStateMachine::FinishShutdown()
   mLogicalPlaybackRate.DisconnectIfConnected();
   mPreservesPitch.DisconnectIfConnected();
   mSameOriginMedia.DisconnectIfConnected();
+  mMediaPrincipalHandle.DisconnectIfConnected();
   mPlaybackBytesPerSecond.DisconnectIfConnected();
   mPlaybackRateReliable.DisconnectIfConnected();
   mDecoderPosition.DisconnectIfConnected();
@@ -2498,7 +2511,10 @@ MediaDecoderStateMachine::DropAudioUpToSeekTarget(MediaData* aSample)
   }
   uint32_t frames = audio->mFrames - static_cast<uint32_t>(framesToPrune.value());
   uint32_t channels = audio->mChannels;
-  auto audioData = MakeUnique<AudioDataValue[]>(frames * channels);
+  AlignedAudioBuffer audioData(frames * channels);
+  if (!audioData) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
   memcpy(audioData.get(),
          audio->mAudioData.get() + (framesToPrune.value() * channels),
          frames * channels * sizeof(AudioDataValue));

@@ -71,7 +71,7 @@ GNOMEUI_VERSION=2.2.0
 GCONF_VERSION=1.2.1
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.11.0
+SQLITE_VERSION=3.12.1
 FONTCONFIG_VERSION=2.7.0
 
 MSMANIFEST_TOOL=
@@ -103,7 +103,6 @@ if test -n "$gonkdir" ; then
     kernel_name=`uname -s | tr "[[:upper:]]" "[[:lower:]]"`
     android_source="$gonkdir"
     ANDROID_SOURCE="$android_source"
-    ANDROID_NDK="${ANDROID_SOURCE}/ndk"
     dnl Default to ICS
     ANDROID_VERSION=15
     if test -n "${PLATFORM_SDK_VERSION}"; then
@@ -1469,8 +1468,10 @@ case "$target" in
         # that behavior) that it's better to turn it off.
         # MSVC warning C4819 warns some UTF-8 characters (e.g. copyright sign)
         # on non-Western system locales even if it is in a comment.
+        # MSVC warning wd4595 warns non-member operator new or delete functions
+        # may not be declared inline, as of VS2015 Update 2.
         CFLAGS="$CFLAGS -wd4244 -wd4267 -wd4819"
-        CXXFLAGS="$CXXFLAGS -wd4251 -wd4244 -wd4267 -wd4345 -wd4351 -wd4800 -wd4819"
+        CXXFLAGS="$CXXFLAGS -wd4251 -wd4244 -wd4267 -wd4345 -wd4351 -wd4800 -wd4819 -wd4595"
         if test -n "$CLANG_CL"; then
             # XXX We should combine some of these with our generic GCC-style
             # warning checks.
@@ -2743,7 +2744,6 @@ MOZ_WEBRTC_ASSERT_ALWAYS=1
 MOZ_WEBRTC_HARDWARE_AEC_NS=
 MOZ_SCTP=
 MOZ_ANDROID_OMX=
-MOZ_MEDIA_NAVIGATOR=
 MOZ_OMX_PLUGIN=
 MOZ_VPX_ERROR_CONCEALMENT=
 MOZ_WEBSPEECH=1
@@ -3023,16 +3023,6 @@ dnl ========================================================
 if test -z "$gonkdir" ; then
     case "$MOZ_BUILD_APP" in
     mobile/android)
-        case "$target" in
-        *-android*|*-linuxandroid*)
-            :
-            ;;
-        *)
-            AC_MSG_ERROR([You must specify --target=arm-linux-androideabi (or some other valid android target) when building with --enable-application=mobile/android.
-             See https://wiki.mozilla.org/Mobile/Fennec/Android#Setup_Fennec_mozconfig for more information about the necessary options])
-            ;;
-        esac
-
         MOZ_ANDROID_SDK(23, 23.0.1)
         ;;
     esac
@@ -4004,18 +3994,6 @@ if test -n "$MOZ_ANDROID_OMX"; then
 fi
 
 dnl ========================================================
-dnl = Enable getUserMedia support
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(media-navigator,
-[  --enable-media-navigator  Enable support for getUserMedia],
-    MOZ_MEDIA_NAVIGATOR=1,
-    MOZ_MEDIA_NAVIGATOR=)
-
-if test -n "$MOZ_MEDIA_NAVIGATOR"; then
-  AC_DEFINE(MOZ_MEDIA_NAVIGATOR)
-fi
-
-dnl ========================================================
 dnl = Enable building OMX media plugin (B2G or Android)
 dnl ========================================================
 if test "$OS_TARGET" = Android -a x"$MOZ_WIDGET_TOOLKIT" != x"gonk"; then
@@ -4195,13 +4173,10 @@ fi
 
 if test -n "$MOZ_TREMOR"; then
     AC_DEFINE(MOZ_TREMOR)
-    # Tremor doesn't have an encoder.
-    MOZ_WEBM_ENCODER=
 fi
 
-if test -n "$MOZ_WEBM_ENCODER"; then
-    AC_DEFINE(MOZ_WEBM_ENCODER)
-fi
+MOZ_WEBM_ENCODER=1
+AC_DEFINE(MOZ_WEBM_ENCODER)
 AC_SUBST(MOZ_WEBM_ENCODER)
 
 dnl ==================================
@@ -6993,7 +6968,6 @@ AC_SUBST(MOZ_TOOLKIT_SEARCH)
 AC_SUBST(MOZ_FEEDS)
 AC_SUBST(NS_PRINTING)
 AC_SUBST(MOZ_HELP_VIEWER)
-AC_SUBST(TOOLCHAIN_PREFIX)
 
 AC_SUBST(JAVA)
 AC_SUBST(JAVAC)
@@ -7099,6 +7073,25 @@ fi
 AC_DEFINE_UNQUOTED(MOZ_MACBUNDLE_ID,$MOZ_MACBUNDLE_ID)
 AC_SUBST(MOZ_MACBUNDLE_ID)
 
+dnl ========================================================
+dnl = Child Process Name for IPC
+dnl ========================================================
+if test "$MOZ_WIDGET_TOOLKIT" != "android"; then
+  MOZ_CHILD_PROCESS_NAME="plugin-container${BIN_SUFFIX}"
+else
+  # We want to let Android unpack the file at install time, but it only does
+  # so if the file is named libsomething.so. The lib/ path is also required
+  # because the unpacked file will be under the lib/ subdirectory and will
+  # need to be executed from that path.
+  MOZ_CHILD_PROCESS_NAME="libplugin-container.so"
+  MOZ_CHILD_PROCESS_NAME_PIE="libplugin-container-pie.so"
+  AC_SUBST(MOZ_CHILD_PROCESS_NAME_PIE)
+fi
+MOZ_CHILD_PROCESS_BUNDLE="plugin-container.app/Contents/MacOS/"
+
+AC_SUBST(MOZ_CHILD_PROCESS_NAME)
+AC_SUBST(MOZ_CHILD_PROCESS_BUNDLE)
+
 # The following variables are available to branding and application
 # configuration ($BRANDING/configure.sh and $APPLICATION/confvars.sh):
 # - MOZ_APP_VENDOR: Used for application.ini's "Vendor" field, which also
@@ -7148,27 +7141,6 @@ fi
 if test -z "$ANDROID_PACKAGE_NAME" ; then
    ANDROID_PACKAGE_NAME="org.mozilla.$MOZ_APP_NAME"
 fi
-
-dnl ========================================================
-dnl = Child Process Name for IPC
-dnl ========================================================
-if test "$MOZ_WIDGET_TOOLKIT" != "android"; then
-  MOZ_CHILD_PROCESS_NAME="${MOZ_APP_NAME}-webcontent${BIN_SUFFIX}"
-  MOZ_PLUGIN_PROCESS_NAME="plugin-container${BIN_SUFFIX}"
-else
-  # We want to let Android unpack the file at install time, but it only does
-  # so if the file is named libsomething.so. The lib/ path is also required
-  # because the unpacked file will be under the lib/ subdirectory and will
-  # need to be executed from that path.
-  MOZ_CHILD_PROCESS_NAME="libfirefox-webcontent.so"
-  MOZ_CHILD_PROCESS_NAME_PIE="libplugin-container-pie.so"
-  AC_SUBST(MOZ_CHILD_PROCESS_NAME_PIE)
-fi
-MOZ_CHILD_PROCESS_BUNDLE="plugin-container.app/Contents/MacOS/"
-
-AC_SUBST(MOZ_CHILD_PROCESS_NAME)
-AC_SUBST(MOZ_CHILD_PROCESS_BUNDLE)
-AC_SUBST(MOZ_PLUGIN_PROCESS_NAME)
 
 # Mozilla released Firefox for Android {Release,Beta} and {Aurora,Nightly} to
 # the public with specific common shared IDs and we need to keep them
@@ -7576,7 +7548,6 @@ AC_DEFINE(NO_NSPR_10_SUPPORT)
 MOZ_CREATE_CONFIG_STATUS()
 
 if test "$COMPILE_ENVIRONMENT"; then
-  MOZ_SUBCONFIGURE_ICU()
   MOZ_SUBCONFIGURE_FFI()
   MOZ_SUBCONFIGURE_JEMALLOC()
 fi

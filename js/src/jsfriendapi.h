@@ -314,6 +314,7 @@ JS_DefineFunctionsWithHelp(JSContext* cx, JS::HandleObject obj, const JSFunction
 
 namespace js {
 
+extern JS_FRIEND_DATA(const js::ClassExtension) ProxyClassExtension;
 extern JS_FRIEND_DATA(const js::ObjectOps) ProxyObjectOps;
 
 /*
@@ -322,14 +323,13 @@ extern JS_FRIEND_DATA(const js::ObjectOps) ProxyObjectOps;
  * NB: The macro invocation must be surrounded by braces, so as to
  *     allow for potential JSClass extensions.
  */
-#define PROXY_MAKE_EXT(isWrappedNative, objectMoved)                    \
+#define PROXY_MAKE_EXT(objectMoved)                                     \
     {                                                                   \
-        isWrappedNative,                                                \
         js::proxy_WeakmapKeyDelegate,                                   \
         objectMoved                                                     \
     }
 
-#define PROXY_CLASS_WITH_EXT(name, flags, ext)                                          \
+#define PROXY_CLASS_WITH_EXT(name, flags, extPtr)                                       \
     {                                                                                   \
         name,                                                                           \
         js::Class::NON_NATIVE |                                                         \
@@ -349,16 +349,12 @@ extern JS_FRIEND_DATA(const js::ObjectOps) ProxyObjectOps;
         nullptr,                 /* construct   */                                      \
         js::proxy_Trace,         /* trace       */                                      \
         JS_NULL_CLASS_SPEC,                                                             \
-        ext,                                                                            \
+        extPtr,                                                                         \
         &js::ProxyObjectOps                                                             \
     }
 
-#define PROXY_CLASS_DEF(name, flags)                                    \
-  PROXY_CLASS_WITH_EXT(name, flags,                                     \
-                       PROXY_MAKE_EXT(                                  \
-                         false,   /* isWrappedNative */                 \
-                         js::proxy_ObjectMoved                          \
-                       ))
+#define PROXY_CLASS_DEF(name, flags) \
+  PROXY_CLASS_WITH_EXT(name, flags, &js::ProxyClassExtension)
 
 /*
  * Proxy stubs, similar to JS_*Stub, for embedder proxy class definitions.

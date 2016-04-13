@@ -3132,7 +3132,8 @@ nsContentUtils::IsImageInCache(nsIURI* aURI, nsIDocument* aDocument)
 
 // static
 nsresult
-nsContentUtils::LoadImage(nsIURI* aURI, nsIDocument* aLoadingDocument,
+nsContentUtils::LoadImage(nsIURI* aURI, nsINode* aContext,
+                          nsIDocument* aLoadingDocument,
                           nsIPrincipal* aLoadingPrincipal, nsIURI* aReferrer,
                           net::ReferrerPolicy aReferrerPolicy,
                           imgINotificationObserver* aObserver, int32_t aLoadFlags,
@@ -3141,6 +3142,7 @@ nsContentUtils::LoadImage(nsIURI* aURI, nsIDocument* aLoadingDocument,
                           uint32_t aContentPolicyType)
 {
   NS_PRECONDITION(aURI, "Must have a URI");
+  NS_PRECONDITION(aContext, "Must have a context");
   NS_PRECONDITION(aLoadingDocument, "Must have a document");
   NS_PRECONDITION(aLoadingPrincipal, "Must have a principal");
   NS_PRECONDITION(aRequest, "Null out param");
@@ -3170,6 +3172,7 @@ nsContentUtils::LoadImage(nsIURI* aURI, nsIDocument* aLoadingDocument,
                               aLoadingPrincipal,    /* loading principal */
                               loadGroup,            /* loadgroup */
                               aObserver,            /* imgINotificationObserver */
+                              aContext,             /* loading context */
                               aLoadingDocument,     /* uniquification key */
                               aLoadFlags,           /* load flags */
                               nullptr,              /* cache key */
@@ -4019,7 +4022,7 @@ nsContentUtils::HasMutationListeners(nsINode* aNode,
   doc->MayDispatchMutationEvent(aTargetForSubtreeModified);
 
   // If we have a window, we can check it for mutation listeners now.
-  if (aNode->IsInDoc()) {
+  if (aNode->IsInUncomposedDoc()) {
     nsCOMPtr<EventTarget> piTarget(do_QueryInterface(window));
     if (piTarget) {
       EventListenerManager* manager = piTarget->GetExistingListenerManager();
@@ -4117,7 +4120,7 @@ nsContentUtils::UnmarkGrayJSListenersInCCGenerationDocuments()
   for (auto i = sEventListenerManagersHash->Iter(); !i.Done(); i.Next()) {
     auto entry = static_cast<EventListenerManagerMapEntry*>(i.Get());
     nsINode* n = static_cast<nsINode*>(entry->mListenerManager->GetTarget());
-    if (n && n->IsInDoc() &&
+    if (n && n->IsInUncomposedDoc() &&
         nsCCUncollectableMarker::InGeneration(n->OwnerDoc()->GetMarkedCCGeneration())) {
       entry->mListenerManager->MarkForCC();
     }
@@ -6635,7 +6638,7 @@ nsContentUtils::HasPluginWithUncontrolledEventDispatch(nsIContent* aContent)
   // We control dispatch to all mac plugins.
   return false;
 #else
-  if (!aContent || !aContent->IsInDoc()) {
+  if (!aContent || !aContent->IsInUncomposedDoc()) {
     return false;
   }
 
@@ -7472,6 +7475,12 @@ nsContentUtils::TransferableToIPCTransferable(nsITransferable* aTransferable,
               IPCDataTransferItem* item = aIPCDataTransfer->items().AppendElement();
               item->flavor() = nsCString(flavorStr);
               item->data() = NS_ConvertUTF8toUTF16(flavorStr);
+            } else if (!data) {
+              // Empty element, transfer only the flavor
+              IPCDataTransferItem* item = aIPCDataTransfer->items().AppendElement();
+              item->flavor() = nsCString(flavorStr);
+              item->data() = EmptyCString();
+              continue;
             }
           }
         }

@@ -17,7 +17,7 @@ const TEST_CASES = [
     "c1", "name"]
 ];
 
-add_task(function*() {
+add_task(function* () {
   yield openTabAndSetupStorage(MAIN_DOMAIN + "storage-listings.html");
 
   let contextMenu = gPanelWindow.document.getElementById("storage-table-popup");
@@ -28,9 +28,10 @@ add_task(function*() {
     yield selectTreeItem([store, host]);
 
     let row = getRowCells(rowName);
-
     ok(gUI.table.items.has(rowName),
       `There is a row '${rowName}' in ${store} > ${host}`);
+
+    let eventWait = gUI.once("store-objects-updated");
 
     yield waitForContextMenu(contextMenu, row[cellToClick], () => {
       info(`Opened context menu in ${store} > ${host}, row '${rowName}'`);
@@ -39,7 +40,7 @@ add_task(function*() {
         `Context menu item label contains '${rowName}'`);
     });
 
-    yield gUI.once("store-objects-updated");
+    yield eventWait;
 
     ok(!gUI.table.items.has(rowName),
       `There is no row '${rowName}' in ${store} > ${host} after deletion`);

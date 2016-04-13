@@ -14,6 +14,15 @@ var { require } = BrowserLoader({
 });
 var Services = require("Services");
 
+var EXPECTED_DTU_ASSERT_FAILURE_COUNT = 0;
+
+SimpleTest.registerCleanupFunction(function() {
+  if (DevToolsUtils.assertionFailureCount !== EXPECTED_DTU_ASSERT_FAILURE_COUNT) {
+    ok(false, "Should have had the expected number of DevToolsUtils.assert() failures. Expected " +
+       EXPECTED_DTU_ASSERT_FAILURE_COUNT + ", got " + DevToolsUtils.assertionFailureCount);
+  }
+});
+
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 DevToolsUtils.testing = true;
 var { immutableUpdate } = DevToolsUtils;
@@ -22,7 +31,7 @@ var constants = require("devtools/client/memory/constants");
 var {
   censusDisplays,
   diffingState,
-  dominatorTreeDisplays,
+  labelDisplays,
   dominatorTreeState,
   snapshotState,
   viewState,
@@ -35,6 +44,7 @@ const {
 
 var models = require("devtools/client/memory/models");
 
+var Immutable = require("devtools/client/shared/vendor/immutable");
 var React = require("devtools/client/shared/vendor/react");
 var ReactDOM = require("devtools/client/shared/vendor/react-dom");
 var Heap = React.createFactory(require("devtools/client/memory/components/heap"));
@@ -125,7 +135,7 @@ var TEST_DOMINATOR_TREE = Object.freeze({
   expanded: new Set(),
   focused: null,
   error: null,
-  display: dominatorTreeDisplays.coarseType,
+  display: labelDisplays.coarseType,
   activeFetchRequestCount: null,
   state: dominatorTreeState.LOADED,
 });
@@ -164,7 +174,7 @@ var TEST_HEAP_PROPS = Object.freeze({
   onDominatorTreeFocus: noop,
   onViewSourceInDebugger: noop,
   diffing: null,
-  view: viewState.CENSUS,
+  view: { state: viewState.CENSUS, },
   snapshot: Object.freeze({
     id: 1337,
     selected: true,
@@ -211,6 +221,7 @@ var TEST_TOOLBAR_PROPS = Object.freeze({
     censusDisplays.allocationStack,
     censusDisplays.invertedAllocationStack,
   ],
+  censusDisplay: censusDisplays.coarseType,
   onTakeSnapshotClick: noop,
   onImportClick: noop,
   onCensusDisplayChange: noop,
@@ -222,13 +233,14 @@ var TEST_TOOLBAR_PROPS = Object.freeze({
   setFilterString: noop,
   diffing: null,
   onToggleDiffing: noop,
-  view: viewState.CENSUS,
+  view: { state: viewState.CENSUS, },
   onViewChange: noop,
-  dominatorTreeDisplays: [
-    dominatorTreeDisplays.coarseType,
-    dominatorTreeDisplays.allocationStack,
+  labelDisplays: [
+    labelDisplays.coarseType,
+    labelDisplays.allocationStack,
   ],
-  onDominatorTreeDisplayChange: noop,
+  labelDisplay: labelDisplays.coarseType,
+  onLabelDisplayChange: noop,
   snapshots: [],
 });
 

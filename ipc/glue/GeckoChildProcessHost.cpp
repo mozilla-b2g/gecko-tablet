@@ -143,7 +143,7 @@ GeckoChildProcessHost::~GeckoChildProcessHost()
 
 //static
 void
-GeckoChildProcessHost::GetPathToBinary(FilePath& exePath, GeckoProcessType processType)
+GeckoChildProcessHost::GetPathToBinary(FilePath& exePath)
 {
   if (ShouldHaveDirectoryService()) {
     MOZ_ASSERT(gGREBinPath);
@@ -155,7 +155,7 @@ GeckoChildProcessHost::GetPathToBinary(FilePath& exePath, GeckoProcessType proce
                     getter_AddRefs(childProcPath));
     // We need to use an App Bundle on OS X so that we can hide
     // the dock icon. See Bug 557225.
-    childProcPath->AppendNative(NS_LITERAL_CSTRING("firefox-webcontent.app"));
+    childProcPath->AppendNative(NS_LITERAL_CSTRING("plugin-container.app"));
     childProcPath->AppendNative(NS_LITERAL_CSTRING("Contents"));
     childProcPath->AppendNative(NS_LITERAL_CSTRING("MacOS"));
     nsCString tempCPath;
@@ -186,13 +186,7 @@ GeckoChildProcessHost::GetPathToBinary(FilePath& exePath, GeckoProcessType proce
 
   exePath = exePath.AppendASCII(processName);
 #else
-#ifdef OS_WIN
-  if (processType == GeckoProcessType_Plugin ||
-      processType == GeckoProcessType_GMPlugin) {
-    exePath = exePath.AppendASCII(MOZ_PLUGIN_PROCESS_NAME);
-  } else
-#endif
-    exePath = exePath.AppendASCII(MOZ_CHILD_PROCESS_NAME);
+  exePath = exePath.AppendASCII(MOZ_CHILD_PROCESS_NAME);
 #endif
 }
 
@@ -269,7 +263,7 @@ uint32_t GeckoChildProcessHost::GetSupportedArchitecturesForProcessType(GeckoPro
     static uint32_t pluginContainerArchs = 0;
     if (pluginContainerArchs == 0) {
       FilePath exePath;
-      GetPathToBinary(exePath, type);
+      GetPathToBinary(exePath);
       nsresult rv = GetArchitecturesForBinary(exePath.value().c_str(), &pluginContainerArchs);
       NS_ASSERTION(NS_SUCCEEDED(rv) && pluginContainerArchs != 0, "Getting architecture of plugin container failed!");
       if (NS_FAILED(rv) || pluginContainerArchs == 0) {
@@ -762,7 +756,7 @@ GeckoChildProcessHost::PerformAsyncLaunchInternal(std::vector<std::string>& aExt
 #endif  // OS_LINUX || OS_MACOSX
 
   FilePath exePath;
-  GetPathToBinary(exePath, mProcessType);
+  GetPathToBinary(exePath);
 
 #ifdef MOZ_WIDGET_ANDROID
   // The java wrapper unpacks this for us but can't make it executable
@@ -941,7 +935,7 @@ GeckoChildProcessHost::PerformAsyncLaunchInternal(std::vector<std::string>& aExt
 #elif defined(OS_WIN)
 
   FilePath exePath;
-  GetPathToBinary(exePath, mProcessType);
+  GetPathToBinary(exePath);
 
   CommandLine cmdLine(exePath.ToWStringHack());
   cmdLine.AppendSwitchWithValue(switches::kProcessChannelID, channel_id());
@@ -1001,7 +995,14 @@ GeckoChildProcessHost::PerformAsyncLaunchInternal(std::vector<std::string>& aExt
       break;
     case GeckoProcessType_GMPlugin:
       if (!PR_GetEnv("MOZ_DISABLE_GMP_SANDBOX")) {
-        mSandboxBroker.SetSecurityLevelForGMPlugin();
+        // The Widevine CDM on Windows can only load at USER_RESTRICTED,
+        // not at USER_LOCKDOWN. So look in the command line arguments
+        // to see if we're loading the path to the Widevine CDM, and if
+        // so use sandbox level USER_RESTRICTED instead of USER_LOCKDOWN.
+        bool isWidevine = std::any_of(aExtraOpts.begin(), aExtraOpts.end(),
+          [](const std::string arg) { return arg.find("gmp-widevinecdm") != std::string::npos; });
+        auto level = isWidevine ? SandboxBroker::Restricted : SandboxBroker::LockDown;
+        mSandboxBroker.SetSecurityLevelForGMPlugin(level);
         cmdLine.AppendLooseValue(UTF8ToWide("-sandbox"));
         shouldSandboxCurrentProcess = true;
       }
@@ -1140,11 +1141,11 @@ GeckoChildProcessHost::OnChannelConnected(int32_t peer_pid)
 }
 
 void
-GeckoChildProcessHost::OnMessageReceived(const IPC::Message& aMsg)
+GeckoChildProcessHost::OnMessageReceived(IPC::Message&& aMsg)
 {
   // We never process messages ourself, just save them up for the next
   // listener.
-  mQueue.push(aMsg);
+  mQueue.push(Move(aMsg));
 }
 
 void

@@ -50,14 +50,6 @@ auto DownloadsIntegration::ScanMedia(mozilla::jni::String::Param a0, mozilla::jn
 template<> const char mozilla::jni::Context<GeckoAppShell, jobject>::name[] =
         "org/mozilla/gecko/GeckoAppShell";
 
-constexpr char GeckoAppShell::AcknowledgeEvent_t::name[];
-constexpr char GeckoAppShell::AcknowledgeEvent_t::signature[];
-
-auto GeckoAppShell::AcknowledgeEvent() -> void
-{
-    return mozilla::jni::Method<AcknowledgeEvent_t>::Call(GeckoAppShell::Context(), nullptr);
-}
-
 constexpr char GeckoAppShell::AddPluginViewWrapper_t::name[];
 constexpr char GeckoAppShell::AddPluginViewWrapper_t::signature[];
 
@@ -685,14 +677,6 @@ auto GeckoAppShell::ShowAlertNotificationWrapper(mozilla::jni::String::Param a0,
     return mozilla::jni::Method<ShowAlertNotificationWrapper_t>::Call(GeckoAppShell::Context(), nullptr, a0, a1, a2, a3, a4, a5);
 }
 
-constexpr char GeckoAppShell::ShowInputMethodPicker_t::name[];
-constexpr char GeckoAppShell::ShowInputMethodPicker_t::signature[];
-
-auto GeckoAppShell::ShowInputMethodPicker() -> void
-{
-    return mozilla::jni::Method<ShowInputMethodPicker_t>::Call(GeckoAppShell::Context(), nullptr);
-}
-
 constexpr char GeckoAppShell::StartMonitoringGamepad_t::name[];
 constexpr char GeckoAppShell::StartMonitoringGamepad_t::signature[];
 
@@ -953,6 +937,12 @@ auto GeckoThread::CheckAndSetState(mozilla::jni::Object::Param a0, mozilla::jni:
     return mozilla::jni::Method<CheckAndSetState_t>::Call(GeckoThread::Context(), nullptr, a0, a1);
 }
 
+constexpr char GeckoThread::OnPause_t::name[];
+constexpr char GeckoThread::OnPause_t::signature[];
+
+constexpr char GeckoThread::OnResume_t::name[];
+constexpr char GeckoThread::OnResume_t::signature[];
+
 constexpr char GeckoThread::PumpMessageLoop_t::name[];
 constexpr char GeckoThread::PumpMessageLoop_t::signature[];
 
@@ -971,6 +961,9 @@ auto GeckoThread::SetState(mozilla::jni::Object::Param a0) -> void
 
 constexpr char GeckoThread::SpeculativeConnect_t::name[];
 constexpr char GeckoThread::SpeculativeConnect_t::signature[];
+
+constexpr char GeckoThread::WaitOnGecko_t::name[];
+constexpr char GeckoThread::WaitOnGecko_t::signature[];
 
 constexpr char GeckoThread::ClsLoader_t::name[];
 constexpr char GeckoThread::ClsLoader_t::signature[];
@@ -1527,6 +1520,9 @@ constexpr char NativePanZoomController::DisposeNative_t::signature[];
 
 constexpr char NativePanZoomController::HandleMotionEvent_t::name[];
 constexpr char NativePanZoomController::HandleMotionEvent_t::signature[];
+
+constexpr char NativePanZoomController::HandleMotionEventVelocity_t::name[];
+constexpr char NativePanZoomController::HandleMotionEventVelocity_t::signature[];
 
 constexpr char NativePanZoomController::HandleMouseEvent_t::name[];
 constexpr char NativePanZoomController::HandleMouseEvent_t::signature[];

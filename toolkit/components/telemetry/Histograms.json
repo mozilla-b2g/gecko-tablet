@@ -526,6 +526,20 @@
     "kind": "boolean",
     "description": "Geolocation on OS X is either MLS or CoreLocation"
   },
+  "GEOLOCATION_GETCURRENTPOSITION_VISIBLE": {
+    "alert_emails": ["michelangelo@mozilla.com"],
+    "expires_in_version": "55",
+    "kind": "boolean",
+    "bug_numbers": [1255198],
+    "description": "This metric is recorded every time a navigator.geolocation.getCurrentPosition() request gets allowed/fulfilled. A false value is recorded if the owner is not visible according to document.isVisible."
+  },
+  "GEOLOCATION_WATCHPOSITION_VISIBLE": {
+    "alert_emails": ["michelangelo@mozilla.com"],
+    "expires_in_version": "55",
+    "kind": "boolean",
+    "bug_numbers": [1255198],
+    "description": "This metric is recorded every time a navigator.geolocation.watchPosition() request gets allowed/fulfilled. A false value is recorded if the owner is not visible according to document.isVisible."
+  },
   "JS_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT": {
     "alert_emails": ["jdemooij@mozilla.com"],
     "expires_in_version": "never",
@@ -616,15 +630,6 @@
     "high": 1000,
     "n_buckets": 50,
     "description": "Total JavaScript compartments used for web pages"
-  },
-  "MEMORY_JS_MAIN_RUNTIME_TEMPORARY_PEAK": {
-    "alert_emails": ["memshrink-telemetry-alerts@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "low": 1024,
-    "high": 16777216,
-    "n_buckets": 200,
-    "description": "Peak memory used by the main JSRuntime to store transient data (KB)"
   },
   "MEMORY_JS_GC_HEAP": {
     "alert_emails": ["memshrink-telemetry-alerts@mozilla.com"],
@@ -1466,6 +1471,14 @@
     "kind": "enumerated",
     "n_values": 48,
     "description": "HTTP: Protocol Version Used on Response from nsHttp.h"
+  },
+  "HTTP_09_INFO": {
+    "expires_in_version": "never",
+    "kind": "enumerated",
+    "n_values": 4,
+    "description": "HTTP 09 Response Breakdown: lowbit subresource, high bit nonstd port",
+    "bug_numbers": [1262572],
+    "alert_emails": ["necko@mozilla.com"]
   },
   "SPDY_PARALLEL_STREAMS": {
     "expires_in_version": "never",
@@ -3355,6 +3368,13 @@
     "n_values": 16,
     "bug_numbers": [1150921],
     "description": "Server HTTP status code from remote SafeBrowsing gethash lookups. (0=1xx, 1=200, 2=2xx, 3=204, 4=3xx, 5=400, 6=4xx, 7=403, 8=404, 9=408, 10=413, 11=5xx, 12=502|504|511, 13=503, 14=505, 15=Other)"
+  },
+  "URLCLASSIFIER_COMPLETE_TIMEOUT": {
+    "alert_emails": ["gcp@mozilla.com", "francois@mozilla.com"],
+    "expires_in_version": "52",
+    "kind": "boolean",
+    "bug_numbers": [1172688],
+    "description": "This metric is recorded every time a gethash lookup is performed, `true` is recorded if the lookup times out."
   },
   "CSP_DOCUMENTS_COUNT": {
     "alert_emails": ["seceng@mozilla.com"],
@@ -7759,6 +7779,14 @@
     "n_buckets": 20,
     "description": "The amount of time spent in a specific performance tool view, keyed by view name (waterfall, js-calltree, js-flamegraph, etc)."
   },
+  "DEVTOOLS_JAVASCRIPT_ERROR_DISPLAYED": {
+    "alert_emails": ["mphillips@mozilla.com"],
+    "bug_numbers": [1255133],
+    "expires_in_version": "55",
+    "kind": "boolean",
+    "keyed": true,
+    "description": "Measures whether a particular JavaScript error has been displayed in the webconsole."
+  },
   "VIEW_SOURCE_IN_BROWSER_OPENED_BOOLEAN": {
     "alert_emails": ["mozilla-dev-developer-tools@lists.mozilla.org", "jryans@mozilla.com"],
     "expires_in_version": "53",
@@ -10465,5 +10493,12 @@
     "n_buckets": 50,
     "keyed": true,
     "description": "Measures the size of message manager messages by message name"
+  },
+  "SANDBOX_BROKER_INITIALIZED": {
+    "alert_emails": ["bowen@mozilla.com"],
+    "bug_numbers": [1256992],
+    "expires_in_version": "55",
+    "kind": "boolean",
+    "description": "Result of call to SandboxBroker::Initialize"
   }
 }

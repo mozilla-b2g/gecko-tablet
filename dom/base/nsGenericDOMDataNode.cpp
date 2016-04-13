@@ -64,7 +64,7 @@ nsGenericDOMDataNode::nsGenericDOMDataNode(already_AddRefed<mozilla::dom::NodeIn
 
 nsGenericDOMDataNode::~nsGenericDOMDataNode()
 {
-  NS_PRECONDITION(!IsInDoc(),
+  NS_PRECONDITION(!IsInUncomposedDoc(),
                   "Please remove this from the document properly");
   if (GetParent()) {
     NS_RELEASE(mParent);
@@ -470,7 +470,7 @@ nsGenericDOMDataNode::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                   "Must have the same owner document");
   NS_PRECONDITION(!aParent || aDocument == aParent->GetUncomposedDoc(),
                   "aDocument must be current doc of aParent");
-  NS_PRECONDITION(!GetUncomposedDoc() && !IsInDoc(),
+  NS_PRECONDITION(!GetUncomposedDoc() && !IsInUncomposedDoc(),
                   "Already have a document.  Unbind first!");
   // Note that as we recurse into the kids, they'll have a non-null parent.  So
   // only assert if our parent is _changing_ while we have a parent.
@@ -794,14 +794,6 @@ nsGenericDOMDataNode::IsNodeOfType(uint32_t aFlags) const
 void
 nsGenericDOMDataNode::SaveSubtreeState()
 {
-}
-
-void
-nsGenericDOMDataNode::DestroyContent()
-{
-  // XXX We really should let cycle collection do this, but that currently still
-  //     leaks (see https://bugzilla.mozilla.org/show_bug.cgi?id=406684).
-  ReleaseWrapper(this);
 }
 
 #ifdef DEBUG

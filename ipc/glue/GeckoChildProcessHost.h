@@ -82,7 +82,7 @@ public:
                                   base::ProcessArchitecture aArch=base::GetCurrentProcessArchitecture());
 
   virtual void OnChannelConnected(int32_t peer_pid);
-  virtual void OnMessageReceived(const IPC::Message& aMsg);
+  virtual void OnMessageReceived(IPC::Message&& aMsg);
   virtual void OnChannelError();
   virtual void GetQueuedMessages(std::queue<IPC::Message>& queue);
 
@@ -189,7 +189,7 @@ private:
   bool RunPerformAsyncLaunch(StringVector aExtraOpts=StringVector(),
 			     base::ProcessArchitecture aArch=base::GetCurrentProcessArchitecture());
 
-  static void GetPathToBinary(FilePath& exePath, GeckoProcessType processType);
+  static void GetPathToBinary(FilePath& exePath);
 
   void SetChildLogName(const char* varName, const char* origLogName);
 

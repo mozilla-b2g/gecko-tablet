@@ -14,6 +14,10 @@ function run_test() {
   run_next_test();
 }
 
+// This tests taking a census on a snapshot that is still being read, which
+// triggers an assertion failure.
+EXPECTED_DTU_ASSERT_FAILURE_COUNT = 1;
+
 add_task(function *() {
   let front = new StubbedMemoryFront();
   let heapWorker = new HeapAnalysesClient();
@@ -31,9 +35,11 @@ add_task(function *() {
   let snapshot = store.getState().snapshots[0];
   equal(snapshot.census, null, "No census data exists yet on the snapshot.");
 
-  // Test error case of wrong state
+  // Test error case of wrong state.
   store.dispatch(actions.takeCensus(heapWorker, snapshot.id));
   yield waitUntilState(store, () => store.getState().errors.length === 1);
+
+  dumpn("Found error: " + store.getState().errors[0]);
   ok(/Assertion failure/.test(store.getState().errors[0]),
     "Error thrown when taking a census of a snapshot that has not been read.");
 

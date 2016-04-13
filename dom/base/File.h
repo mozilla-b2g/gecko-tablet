@@ -695,17 +695,6 @@ public:
     }
   }
 
-  // Create as a file to be later initialized
-  BlobImplFile()
-    : BlobImplBase(EmptyString(), EmptyString(), UINT64_MAX, INT64_MAX)
-    , mWholeFile(true)
-    , mIsTemporary(false)
-  {
-    // Lazily get the content type and size
-    mContentType.SetIsVoid(true);
-    mName.SetIsVoid(true);
-  }
-
   // Overrides
   virtual uint64_t GetSize(ErrorResult& aRv) override;
   virtual void GetType(nsAString& aType) override;
@@ -765,7 +754,17 @@ public:
 
   explicit EmptyBlobImpl(const nsAString& aContentType)
     : BlobImplBase(aContentType, 0 /* aLength */)
-  {}
+  {
+    mImmutable = true;
+  }
+
+  EmptyBlobImpl(const nsAString& aName,
+                const nsAString& aContentType,
+                int64_t aLastModifiedDate)
+    : BlobImplBase(aName, aContentType, 0, aLastModifiedDate)
+  {
+    mImmutable = true;
+  }
 
   virtual void GetInternalStream(nsIInputStream** aStream,
                                  ErrorResult& aRv) override;

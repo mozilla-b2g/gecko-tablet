@@ -96,6 +96,11 @@ const Class ArrayBufferObject::protoClass = {
     JSCLASS_HAS_CACHED_PROTO(JSProto_ArrayBuffer)
 };
 
+static const ClassExtension ArrayBufferObjectClassExtension = {
+    nullptr,    /* weakmapKeyDelegateOp */
+    ArrayBufferObject::objectMoved
+};
+
 const Class ArrayBufferObject::class_ = {
     "ArrayBuffer",
     JSCLASS_DELAY_METADATA_BUILDER |
@@ -115,11 +120,7 @@ const Class ArrayBufferObject::class_ = {
     nullptr,        /* construct   */
     ArrayBufferObject::trace,
     JS_NULL_CLASS_SPEC,
-    {
-        false,      /* isWrappedNative */
-        nullptr,    /* weakmapKeyDelegateOp */
-        ArrayBufferObject::objectMoved
-    }
+    &ArrayBufferObjectClassExtension
 };
 
 const JSFunctionSpec ArrayBufferObject::jsfuncs[] = {
@@ -131,6 +132,11 @@ const JSFunctionSpec ArrayBufferObject::jsstaticfuncs[] = {
     JS_FN("isView", ArrayBufferObject::fun_isView, 1, 0),
     JS_SELF_HOSTED_FN("slice", "ArrayBufferStaticSlice", 3,0),
     JS_FS_END
+};
+
+const JSPropertySpec ArrayBufferObject::jsstaticprops[] = {
+    JS_SELF_HOSTED_SYM_GET(species, "ArrayBufferSpecies", 0),
+    JS_PS_END
 };
 
 bool
@@ -1442,6 +1448,9 @@ js::InitArrayBufferClass(JSContext* cx, HandleObject obj)
         return nullptr;
 
     if (!JS_DefineFunctions(cx, ctor, ArrayBufferObject::jsstaticfuncs))
+        return nullptr;
+
+    if (!JS_DefineProperties(cx, ctor, ArrayBufferObject::jsstaticprops))
         return nullptr;
 
     if (!JS_DefineFunctions(cx, arrayBufferProto, ArrayBufferObject::jsfuncs))

@@ -238,7 +238,7 @@ MSG_DEF(JSMSG_DEPRECATED_DELETE_OPERAND, 0, JSEXN_SYNTAXERR, "applying the 'dele
 MSG_DEF(JSMSG_DEPRECATED_EXPR_CLOSURE, 0, JSEXN_NONE, "expression closures are deprecated")
 MSG_DEF(JSMSG_DEPRECATED_FLAGS_ARG,    0, JSEXN_NONE, "flags argument of String.prototype.{search,match,replace} is deprecated")
 MSG_DEF(JSMSG_DEPRECATED_FOR_EACH,     0, JSEXN_NONE, "JavaScript 1.6's for-each-in loops are deprecated; consider using ES6 for-of instead")
-MSG_DEF(JSMSG_DEPRECATED_OCTAL,        0, JSEXN_SYNTAXERR, "octal literals and octal escape sequences are deprecated")
+MSG_DEF(JSMSG_DEPRECATED_OCTAL,        0, JSEXN_SYNTAXERR, "\"0\"-prefixed octal literals and octal escape sequences are deprecated; for octal literals use the \"0o\" prefix instead")
 MSG_DEF(JSMSG_DEPRECATED_PRAGMA,       1, JSEXN_NONE, "Using //@ to indicate {0} pragmas is deprecated. Use //# instead")
 MSG_DEF(JSMSG_DEPRECATED_BLOCK_SCOPE_FUN_REDECL, 1, JSEXN_NONE, "redeclaration of block-scoped function `{0}' is deprecated")
 MSG_DEF(JSMSG_DUPLICATE_EXPORT_NAME,   1, JSEXN_SYNTAXERR, "duplicate export name '{0}'")
@@ -444,6 +444,7 @@ MSG_DEF(JSMSG_UNDEFINED_CURRENCY,      0, JSEXN_TYPEERR, "undefined currency in 
 MSG_DEF(JSMSG_BACK_REF_OUT_OF_RANGE,   0, JSEXN_SYNTAXERR, "back reference out of range in regular expression")
 MSG_DEF(JSMSG_BAD_CLASS_RANGE,         0, JSEXN_SYNTAXERR, "invalid range in character class")
 MSG_DEF(JSMSG_ESCAPE_AT_END_OF_REGEXP, 0, JSEXN_SYNTAXERR, "\\ at end of pattern")
+MSG_DEF(JSMSG_EXEC_NOT_OBJORNULL,      0, JSEXN_TYPEERR, "RegExp exec method should return object or null")
 MSG_DEF(JSMSG_INVALID_DECIMAL_ESCAPE, 0, JSEXN_SYNTAXERR, "invalid decimal escape in regular expression")
 MSG_DEF(JSMSG_INVALID_GROUP,           0, JSEXN_SYNTAXERR, "invalid regexp group")
 MSG_DEF(JSMSG_INVALID_IDENTITY_ESCAPE, 0, JSEXN_SYNTAXERR, "invalid identity escape in regular expression")
@@ -473,6 +474,9 @@ MSG_DEF(JSMSG_TYPEDOBJECT_STRUCTTYPE_BAD_ARGS, 0, JSEXN_RANGEERR, "invalid field
 MSG_DEF(JSMSG_TYPEDOBJECT_TOO_BIG,     0, JSEXN_ERR, "Type is too large to allocate")
 MSG_DEF(JSMSG_SIMD_FAILED_CONVERSION,  0, JSEXN_RANGEERR, "SIMD conversion loses precision")
 MSG_DEF(JSMSG_SIMD_TO_NUMBER,          0, JSEXN_TYPEERR, "can't convert SIMD value to number")
+
+// Array
+MSG_DEF(JSMSG_TOO_LONG_ARRAY,         0, JSEXN_TYPEERR, "Too long array")
 
 // Typed array
 MSG_DEF(JSMSG_BAD_INDEX,               0, JSEXN_RANGEERR, "invalid or out-of-range index")

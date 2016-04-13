@@ -35,6 +35,7 @@
 #include <android/log.h>
 #endif
 
+#include "Crypto.h"
 #include "Principal.h"
 #include "RuntimeService.h"
 #include "ScriptLoader.h"
@@ -76,6 +77,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(WorkerGlobalScope,
                                                   DOMEventTargetHelper)
   tmp->mWorkerPrivate->AssertIsOnWorkerThread();
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mConsole)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCrypto)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPerformance)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLocation)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNavigator)
@@ -88,6 +90,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(WorkerGlobalScope,
                                                 DOMEventTargetHelper)
   tmp->mWorkerPrivate->AssertIsOnWorkerThread();
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mConsole)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCrypto)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPerformance)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mLocation)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mNavigator)
@@ -130,6 +133,19 @@ WorkerGlobalScope::GetConsole(ErrorResult& aRv)
   }
 
   return mConsole;
+}
+
+Crypto*
+WorkerGlobalScope::GetCrypto(ErrorResult& aError)
+{
+  mWorkerPrivate->AssertIsOnWorkerThread();
+
+  if (!mCrypto) {
+    mCrypto = new Crypto();
+    mCrypto->Init(this);
+  }
+
+  return mCrypto;
 }
 
 already_AddRefed<CacheStorage>
@@ -237,7 +253,7 @@ WorkerGlobalScope::SetTimeout(JSContext* aCx,
 }
 
 int32_t
-WorkerGlobalScope::SetTimeout(JSContext* /* unused */,
+WorkerGlobalScope::SetTimeout(JSContext* aCx,
                               const nsAString& aHandler,
                               const int32_t aTimeout,
                               const Sequence<JS::Value>& /* unused */,
@@ -245,8 +261,8 @@ WorkerGlobalScope::SetTimeout(JSContext* /* unused */,
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
   Sequence<JS::Value> dummy;
-  return mWorkerPrivate->SetTimeout(GetCurrentThreadJSContext(), nullptr,
-                                    aHandler, aTimeout, dummy, false, aRv);
+  return mWorkerPrivate->SetTimeout(aCx, nullptr, aHandler, aTimeout, dummy,
+                                    false, aRv);
 }
 
 void
@@ -273,7 +289,7 @@ WorkerGlobalScope::SetInterval(JSContext* aCx,
 }
 
 int32_t
-WorkerGlobalScope::SetInterval(JSContext* /* unused */,
+WorkerGlobalScope::SetInterval(JSContext* aCx,
                                const nsAString& aHandler,
                                const Optional<int32_t>& aTimeout,
                                const Sequence<JS::Value>& /* unused */,
@@ -286,8 +302,8 @@ WorkerGlobalScope::SetInterval(JSContext* /* unused */,
   bool isInterval = aTimeout.WasPassed();
   int32_t timeout = aTimeout.WasPassed() ? aTimeout.Value() : 0;
 
-  return mWorkerPrivate->SetTimeout(GetCurrentThreadJSContext(), nullptr,
-                                    aHandler, timeout, dummy, isInterval, aRv);
+  return mWorkerPrivate->SetTimeout(aCx, nullptr, aHandler, timeout, dummy,
+                                    isInterval, aRv);
 }
 
 void
@@ -711,7 +727,6 @@ WorkerDebuggerGlobalScope::GetGlobal(JSContext* aCx,
   aGlobal.set(scope->GetWrapper());
 }
 
-
 void
 WorkerDebuggerGlobalScope::CreateSandbox(JSContext* aCx, const nsAString& aName,
                                          JS::Handle<JSObject*> aPrototype,
@@ -862,26 +877,6 @@ WorkerDebuggerGlobalScope::Dump(JSContext* aCx,
   if (scope) {
     scope->Dump(aString);
   }
-}
-
-nsIGlobalObject*
-GetGlobalObjectForGlobal(JSObject* global)
-{
-  nsIGlobalObject* globalObject = nullptr;
-  UNWRAP_WORKER_OBJECT(WorkerGlobalScope, global, globalObject);
-
-  if (!globalObject) {
-    UNWRAP_OBJECT(WorkerDebuggerGlobalScope, global, globalObject);
-
-    if (!globalObject) {
-      MOZ_ASSERT(IsDebuggerSandbox(global));
-      globalObject = static_cast<SimpleGlobalObject*>(JS_GetPrivate(global));
-
-      MOZ_ASSERT(globalObject);
-    }
-  }
-
-  return globalObject;
 }
 
 bool

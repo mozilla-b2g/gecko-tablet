@@ -1804,7 +1804,7 @@ nsFrameLoader::ShouldUseRemoteProcess()
   // Don't try to launch nested children if we don't have OMTC.
   // They won't render!
   if (XRE_IsContentProcess() &&
-      !CompositorBridgeChild::ChildProcessHasCompositor()) {
+      !CompositorBridgeChild::ChildProcessHasCompositorBridge()) {
     return false;
   }
 
@@ -2626,8 +2626,8 @@ nsFrameLoader::DoSendAsyncMessage(JSContext* aCx,
     if (aCpows && (!mgr || !mgr->Wrap(aCx, aCpows, &cpows))) {
       return NS_ERROR_UNEXPECTED;
     }
-    if (tabParent->SendAsyncMessage(nsString(aMessage), data, cpows,
-                                    IPC::Principal(aPrincipal))) {
+    if (tabParent->SendAsyncMessage(nsString(aMessage), cpows,
+                                    IPC::Principal(aPrincipal), data)) {
       return NS_OK;
     } else {
       return NS_ERROR_UNEXPECTED;

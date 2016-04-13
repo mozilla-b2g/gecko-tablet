@@ -255,9 +255,7 @@
 
 #include "nsISpeculativeConnect.h"
 
-#ifdef MOZ_MEDIA_NAVIGATOR
 #include "mozilla/MediaManager.h"
-#endif // MOZ_MEDIA_NAVIGATOR
 #ifdef MOZ_WEBRTC
 #include "IPeerConnection.h"
 #endif // MOZ_WEBRTC
@@ -7796,7 +7794,7 @@ nsIDocument::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv)
         MOZ_ASSERT(idx >= 0);
         parent->RemoveChildAt(idx, true);
       } else {
-        MOZ_ASSERT(!adoptedNode->IsInDoc());
+        MOZ_ASSERT(!adoptedNode->IsInUncomposedDoc());
 
         // If we're adopting a node that's not in a document, it might still
         // have a binding applied. Remove the binding from the element now
@@ -8841,13 +8839,11 @@ nsDocument::CanSavePresentation(nsIRequest *aNewRequest)
     }
   }
 
-#ifdef MOZ_MEDIA_NAVIGATOR
   // Check if we have active GetUserMedia use
   if (MediaManager::Exists() && win &&
       MediaManager::Get()->IsWindowStillActive(win->WindowID())) {
     return false;
   }
-#endif // MOZ_MEDIA_NAVIGATOR
 
 #ifdef MOZ_WEBRTC
   // Check if we have active PeerConnections
@@ -8930,10 +8926,6 @@ nsDocument::Destroy()
   mExternalResourceMap.Shutdown();
 
   mRegistry = nullptr;
-
-  // XXX We really should let cycle collection do this, but that currently still
-  //     leaks (see https://bugzilla.mozilla.org/show_bug.cgi?id=406684).
-  ReleaseWrapper(static_cast<nsINode*>(this));
 }
 
 void
@@ -9831,6 +9823,7 @@ nsDocument::MaybePreLoadImage(nsIURI* uri, const nsAString &aCrossOriginAttr,
   RefPtr<imgRequestProxy> request;
   nsresult rv =
     nsContentUtils::LoadImage(uri,
+                              static_cast<nsINode*>(this),
                               this,
                               NodePrincipal(),
                               mDocumentURI, // uri of document used as referrer
@@ -11549,7 +11542,7 @@ nsDocument::FullScreenStackPop()
   // no longer in this document.
   while (!mFullScreenStack.IsEmpty()) {
     Element* element = FullScreenStackTop();
-    if (!element || !element->IsInDoc() || element->OwnerDoc() != this) {
+    if (!element || !element->IsInUncomposedDoc() || element->OwnerDoc() != this) {
       NS_ASSERTION(!element->IsFullScreenAncestor(),
                    "Should have already removed full-screen styles");
       uint32_t last = mFullScreenStack.Length() - 1;
@@ -11572,7 +11565,7 @@ nsDocument::FullScreenStackTop()
   uint32_t last = mFullScreenStack.Length() - 1;
   nsCOMPtr<Element> element(do_QueryReferent(mFullScreenStack[last]));
   NS_ASSERTION(element, "Should have full-screen element!");
-  NS_ASSERTION(element->IsInDoc(), "Full-screen element should be in doc");
+  NS_ASSERTION(element->IsInUncomposedDoc(), "Full-screen element should be in doc");
   NS_ASSERTION(element->OwnerDoc() == this, "Full-screen element should be in this doc");
   return element;
 }
@@ -11708,7 +11701,7 @@ nsDocument::FullscreenElementReadyCheck(Element* aElement,
   if (!aElement || aElement == GetFullscreenElement()) {
     return false;
   }
-  if (!aElement->IsInDoc()) {
+  if (!aElement->IsInUncomposedDoc()) {
     DispatchFullscreenError("FullscreenDeniedNotInDocument");
     return false;
   }
@@ -12526,7 +12519,7 @@ nsDocument::ShouldLockPointer(Element* aElement, Element* aCurrentLock,
     return false;
   }
 
-  if (!aElement->IsInDoc()) {
+  if (!aElement->IsInUncomposedDoc()) {
     NS_WARNING("ShouldLockPointer(): Element without Document");
     return false;
   }
@@ -12573,49 +12566,37 @@ nsDocument::ShouldLockPointer(Element* aElement, Element* aCurrentLock,
 bool
 nsDocument::SetPointerLock(Element* aElement, int aCursorStyle)
 {
-  // NOTE: aElement will be nullptr when unlocking.
-  nsCOMPtr<nsPIDOMWindowOuter> window = GetWindow();
-  if (!window) {
-    NS_WARNING("SetPointerLock(): No Window");
-    return false;
+  MOZ_ASSERT(!aElement || aElement->OwnerDoc() == this,
+             "We should be either unlocking pointer (aElement is nullptr), "
+             "or locking pointer to an element in this document");
+#ifdef DEBUG
+  if (!aElement) {
+    nsCOMPtr<nsIDocument> pointerLockedDoc =
+      do_QueryReferent(EventStateManager::sPointerLockedDoc);
+    MOZ_ASSERT(pointerLockedDoc == this);
   }
+#endif
 
-  nsIDocShell *docShell = window->GetDocShell();
-  if (!docShell) {
-    NS_WARNING("SetPointerLock(): No DocShell (window already closed?)");
-    return false;
-  }
-
-  RefPtr<nsPresContext> presContext;
-  docShell->GetPresContext(getter_AddRefs(presContext));
-  if (!presContext) {
-    NS_WARNING("SetPointerLock(): Unable to get presContext in \
-                domWindow->GetDocShell()->GetPresContext()");
-    return false;
-  }
-
-  nsCOMPtr<nsIPresShell> shell = presContext->PresShell();
+  nsIPresShell* shell = GetShell();
   if (!shell) {
-    NS_WARNING("SetPointerLock(): Unable to find presContext->PresShell()");
+    NS_WARNING("SetPointerLock(): No PresShell");
+    return false;
+  }
+  nsPresContext* presContext = shell->GetPresContext();
+  if (!presContext) {
+    NS_WARNING("SetPointerLock(): Unable to get PresContext");
     return false;
   }
 
+  nsCOMPtr<nsIWidget> widget;
   nsIFrame* rootFrame = shell->GetRootFrame();
-  if (!rootFrame) {
-    NS_WARNING("SetPointerLock(): Unable to get root frame");
-    return false;
-  }
-
-  nsCOMPtr<nsIWidget> widget = rootFrame->GetNearestWidget();
-  if (!widget) {
-    NS_WARNING("SetPointerLock(): Unable to find widget in \
-                shell->GetRootFrame()->GetNearestWidget();");
-    return false;
-  }
-
-  if (aElement && (aElement->OwnerDoc() != this)) {
-    NS_WARNING("SetPointerLock(): Element not in this document.");
-    return false;
+  if (!NS_WARN_IF(!rootFrame)) {
+    widget = rootFrame->GetNearestWidget();
+    NS_WARN_IF_FALSE(widget, "SetPointerLock(): Unable to find widget "
+                     "in shell->GetRootFrame()->GetNearestWidget();");
+    if (aElement && !widget) {
+      return false;
+    }
   }
 
   // Hide the cursor and set pointer lock for future mouse events

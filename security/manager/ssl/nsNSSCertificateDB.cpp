@@ -2,11 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// XXX: This must be done prior to including cert.h (directly or indirectly).
-// CERT_AddTempCertToPerm is exposed as __CERT_AddTempCertToPerm, but it is
-// only exported so PSM can use it for this specific purpose.
-#define CERT_AddTempCertToPerm __CERT_AddTempCertToPerm
-
 #include "nsNSSCertificateDB.h"
 
 #include "CertVerifier.h"
@@ -1282,19 +1277,15 @@ nsNSSCertificateDB::get_default_nickname(CERTCertificate *cert,
     return;
 
   nsAutoCString username;
-  char *temp_un = CERT_GetCommonName(&cert->subject);
-  if (temp_un) {
-    username = temp_un;
-    PORT_Free(temp_un);
-    temp_un = nullptr;
+  UniquePORTString tempCN(CERT_GetCommonName(&cert->subject));
+  if (tempCN) {
+    username = tempCN.get();
   }
 
   nsAutoCString caname;
-  char *temp_ca = CERT_GetOrgName(&cert->issuer);
-  if (temp_ca) {
-    caname = temp_ca;
-    PORT_Free(temp_ca);
-    temp_ca = nullptr;
+  UniquePORTString tempIssuerOrg(CERT_GetOrgName(&cert->issuer));
+  if (tempIssuerOrg) {
+    caname = tempIssuerOrg.get();
   }
 
   nsAutoString tmpNickFmt;

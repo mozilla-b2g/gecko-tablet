@@ -6166,7 +6166,7 @@ nsLayoutUtils::GetGraphicsFilterForFrame(nsIFrame* aForFrame)
     sc = aForFrame->StyleContext();
   }
 
-  switch (sc->StyleSVG()->mImageRendering) {
+  switch (sc->StyleVisibility()->mImageRendering) {
   case NS_STYLE_IMAGE_RENDERING_OPTIMIZESPEED:
     return Filter::POINT;
   case NS_STYLE_IMAGE_RENDERING_OPTIMIZEQUALITY:
@@ -6869,7 +6869,7 @@ nsLayoutUtils::HasNonZeroCornerOnSide(const nsStyleCorners& aCorners,
 /* static */ nsTransparencyMode
 nsLayoutUtils::GetFrameTransparency(nsIFrame* aBackgroundFrame,
                                     nsIFrame* aCSSRootFrame) {
-  if (aCSSRootFrame->StyleDisplay()->mOpacity < 1.0f)
+  if (aCSSRootFrame->StyleEffects()->mOpacity < 1.0f)
     return eTransparencyTransparent;
 
   if (HasNonZeroCorner(aCSSRootFrame->StyleBorder()->mBorderRadius))
@@ -6979,7 +6979,7 @@ nsLayoutUtils::GetTextRunFlagsForStyle(nsStyleContext* aStyleContext,
   if (aStyleText->mControlCharacterVisibility == NS_STYLE_CONTROL_CHARACTER_VISIBILITY_HIDDEN) {
     result |= gfxTextRunFactory::TEXT_HIDE_CONTROL_CHARACTERS;
   }
-  switch (aStyleContext->StyleSVG()->mTextRendering) {
+  switch (aStyleContext->StyleText()->mTextRendering) {
   case NS_STYLE_TEXT_RENDERING_OPTIMIZESPEED:
     result |= gfxTextRunFactory::TEXT_OPTIMIZE_SPEED;
     break;
@@ -7314,7 +7314,7 @@ nsLayoutUtils::SurfaceFromElement(HTMLVideoElement* aElement,
   }
 
   // If it doesn't have a principal, just bail
-  nsCOMPtr<nsIPrincipal> principal = aElement->GetCurrentPrincipal();
+  nsCOMPtr<nsIPrincipal> principal = aElement->GetCurrentVideoPrincipal();
   if (!principal)
     return result;
 
@@ -7661,6 +7661,9 @@ nsLayoutUtils::Shutdown()
   Preferences::UnregisterCallback(WebkitPrefixEnabledPrefChangeCallback,
                                   WEBKIT_PREFIXES_ENABLED_PREF_NAME);
   nsComputedDOMStyle::UnregisterPrefChangeCallbacks();
+
+  // so the cached initial quotes array doesn't appear to be a leak
+  nsStyleList::Shutdown();
 }
 
 /* static */
@@ -8038,7 +8041,7 @@ nsLayoutUtils::FontSizeInflationEnabled(nsPresContext *aPresContext)
 nsLayoutUtils::GetBoxShadowRectForFrame(nsIFrame* aFrame,
                                         const nsSize& aFrameSize)
 {
-  nsCSSShadowArray* boxShadows = aFrame->StyleBorder()->mBoxShadow;
+  nsCSSShadowArray* boxShadows = aFrame->StyleEffects()->mBoxShadow;
   if (!boxShadows) {
     return nsRect();
   }
@@ -8966,16 +8969,6 @@ nsLayoutUtils::GetSelectionBoundingRect(Selection* aSel)
   }
 
   return res;
-}
-
-/* static */ bool
-nsLayoutUtils::IsScrollFrameWithSnapping(nsIFrame* aFrame)
-{
-  nsIScrollableFrame* sf = do_QueryFrame(aFrame);
-  if (!sf) {
-    return false;
-  }
-  return sf->IsScrollFrameWithSnapping();
 }
 
 /* static */ nsBlockFrame*

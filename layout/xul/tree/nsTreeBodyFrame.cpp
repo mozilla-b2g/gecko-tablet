@@ -2191,6 +2191,7 @@ nsTreeBodyFrame::GetImage(int32_t aRowIndex, nsTreeColumn* aCol, bool aUseContex
       if (nsContentUtils::CanLoadImage(srcURI, mContent, doc,
                                        mContent->NodePrincipal())) {
         nsresult rv = nsContentUtils::LoadImage(srcURI,
+                                                mContent,
                                                 doc,
                                                 mContent->NodePrincipal(),
                                                 doc->GetDocumentURI(),
@@ -3516,7 +3517,7 @@ nsTreeBodyFrame::PaintImage(int32_t              aRowIndex,
   nsStyleContext* imageContext = GetPseudoStyleContext(nsCSSAnonBoxes::moztreeimage);
 
   // Obtain opacity value for the image.
-  float opacity = imageContext->StyleDisplay()->mOpacity;
+  float opacity = imageContext->StyleEffects()->mOpacity;
 
   // Obtain the margins for the image and then deflate our rect by that
   // amount.  The image is assumed to be contained within the deflated rect.
@@ -3714,7 +3715,7 @@ nsTreeBodyFrame::PaintText(int32_t              aRowIndex,
   nsStyleContext* textContext = GetPseudoStyleContext(nsCSSAnonBoxes::moztreecelltext);
 
   // Obtain opacity value for the image.
-  float opacity = textContext->StyleDisplay()->mOpacity;
+  float opacity = textContext->StyleEffects()->mOpacity;
 
   // Obtain the margins for the text and then deflate our rect by that 
   // amount.  The text is assumed to be contained within the deflated rect.

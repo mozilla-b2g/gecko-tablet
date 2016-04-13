@@ -26,6 +26,13 @@ var Store = require("devtools/client/memory/store");
 var { L10N } = require("devtools/client/memory/utils");
 var SYSTEM_PRINCIPAL = Cc["@mozilla.org/systemprincipal;1"].createInstance(Ci.nsIPrincipal);
 
+var EXPECTED_DTU_ASSERT_FAILURE_COUNT = 0;
+
+do_register_cleanup(function() {
+  equal(DevToolsUtils.assertionFailureCount, EXPECTED_DTU_ASSERT_FAILURE_COUNT,
+        "Should have had the expected number of DevToolsUtils.assert() failures.");
+});
+
 function dumpn(msg) {
   dump(`MEMORY-TEST: ${msg}\n`);
 }
@@ -71,6 +78,23 @@ function waitUntilSnapshotState (store, expected) {
   };
   do_print(`Waiting for snapshots to be of state: ${expected}`);
   return waitUntilState(store, predicate);
+}
+
+function findReportLeafIndex(node, name = null) {
+  if (node.reportLeafIndex && (!name || node.name === name)) {
+    return node.reportLeafIndex;
+  }
+
+  if (node.children) {
+    for (let child of node.children) {
+      const found = findReportLeafIndex(child);
+      if (found) {
+        return found;
+      }
+    }
+  }
+
+  return null;
 }
 
 function waitUntilCensusState (store, getCensus, expected) {

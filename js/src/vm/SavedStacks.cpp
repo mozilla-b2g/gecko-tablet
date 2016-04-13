@@ -930,6 +930,19 @@ BuildStackString(JSContext* cx, HandleObject stack, MutableHandleString stringp,
     return true;
 }
 
+JS_PUBLIC_API(bool)
+IsSavedFrame(JSObject* obj)
+{
+    if (!obj)
+        return false;
+
+    JSObject* unwrapped = CheckedUnwrap(obj);
+    if (!unwrapped)
+        return false;
+
+    return js::SavedFrame::isSavedFrameAndNotProto(*unwrapped);
+}
+
 } /* namespace JS */
 
 namespace js {
@@ -1056,6 +1069,7 @@ SavedStacks::saveCurrentStack(JSContext* cx, MutableHandleSavedFrame frame, unsi
 
     if (creatingSavedFrame ||
         cx->isExceptionPending() ||
+        !cx->global() ||
         !cx->global()->isStandardClassResolved(JSProto_Object))
     {
         frame.set(nullptr);

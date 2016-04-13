@@ -18,10 +18,10 @@
 #include "mozilla/ipc/StreamSocket.h"
 #include "mozilla/ipc/StreamSocketConsumer.h"
 #include "mozilla/ModuleUtils.h"
+#include "mozilla/UniquePtr.h"
 #include "mozilla/unused.h"
 #include "NfcMessageHandler.h"
 #include "NfcOptions.h"
-#include "nsAutoPtr.h"
 #include "nsString.h"
 #include "nsXULAppAPI.h"
 
@@ -65,7 +65,7 @@ public:
   //
 
   void ReceiveSocketData(
-    int aIndex, nsAutoPtr<mozilla::ipc::UnixSocketBuffer>& aBuffer) override;
+    int aIndex, UniquePtr<mozilla::ipc::UnixSocketBuffer>& aBuffer) override;
 
   void OnConnectSuccess(int aIndex) override;
   void OnConnectError(int aIndex) override;
@@ -86,7 +86,7 @@ private:
   nsCOMPtr<nsIThread> mThread;
   RefPtr<mozilla::ipc::ListenSocket> mListenSocket;
   RefPtr<mozilla::ipc::StreamSocket> mStreamSocket;
-  nsAutoPtr<NfcMessageHandler> mHandler;
+  UniquePtr<NfcMessageHandler> mHandler;
   nsCString mListenSocketName;
 };
 
@@ -112,7 +112,7 @@ NfcConsumer::Start()
   // here.
   StopSystemService("nfcd");
 
-  mHandler = new NfcMessageHandler();
+  mHandler = MakeUnique<NfcMessageHandler>();
 
   mStreamSocket = new StreamSocket(this, STREAM_SOCKET);
 
@@ -363,12 +363,12 @@ NfcConsumer::IsNfcServiceThread() const
 
 void
 NfcConsumer::ReceiveSocketData(
-  int aIndex, nsAutoPtr<mozilla::ipc::UnixSocketBuffer>& aBuffer)
+  int aIndex, UniquePtr<mozilla::ipc::UnixSocketBuffer>& aBuffer)
 {
   MOZ_ASSERT(IsNfcServiceThread());
   MOZ_ASSERT(aIndex == STREAM_SOCKET);
 
-  Receive(aBuffer);
+  Receive(aBuffer.get());
 }
 
 void
@@ -492,7 +492,7 @@ NfcService::Start(nsINfcGonkEventListener* aListener)
   MOZ_ASSERT(!mThread);
   MOZ_ASSERT(!mNfcConsumer);
 
-  nsAutoPtr<NfcConsumer> nfcConsumer(new NfcConsumer(this));
+  auto nfcConsumer = MakeUnique<NfcConsumer>(this);
 
   nsresult rv = NS_NewNamedThread("NfcThread", getter_AddRefs(mThread));
   if (NS_FAILED(rv)) {
@@ -500,14 +500,14 @@ NfcService::Start(nsINfcGonkEventListener* aListener)
     return rv;
   }
 
-  rv = mThread->Dispatch(new StartConsumerRunnable(nfcConsumer),
+  rv = mThread->Dispatch(new StartConsumerRunnable(nfcConsumer.get()),
                          nsIEventTarget::DISPATCH_NORMAL);
   if (NS_FAILED(rv)) {
     return rv;
   }
 
   mListener = aListener;
-  mNfcConsumer = nfcConsumer.forget();
+  mNfcConsumer = Move(nfcConsumer);
 
   return NS_OK;
 }
@@ -542,7 +542,7 @@ public:
   }
 
 private:
-  nsAutoPtr<NfcConsumer> mNfcConsumer;
+  UniquePtr<NfcConsumer> mNfcConsumer;
   nsCOMPtr<nsIThread> mThread;
 };
 
@@ -585,15 +585,16 @@ NfcService::Shutdown()
     return NS_OK; // NFC was shut down meanwhile; not an error
   }
 
-  nsresult rv = mThread->Dispatch(new ShutdownConsumerRunnable(mNfcConsumer,
-                                                               true),
-                                  nsIEventTarget::DISPATCH_NORMAL);
+  nsresult rv = mThread->Dispatch(
+    new ShutdownConsumerRunnable(mNfcConsumer.get(), true),
+    nsIEventTarget::DISPATCH_NORMAL);
+
   if (NS_FAILED(rv)) {
     return rv;
   }
 
   // |CleanupRunnable| will take care of these pointers
-  Unused << mNfcConsumer.forget();
+  Unused << mNfcConsumer.release();
   Unused << mThread.forget();
 
   return NS_OK;
@@ -637,9 +638,10 @@ NfcService::SendCommand(JS::HandleValue aOptions, JSContext* aCx)
   }
 
   // Dispatch the command to the NFC thread.
-  nsresult rv = mThread->Dispatch(new SendRunnable(mNfcConsumer,
-                                                   CommandOptions(options)),
-                                  nsIEventTarget::DISPATCH_NORMAL);
+  nsresult rv = mThread->Dispatch(
+    new SendRunnable(mNfcConsumer.get(), CommandOptions(options)),
+    nsIEventTarget::DISPATCH_NORMAL);
+
   if (NS_FAILED(rv)) {
     return rv;
   }
