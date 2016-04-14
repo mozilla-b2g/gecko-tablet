@@ -19,8 +19,7 @@ addLoadEvent(() => {
       SpecialPowers.pushPrefEnv(
         {'set': [["dom.mozBrowserFramesEnabled", true],
                  ["dom.webapps.useCurrentProfile", true],
-                 ["media.useAudioChannelAPI", true],
-                 ["b2g.system_manifest_url", "http://mochi.test:8888/manifest.webapp"]]},
+                 ["media.useAudioChannelAPI", true]]},
         () => { generator.next(); })
     });
 });

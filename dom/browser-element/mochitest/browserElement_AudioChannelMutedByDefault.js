@@ -97,8 +97,7 @@ function setupTestFrame() {
 }
 
 addEventListener('testready', function() {
-  SpecialPowers.pushPrefEnv({'set': [["b2g.system_manifest_url", "http://mochi.test:8888/manifest.webapp"],
-                                     ["dom.audiochannel.mutedByDefault", true]]},
+  SpecialPowers.pushPrefEnv({'set': [["dom.audiochannel.mutedByDefault", true]]},
                             function() {
     SimpleTest.executeSoon(setupTestFrame);
   });
