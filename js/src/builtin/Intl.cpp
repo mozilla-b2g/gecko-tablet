@@ -473,17 +473,15 @@ IntlInitialize(JSContext* cx, HandleObject obj, Handle<PropertyName*> initialize
     MOZ_ASSERT(initializerValue.isObject());
     MOZ_ASSERT(initializerValue.toObject().is<JSFunction>());
 
-    InvokeArgs args(cx);
-    if (!args.init(3))
-        return false;
+    FixedInvokeArgs<3> args(cx);
 
-    args.setCallee(initializerValue);
-    args.setThis(NullValue());
     args[0].setObject(*obj);
     args[1].set(locales);
     args[2].set(options);
 
-    return Invoke(cx, args);
+    RootedValue thisv(cx, NullValue());
+    RootedValue ignored(cx);
+    return js::Call(cx, initializerValue, thisv, args, &ignored);
 }
 
 static bool
@@ -552,18 +550,15 @@ GetInternals(JSContext* cx, HandleObject obj)
     MOZ_ASSERT(getInternalsValue.isObject());
     MOZ_ASSERT(getInternalsValue.toObject().is<JSFunction>());
 
-    InvokeArgs args(cx);
-    if (!args.init(1))
-        return nullptr;
+    FixedInvokeArgs<1> args(cx);
 
-    args.setCallee(getInternalsValue);
-    args.setThis(NullValue());
     args[0].setObject(*obj);
 
-    if (!Invoke(cx, args))
+    RootedValue v(cx, NullValue());
+    if (!js::Call(cx, getInternalsValue, v, args, &v))
         return nullptr;
 
-    return &args.rval().toObject();
+    return &v.toObject();
 }
 
 static bool
@@ -628,9 +623,7 @@ static void collator_finalize(FreeOp* fop, JSObject* obj);
 static const uint32_t UCOLLATOR_SLOT = 0;
 static const uint32_t COLLATOR_SLOTS_COUNT = 1;
 
-static const Class CollatorClass = {
-    js_Object_str,
-    JSCLASS_HAS_RESERVED_SLOTS(COLLATOR_SLOTS_COUNT),
+static const ClassOps CollatorClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
@@ -639,6 +632,12 @@ static const Class CollatorClass = {
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     collator_finalize
+};
+
+static const Class CollatorClass = {
+    js_Object_str,
+    JSCLASS_HAS_RESERVED_SLOTS(COLLATOR_SLOTS_COUNT),
+    &CollatorClassOps
 };
 
 #if JS_HAS_TOSOURCE
@@ -1122,9 +1121,7 @@ static void numberFormat_finalize(FreeOp* fop, JSObject* obj);
 static const uint32_t UNUMBER_FORMAT_SLOT = 0;
 static const uint32_t NUMBER_FORMAT_SLOTS_COUNT = 1;
 
-static const Class NumberFormatClass = {
-    js_Object_str,
-    JSCLASS_HAS_RESERVED_SLOTS(NUMBER_FORMAT_SLOTS_COUNT),
+static const ClassOps NumberFormatClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
@@ -1133,6 +1130,12 @@ static const Class NumberFormatClass = {
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     numberFormat_finalize
+};
+
+static const Class NumberFormatClass = {
+    js_Object_str,
+    JSCLASS_HAS_RESERVED_SLOTS(NUMBER_FORMAT_SLOTS_COUNT),
+    &NumberFormatClassOps
 };
 
 #if JS_HAS_TOSOURCE
@@ -1591,9 +1594,7 @@ static void dateTimeFormat_finalize(FreeOp* fop, JSObject* obj);
 static const uint32_t UDATE_FORMAT_SLOT = 0;
 static const uint32_t DATE_TIME_FORMAT_SLOTS_COUNT = 1;
 
-static const Class DateTimeFormatClass = {
-    js_Object_str,
-    JSCLASS_HAS_RESERVED_SLOTS(DATE_TIME_FORMAT_SLOTS_COUNT),
+static const ClassOps DateTimeFormatClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
     nullptr, /* getProperty */
@@ -1602,6 +1603,12 @@ static const Class DateTimeFormatClass = {
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     dateTimeFormat_finalize
+};
+
+static const Class DateTimeFormatClass = {
+    js_Object_str,
+    JSCLASS_HAS_RESERVED_SLOTS(DATE_TIME_FORMAT_SLOTS_COUNT),
+    &DateTimeFormatClassOps
 };
 
 #if JS_HAS_TOSOURCE

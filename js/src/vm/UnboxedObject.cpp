@@ -698,6 +698,7 @@ UnboxedPlainObject::createWithProperties(ExclusiveContext* cx, HandleObjectGroup
 
 #ifndef JS_CODEGEN_NONE
     if (cx->isJSContext() &&
+        !group->unknownProperties() &&
         !layout.constructorCode() &&
         cx->asJSContext()->runtime()->jitSupportsFloatingPoint)
     {
@@ -905,6 +906,21 @@ const Class UnboxedExpandoObject::class_ = {
     0
 };
 
+static const ClassOps UnboxedPlainObjectClassOps = {
+    nullptr,        /* addProperty */
+    nullptr,        /* delProperty */
+    nullptr,        /* getProperty */
+    nullptr,        /* setProperty */
+    nullptr,        /* enumerate   */
+    nullptr,        /* resolve     */
+    nullptr,        /* mayResolve  */
+    nullptr,        /* finalize    */
+    nullptr,        /* call        */
+    nullptr,        /* hasInstance */
+    nullptr,        /* construct   */
+    UnboxedPlainObject::trace,
+};
+
 static const ObjectOps UnboxedPlainObjectObjectOps = {
     UnboxedPlainObject::obj_lookupProperty,
     UnboxedPlainObject::obj_defineProperty,
@@ -925,18 +941,7 @@ const Class UnboxedPlainObject::class_ = {
     Class::NON_NATIVE |
     JSCLASS_HAS_CACHED_PROTO(JSProto_Object) |
     JSCLASS_DELAY_METADATA_BUILDER,
-    nullptr,        /* addProperty */
-    nullptr,        /* delProperty */
-    nullptr,        /* getProperty */
-    nullptr,        /* setProperty */
-    nullptr,        /* enumerate   */
-    nullptr,        /* resolve     */
-    nullptr,        /* mayResolve  */
-    nullptr,        /* finalize    */
-    nullptr,        /* call        */
-    nullptr,        /* hasInstance */
-    nullptr,        /* construct   */
-    UnboxedPlainObject::trace,
+    &UnboxedPlainObjectClassOps,
     JS_NULL_CLASS_SPEC,
     JS_NULL_CLASS_EXT,
     &UnboxedPlainObjectObjectOps
@@ -1591,6 +1596,21 @@ UnboxedArrayObject::obj_enumerate(JSContext* cx, HandleObject obj, AutoIdVector&
     return true;
 }
 
+static const ClassOps UnboxedArrayObjectClassOps = {
+    nullptr,        /* addProperty */
+    nullptr,        /* delProperty */
+    nullptr,        /* getProperty */
+    nullptr,        /* setProperty */
+    nullptr,        /* enumerate   */
+    nullptr,        /* resolve     */
+    nullptr,        /* mayResolve  */
+    UnboxedArrayObject::finalize,
+    nullptr,        /* call        */
+    nullptr,        /* hasInstance */
+    nullptr,        /* construct   */
+    UnboxedArrayObject::trace,
+};
+
 static const ClassExtension UnboxedArrayObjectClassExtension = {
     nullptr,    /* weakmapKeyDelegateOp */
     UnboxedArrayObject::objectMoved
@@ -1616,18 +1636,7 @@ const Class UnboxedArrayObject::class_ = {
     Class::NON_NATIVE |
     JSCLASS_SKIP_NURSERY_FINALIZE |
     JSCLASS_BACKGROUND_FINALIZE,
-    nullptr,        /* addProperty */
-    nullptr,        /* delProperty */
-    nullptr,        /* getProperty */
-    nullptr,        /* setProperty */
-    nullptr,        /* enumerate   */
-    nullptr,        /* resolve     */
-    nullptr,        /* mayResolve  */
-    UnboxedArrayObject::finalize,
-    nullptr,        /* call        */
-    nullptr,        /* hasInstance */
-    nullptr,        /* construct   */
-    UnboxedArrayObject::trace,
+    &UnboxedArrayObjectClassOps,
     JS_NULL_CLASS_SPEC,
     &UnboxedArrayObjectClassExtension,
     &UnboxedArrayObjectObjectOps

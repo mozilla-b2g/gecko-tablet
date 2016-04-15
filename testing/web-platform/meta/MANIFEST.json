@@ -28770,6 +28770,10 @@
         "url": "/web-animations/animation-model/animation-types/discrete-animation.html"
       },
       {
+        "path": "web-animations/animation-model/animation-types/not-animatable.html",
+        "url": "/web-animations/animation-model/animation-types/not-animatable.html"
+      },
+      {
         "path": "web-animations/animation-timeline/document-timeline.html",
         "url": "/web-animations/animation-timeline/document-timeline.html"
       },
@@ -35123,6 +35127,12 @@
     "deleted": [],
     "items": {
       "testharness": {
+        "html/semantics/embedded-content/the-embed-element/embed-ignored-in-media-element.html": [
+          {
+            "path": "html/semantics/embedded-content/the-embed-element/embed-ignored-in-media-element.html",
+            "url": "/html/semantics/embedded-content/the-embed-element/embed-ignored-in-media-element.html"
+          }
+        ],
         "html/webappapis/scripting/processing-model-2/window-onerror-with-cross-frame-event-listeners-1.html": [
           {
             "path": "html/webappapis/scripting/processing-model-2/window-onerror-with-cross-frame-event-listeners-1.html",

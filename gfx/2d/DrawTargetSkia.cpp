@@ -99,6 +99,11 @@ GetBitmapForSurface(SourceSurface* aSurface)
 {
   SkBitmap bitmap;
 
+  if (!aSurface) {
+    gfxDebug() << "Creating empty Skia bitmap from null SourceSurface";
+    return bitmap;
+  }
+
   if (aSurface->GetType() == SurfaceType::SKIA) {
     bitmap = static_cast<SourceSurfaceSkia*>(aSurface)->GetBitmap();
     return bitmap;
@@ -272,7 +277,9 @@ static inline Rect
 GetClipBounds(SkCanvas *aCanvas)
 {
   SkRect clipBounds;
-  aCanvas->getClipBounds(&clipBounds);
+  if (!aCanvas->getClipBounds(&clipBounds)) {
+    return Rect();
+  }
   return SkRectToRect(clipBounds);
 }
 
@@ -309,9 +316,8 @@ struct AutoPaintSetup {
       mPaint.setAntiAlias(false);
     }
 
-    Rect clipBounds = GetClipBounds(aCanvas);
     bool needsGroup = !IsOperatorBoundByMask(aOptions.mCompositionOp) &&
-                      (!aMaskBounds || !aMaskBounds->Contains(clipBounds));
+                      (!aMaskBounds || !aMaskBounds->Contains(GetClipBounds(aCanvas)));
 
     // TODO: We could skip the temporary for operator_source and just
     // clear the clip rect. The other operators would be harder

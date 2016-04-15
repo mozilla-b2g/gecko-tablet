@@ -401,6 +401,12 @@
            Note: This overrides the destroy() method from browser.xml. -->
       <method name="destroy">
         <body><![CDATA[
+          // Make sure that any open select is closed.
+          if (this._selectParentHelper) {
+            let menulist = document.getElementById(this.getAttribute("selectmenulist"));
+            this._selectParentHelper.hide(menulist, this);
+          }
+
           if (this.mDestroyed)
             return;
           this.mDestroyed = true;
@@ -483,7 +489,7 @@
             case "Forms:HideDropDown": {
               if (this._selectParentHelper) {
                 let menulist = document.getElementById(this.getAttribute("selectmenulist"));
-                this._selectParentHelper.hide(menulist);
+                this._selectParentHelper.hide(menulist, this);
               }
               break;
             }
@@ -547,6 +553,16 @@
         </body>
       </method>
     </implementation>
+    <handlers>
+      <handler event="dragstart">
+      <![CDATA[
+        // If we're a remote browser dealing with a dragstart, stop it
+        // from propagating up, since our content process should be dealing
+        // with the mouse movement.
+        event.stopPropagation();
+      ]]>
+      </handler>
+    </handlers>
 
   </binding>
 

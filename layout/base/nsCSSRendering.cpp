@@ -1814,7 +1814,8 @@ nsCSSRendering::GetImageLayerClip(const nsStyleImageLayers::Layer& aLayer,
     backgroundClip = NS_STYLE_IMAGELAYER_CLIP_PADDING;
   }
 
-  if (backgroundClip != NS_STYLE_IMAGELAYER_CLIP_BORDER) {
+  if (backgroundClip != NS_STYLE_IMAGELAYER_CLIP_BORDER &&
+      backgroundClip != NS_STYLE_IMAGELAYER_CLIP_TEXT) {
     nsMargin border = aForFrame->GetUsedBorder();
     if (backgroundClip == NS_STYLE_IMAGELAYER_CLIP_MOZ_ALMOST_PADDING) {
       // Reduce |border| by 1px (device pixels) on all sides, if
@@ -5094,7 +5095,11 @@ nsImageRenderer::Draw(nsPresContext*       aPresContext,
     gfxRect clipRect = ctx->GetClipExtents();
     tmpDTRect = RoundedOut(ToRect(clipRect));
     RefPtr<DrawTarget> tempDT = ctx->GetDrawTarget()->CreateSimilarDrawTarget(tmpDTRect.Size(), SurfaceFormat::B8G8R8A8);
-    ctx = new gfxContext(tempDT, tmpDTRect.TopLeft());
+    ctx = gfxContext::ForDrawTarget(tempDT, tmpDTRect.TopLeft());
+    if (!ctx) {
+      gfxDevCrash(LogReason::InvalidContext) << "ImageRenderer::Draw problem " << gfx::hexa(tempDT);
+      return DrawResult::TEMPORARY_ERROR;
+    }
   }
 
   switch (mType) {

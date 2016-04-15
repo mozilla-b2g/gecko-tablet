@@ -213,11 +213,11 @@ SwapToISupportsArray(SmartPtr<T>& aSrc,
 // from the worker's EventTarget).
 class ExternalRunnableWrapper final : public WorkerRunnable
 {
-  nsCOMPtr<nsICancelableRunnable> mWrappedRunnable;
+  nsCOMPtr<nsIRunnable> mWrappedRunnable;
 
 public:
   ExternalRunnableWrapper(WorkerPrivate* aWorkerPrivate,
-                          nsICancelableRunnable* aWrappedRunnable)
+                          nsIRunnable* aWrappedRunnable)
   : WorkerRunnable(aWorkerPrivate, WorkerThreadUnchangedBusyCount),
     mWrappedRunnable(aWrappedRunnable)
   {
@@ -244,10 +244,14 @@ private:
     return true;
   }
 
-  NS_IMETHOD
+  nsresult
   Cancel() override
   {
-    nsresult rv = mWrappedRunnable->Cancel();
+    nsresult rv;
+    nsCOMPtr<nsICancelableRunnable> cancelable =
+      do_QueryInterface(mWrappedRunnable);
+    MOZ_ASSERT(cancelable); // We checked this earlier!
+    rv = cancelable->Cancel();
     nsresult rv2 = WorkerRunnable::Cancel();
     return NS_FAILED(rv) ? rv : rv2;
   }
@@ -624,7 +628,7 @@ private:
     return true;
   }
 
-  NS_IMETHOD Cancel() override
+  nsresult Cancel() override
   {
     // We need to run regardless.
     Run();
@@ -932,6 +936,62 @@ private:
   WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
   {
     return aWorkerPrivate->ThawInternal();
+  }
+};
+
+class ReportErrorToConsoleRunnable final : public WorkerRunnable
+{
+  const char* mMessage;
+
+public:
+  // aWorkerPrivate is the worker thread we're on (or the main thread, if null)
+  static void
+  Report(WorkerPrivate* aWorkerPrivate, const char* aMessage)
+  {
+    if (aWorkerPrivate) {
+      aWorkerPrivate->AssertIsOnWorkerThread();
+    } else {
+      AssertIsOnMainThread();
+    }
+
+    // Now fire a runnable to do the same on the parent's thread if we can.
+    if (aWorkerPrivate) {
+      RefPtr<ReportErrorToConsoleRunnable> runnable =
+        new ReportErrorToConsoleRunnable(aWorkerPrivate, aMessage);
+      runnable->Dispatch();
+      return;
+    }
+
+    // Log a warning to the console.
+    nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                    NS_LITERAL_CSTRING("DOM"),
+                                    nullptr,
+                                    nsContentUtils::eDOM_PROPERTIES,
+                                    aMessage);
+  }
+
+private:
+  ReportErrorToConsoleRunnable(WorkerPrivate* aWorkerPrivate, const char* aMessage)
+  : WorkerRunnable(aWorkerPrivate, ParentThreadUnchangedBusyCount),
+    mMessage(aMessage)
+  { }
+
+  virtual void
+  PostDispatch(WorkerPrivate* aWorkerPrivate, bool aDispatchResult) override
+  {
+    aWorkerPrivate->AssertIsOnWorkerThread();
+
+    // Dispatch may fail if the worker was canceled, no need to report that as
+    // an error, so don't call base class PostDispatch.
+  }
+
+  virtual bool
+  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
+  {
+    WorkerPrivate* parent = aWorkerPrivate->GetParent();
+    MOZ_ASSERT_IF(!parent, NS_IsMainThread());
+    Report(parent, mMessage);
+    return true;
   }
 };
 
@@ -1345,7 +1405,7 @@ private:
     return true;
   }
 
-  NS_IMETHOD Cancel() override
+  nsresult Cancel() override
   {
     // We need to run regardless.
     Run();
@@ -1655,7 +1715,7 @@ private:
     return aWorkerPrivate->ConnectMessagePort(aCx, mPortIdentifier);
   }
 
-  NS_IMETHOD
+  nsresult
   Cancel() override
   {
     MessagePort::ForceClose(mPortIdentifier);
@@ -2472,7 +2532,7 @@ WorkerPrivateParent<Derived>::MaybeWrapAsWorkerRunnable(already_AddRefed<nsIRunn
   }
 
   workerRunnable =
-    new ExternalRunnableWrapper(ParentAsWorkerPrivate(), cancelable);
+    new ExternalRunnableWrapper(ParentAsWorkerPrivate(), runnable);
   return workerRunnable.forget();
 }
 
@@ -5843,6 +5903,18 @@ WorkerPrivate::ReportError(JSContext* aCx, const char* aFallbackMessage,
                                    mutedError, 0);
 
   mErrorHandlerRecursionCount--;
+}
+
+// static
+void
+WorkerPrivate::ReportErrorToConsole(const char* aMessage)
+{
+  WorkerPrivate* wp = nullptr;
+  if (!NS_IsMainThread()) {
+    wp = GetCurrentThreadWorkerPrivate();
+  }
+
+  ReportErrorToConsoleRunnable::Report(wp, aMessage);
 }
 
 int32_t

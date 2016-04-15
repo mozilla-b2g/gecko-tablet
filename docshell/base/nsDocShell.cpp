@@ -10566,6 +10566,11 @@ nsDocShell::DoURILoad(nsIURI* aURI,
   }
 
   if (IsFrame()) {
+
+    MOZ_ASSERT(aContentPolicyType == nsIContentPolicy::TYPE_INTERNAL_IFRAME ||
+               aContentPolicyType == nsIContentPolicy::TYPE_INTERNAL_FRAME,
+               "DoURILoad thinks this is a frame and InternalLoad does not");
+
     // Only allow view-source scheme in top-level docshells. view-source is
     // the only scheme to which this applies at the moment due to potential
     // timing attacks to read data from cross-origin iframes. If this widens
@@ -10584,7 +10589,11 @@ nsDocShell::DoURILoad(nsIURI* aURI,
       nestedURI->GetInnerURI(getter_AddRefs(tempURI));
       nestedURI = do_QueryInterface(tempURI);
     }
+  } else {
+    MOZ_ASSERT(aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT,
+    "DoURILoad thinks this is a document and InternalLoad does not");
   }
+
 
   // For mozWidget, display a load error if we navigate to a page which is not
   // claimed in |widgetPages|.
@@ -10620,37 +10629,31 @@ nsDocShell::DoURILoad(nsIURI* aURI,
   bool isSrcdoc = !aSrcdoc.IsVoid();
 
   // There are two cases we care about:
-  // * Top-level load (GetFrameElementInternal returns null). In this case,
-  //   requestingNode is null, but requestingWindow is our mScriptGlobal.
-  //   TODO we want to pass null for loadingPrincipal in this case.
-  // * Subframe load: requestingWindow is null, but requestingNode is the frame
+  // * Top-level load: In this case, loadingNode is null, but loadingWindow
+  //   is our mScriptGlobal. We pass null for loadingPrincipal in this case.
+  // * Subframe load: loadingWindow is null, but loadingNode is the frame
   //   element for the load. loadingPrincipal is the NodePrincipal of the frame
   //   element.
-  nsCOMPtr<nsINode> requestingNode;
-  nsCOMPtr<nsPIDOMWindowOuter> requestingWindow;
-
+  nsCOMPtr<nsINode> loadingNode;
+  nsCOMPtr<nsPIDOMWindowOuter> loadingWindow;
   nsCOMPtr<nsIPrincipal> loadingPrincipal;
-  requestingNode = mScriptGlobal->AsOuter()->GetFrameElementInternal();
-  if (requestingNode) {
-    // If we have a requesting node, then use that as our loadingPrincipal.
-    loadingPrincipal = requestingNode->NodePrincipal();
-  } else {
-    if (aContentPolicyType != nsIContentPolicy::TYPE_DOCUMENT) {
-      // If this isn't a top-level load and mScriptGlobal's frame element is
-      // null, then the element got removed from the DOM while we were trying to
-      // load this resource. This docshell is scheduled for destruction already,
-      // so bail out here.
-      return NS_OK;
-    }
 
-    requestingWindow = mScriptGlobal->AsOuter();
-    if (mItemType != typeChrome) {
-      nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
-      ssm->GetDocShellCodebasePrincipal(aURI, this, getter_AddRefs(loadingPrincipal));
+  if (aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT) {
+    loadingNode = nullptr;
+    loadingPrincipal = nullptr;
+    loadingWindow = mScriptGlobal->AsOuter();
+  } else {
+    loadingWindow = nullptr;
+    loadingNode = mScriptGlobal->AsOuter()->GetFrameElementInternal();
+    if (loadingNode) {
+      // If we have a loading node, then use that as our loadingPrincipal.
+      loadingPrincipal = loadingNode->NodePrincipal();
     } else {
-      // This is a top-level chrome load, use a system principal for the
-      // loadingPrincipal.
-      loadingPrincipal = nsContentUtils::GetSystemPrincipal();
+      // If this isn't a top-level load and mScriptGlobal's frame element is
+      // null, then the element got removed from the DOM while we were trying
+      // to load this resource. This docshell is scheduled for destruction
+      // already, so bail out here.
+      return NS_OK;
     }
   }
 
@@ -10658,6 +10661,10 @@ nsDocShell::DoURILoad(nsIURI* aURI,
   // only inherit if we have a triggeringPrincipal
   bool inherit = false;
 
+  // Get triggeringPrincipal.  This code should be updated by bug 1181370.
+  // Until then, we cannot rely on the triggeringPrincipal for TYPE_DOCUMENT
+  // or TYPE_SUBDOCUMENT loads.  Notice the triggeringPrincipal falls back to
+  // systemPrincipal below.
   nsCOMPtr<nsIPrincipal> triggeringPrincipal = do_QueryInterface(aOwner);
   if (triggeringPrincipal) {
     inherit = nsContentUtils::ChannelShouldInheritPrincipal(
@@ -10681,12 +10688,24 @@ nsDocShell::DoURILoad(nsIURI* aURI,
     securityFlags |= nsILoadInfo::SEC_SANDBOXED;
   }
 
+  if (mInPrivateBrowsing) {
+    securityFlags |= nsILoadInfo::SEC_FORCE_PRIVATE_BROWSING;
+  }
+
   nsCOMPtr<nsILoadInfo> loadInfo =
-    requestingWindow ?
-      new LoadInfo(requestingWindow, loadingPrincipal, triggeringPrincipal,
+    (aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT) ?
+      new LoadInfo(loadingWindow, triggeringPrincipal,
                    securityFlags) :
-      new LoadInfo(loadingPrincipal, triggeringPrincipal, requestingNode,
+      new LoadInfo(loadingPrincipal, triggeringPrincipal, loadingNode,
                    securityFlags, aContentPolicyType);
+
+  // We have to do this in case our OriginAttributes are different from the
+  // OriginAttributes of the parent document. Or in case there isn't a
+  // parent document.
+  NeckoOriginAttributes neckoAttrs;
+  neckoAttrs.InheritFromDocShellToNecko(GetOriginAttributes());
+  loadInfo->SetOriginAttributes(neckoAttrs);
+
   if (!isSrcdoc) {
     rv = NS_NewChannelInternal(getter_AddRefs(channel),
                                aURI,
@@ -10710,6 +10729,7 @@ nsDocShell::DoURILoad(nsIURI* aURI,
       }
       return rv;
     }
+
     if (aBaseURI) {
         nsCOMPtr<nsIViewSourceChannel> vsc = do_QueryInterface(channel);
         if (vsc) {
@@ -10948,8 +10968,13 @@ nsDocShell::DoURILoad(nsIURI* aURI,
   nsCOMPtr<nsITimedChannel> timedChannel(do_QueryInterface(channel));
   if (timedChannel) {
     timedChannel->SetTimingEnabled(true);
-    if (IsFrame()) {
-      timedChannel->SetInitiatorType(NS_LITERAL_STRING("subdocument"));
+
+    nsCOMPtr<nsPIDOMWindowOuter> win = GetWindow();
+    if (IsFrame() && win) {
+      nsCOMPtr<Element> frameElement = win->GetFrameElementInternal();
+      if (frameElement) {
+        timedChannel->SetInitiatorType(frameElement->LocalName());
+      }
     }
   }
 
@@ -12036,9 +12061,20 @@ nsDocShell::AddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel,
       if (loadInfo) {
         // For now keep storing just the principal in the SHEntry.
         if (loadInfo->GetLoadingSandboxed()) {
-          owner = nsNullPrincipal::CreateWithInheritedAttributes(
-            loadInfo->LoadingPrincipal());
-          NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
+          if (loadInfo->LoadingPrincipal()) {
+            owner = nsNullPrincipal::CreateWithInheritedAttributes(
+              loadInfo->LoadingPrincipal());
+            NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
+          } else {
+            // get the OriginAttributes
+            NeckoOriginAttributes nAttrs;
+            loadInfo->GetOriginAttributes(&nAttrs);
+            PrincipalOriginAttributes pAttrs;
+            pAttrs.InheritFromNecko(nAttrs);
+
+            owner = nsNullPrincipal::Create(pAttrs);
+            NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
+          }
         } else if (loadInfo->GetForceInheritPrincipal()) {
           owner = loadInfo->TriggeringPrincipal();
         }

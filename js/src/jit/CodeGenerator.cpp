@@ -1562,6 +1562,11 @@ JitCompartment::generateRegExpMatcherStub(JSContext* cx)
     masm.createGCObject(object, temp2, templateObject, gc::DefaultHeap, &matchResultFallback);
     masm.bind(&matchResultJoin);
 
+    // Initialize slots of result object.
+    masm.loadPtr(Address(object, NativeObject::offsetOfSlots()), temp2);
+    masm.storeValue(templateObject->getSlot(0), Address(temp2, 0));
+    masm.storeValue(templateObject->getSlot(1), Address(temp2, sizeof(Value)));
+
     size_t elementsOffset = NativeObject::offsetOfFixedElements();
 
 #ifdef DEBUG
@@ -2150,9 +2155,9 @@ CodeGenerator::visitRegExpPrototypeOptimizable(LRegExpPrototypeOptimizable* ins)
 
     masm.loadJSContext(temp);
     masm.loadPtr(Address(temp, JSContext::offsetOfCompartment()), temp);
-    masm.loadPtr(Address(temp, JSCompartment::offsetOfRegExps()), temp);
-    masm.loadPtr(Address(temp, RegExpCompartment::offsetOfOptimizableRegExpPrototypeShape()),
-                 temp);
+    size_t offset = JSCompartment::offsetOfRegExps() +
+                    RegExpCompartment::offsetOfOptimizableRegExpPrototypeShape();
+    masm.loadPtr(Address(temp, offset), temp);
 
     masm.loadPtr(Address(object, JSObject::offsetOfShape()), output);
     masm.branchPtr(Assembler::NotEqual, output, temp, ool->entry());
@@ -2219,9 +2224,9 @@ CodeGenerator::visitRegExpInstanceOptimizable(LRegExpInstanceOptimizable* ins)
 
     masm.loadJSContext(temp);
     masm.loadPtr(Address(temp, JSContext::offsetOfCompartment()), temp);
-    masm.loadPtr(Address(temp, JSCompartment::offsetOfRegExps()), temp);
-    masm.loadPtr(Address(temp, RegExpCompartment::offsetOfOptimizableRegExpInstanceShape()),
-                 temp);
+    size_t offset = JSCompartment::offsetOfRegExps() +
+                    RegExpCompartment::offsetOfOptimizableRegExpInstanceShape();
+    masm.loadPtr(Address(temp, offset), temp);
 
     masm.loadPtr(Address(object, JSObject::offsetOfShape()), output);
     masm.branchPtr(Assembler::NotEqual, output, temp, ool->entry());
@@ -10699,19 +10704,29 @@ CodeGenerator::visitIsCallable(LIsCallable* ins)
     OutOfLineIsCallable* ool = new(alloc()) OutOfLineIsCallable(ins);
     addOutOfLineCode(ool, ins->mir());
 
-    Label notFunction, done;
+    Label notFunction, hasCOps, done;
     masm.loadObjClass(object, output);
 
     // Just skim proxies off. Their notion of isCallable() is more complicated.
     masm.branchTestClassIsProxy(true, output, ool->entry());
 
-    // An object is callable iff (is<JSFunction>() || getClass()->call.
+    // An object is callable iff:
+    //   is<JSFunction>() || (getClass()->cOps && getClass()->cOps->call).
     masm.branchPtr(Assembler::NotEqual, output, ImmPtr(&JSFunction::class_), &notFunction);
     masm.move32(Imm32(1), output);
     masm.jump(&done);
 
     masm.bind(&notFunction);
-    masm.cmpPtrSet(Assembler::NonZero, Address(output, offsetof(js::Class, call)), ImmPtr(nullptr), output);
+    masm.branchPtr(Assembler::NonZero, Address(output, offsetof(js::Class, cOps)),
+                   ImmPtr(nullptr), &hasCOps);
+    masm.move32(Imm32(0), output);
+    masm.jump(&done);
+
+    masm.bind(&hasCOps);
+    masm.loadPtr(Address(output, offsetof(js::Class, cOps)), output);
+    masm.cmpPtrSet(Assembler::NonZero, Address(output, offsetof(js::ClassOps, call)),
+                   ImmPtr(nullptr), output);
+
     masm.bind(&done);
     masm.bind(ool->rejoin());
 }
@@ -10761,7 +10776,7 @@ CodeGenerator::visitIsConstructor(LIsConstructor* ins)
     OutOfLineIsConstructor* ool = new(alloc()) OutOfLineIsConstructor(ins);
     addOutOfLineCode(ool, ins->mir());
 
-    Label notFunction, notConstructor, done;
+    Label notFunction, notConstructor, hasCOps, done;
     masm.loadObjClass(object, output);
 
     // Just skim proxies off. Their notion of isConstructor() is more complicated.
@@ -10769,7 +10784,7 @@ CodeGenerator::visitIsConstructor(LIsConstructor* ins)
 
     // An object is constructor iff
     //  ((is<JSFunction>() && as<JSFunction>().isConstructor) ||
-    //   getClass()->construct).
+    //   (getClass()->cOps && getClass()->cOps->construct)).
     masm.branchPtr(Assembler::NotEqual, output, ImmPtr(&JSFunction::class_), &notFunction);
     masm.load16ZeroExtend(Address(object, JSFunction::offsetOfFlags()), output);
     masm.and32(Imm32(JSFunction::CONSTRUCTOR), output);
@@ -10781,7 +10796,16 @@ CodeGenerator::visitIsConstructor(LIsConstructor* ins)
     masm.jump(&done);
 
     masm.bind(&notFunction);
-    masm.cmpPtrSet(Assembler::NonZero, Address(output, offsetof(js::Class, construct)), ImmPtr(nullptr), output);
+    masm.branchPtr(Assembler::NonZero, Address(output, offsetof(js::Class, cOps)),
+                   ImmPtr(nullptr), &hasCOps);
+    masm.move32(Imm32(0), output);
+    masm.jump(&done);
+
+    masm.bind(&hasCOps);
+    masm.loadPtr(Address(output, offsetof(js::Class, cOps)), output);
+    masm.cmpPtrSet(Assembler::NonZero, Address(output, offsetof(js::ClassOps, construct)),
+                   ImmPtr(nullptr), output);
+
     masm.bind(&done);
     masm.bind(ool->rejoin());
 }

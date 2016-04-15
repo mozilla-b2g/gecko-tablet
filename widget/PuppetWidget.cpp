@@ -1041,7 +1041,11 @@ PuppetWidget::Paint()
         mTabChild->NotifyPainted();
       }
     } else {
-      RefPtr<gfxContext> ctx = new gfxContext(mDrawTarget);
+      RefPtr<gfxContext> ctx = gfxContext::ForDrawTarget(mDrawTarget);
+      if (!ctx) {
+        gfxDevCrash(LogReason::InvalidContext) << "PuppetWidget context problem " << gfx::hexa(mDrawTarget);
+        return NS_ERROR_FAILURE;
+      }
       ctx->Rectangle(gfxRect(0,0,0,0));
       ctx->Clip();
       AutoLayerManagerSetup setupLayerManager(this, ctx,
@@ -1427,33 +1431,31 @@ PuppetWidget::HasPendingInputEvent()
     return false;
   }
 
-  static const IPC::Message::msgid_t kInputEvents[] = {
-    mozilla::dom::PBrowser::Msg_RealMouseMoveEvent__ID,
-    mozilla::dom::PBrowser::Msg_SynthMouseMoveEvent__ID,
-    mozilla::dom::PBrowser::Msg_RealMouseButtonEvent__ID,
-    mozilla::dom::PBrowser::Msg_RealKeyEvent__ID,
-    mozilla::dom::PBrowser::Msg_MouseWheelEvent__ID,
-    mozilla::dom::PBrowser::Msg_RealTouchEvent__ID,
-    mozilla::dom::PBrowser::Msg_RealTouchMoveEvent__ID,
-    mozilla::dom::PBrowser::Msg_RealDragEvent__ID,
-    mozilla::dom::PBrowser::Msg_UpdateDimensions__ID,
-    mozilla::dom::PBrowser::Msg_MouseEvent__ID,
-    mozilla::dom::PBrowser::Msg_KeyEvent__ID
-  };
   bool ret = false;
 
-  for (IPC::Message::msgid_t e: kInputEvents) {
-    mTabChild->GetIPCChannel()->PeekMessages(
-      e,
-      [&ret](const IPC::Message& aMsg) -> bool {
-        ret = true;
-        return false;  // Stop peeking.
+  mTabChild->GetIPCChannel()->PeekMessages(
+    [&ret](const IPC::Message& aMsg) -> bool {
+      if ((aMsg.type() & mozilla::dom::PBrowser::PBrowserStart)
+          == mozilla::dom::PBrowser::PBrowserStart) {
+        switch (aMsg.type()) {
+          case mozilla::dom::PBrowser::Msg_RealMouseMoveEvent__ID:
+          case mozilla::dom::PBrowser::Msg_SynthMouseMoveEvent__ID:
+          case mozilla::dom::PBrowser::Msg_RealMouseButtonEvent__ID:
+          case mozilla::dom::PBrowser::Msg_RealKeyEvent__ID:
+          case mozilla::dom::PBrowser::Msg_MouseWheelEvent__ID:
+          case mozilla::dom::PBrowser::Msg_RealTouchEvent__ID:
+          case mozilla::dom::PBrowser::Msg_RealTouchMoveEvent__ID:
+          case mozilla::dom::PBrowser::Msg_RealDragEvent__ID:
+          case mozilla::dom::PBrowser::Msg_UpdateDimensions__ID:
+          case mozilla::dom::PBrowser::Msg_MouseEvent__ID:
+          case mozilla::dom::PBrowser::Msg_KeyEvent__ID:
+            ret = true;
+            return false;  // Stop peeking.
+        }
       }
-    );
-    if (ret) {
-      break;
+      return true;
     }
-  }
+  );
 
   return ret;
 }

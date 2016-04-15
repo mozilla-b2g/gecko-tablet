@@ -2121,6 +2121,14 @@ CanvasRenderingContext2D::CreatePattern(const CanvasImageSource& aSource,
     if (srcCanvas) {
       // This might not be an Azure canvas!
       RefPtr<SourceSurface> srcSurf = srcCanvas->GetSurfaceSnapshot();
+      if (!srcSurf) {
+        JSContext* context = nsContentUtils::GetCurrentJSContext();
+        if (context) {
+          JS_ReportWarning(context, "CanvasRenderingContext2D.createPattern() failed to snapshot source canvas.");
+        }
+        aError.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+        return nullptr;
+      }
 
       RefPtr<CanvasPattern> pat =
         new CanvasPattern(this, srcSurf, repeatMode, htmlElement->NodePrincipal(), canvas->IsWriteOnly(), false);
@@ -2142,6 +2150,14 @@ CanvasRenderingContext2D::CreatePattern(const CanvasImageSource& aSource,
     ImageBitmap& imgBitmap = aSource.GetAsImageBitmap();
     EnsureTarget();
     RefPtr<SourceSurface> srcSurf = imgBitmap.PrepareForDrawTarget(mTarget);
+    if (!srcSurf) {
+      JSContext* context = nsContentUtils::GetCurrentJSContext();
+      if (context) {
+        JS_ReportWarning(context, "CanvasRenderingContext2D.createPattern() failed to prepare source ImageBitmap.");
+      }
+      aError.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+      return nullptr;
+    }
 
     // An ImageBitmap never taints others so we set principalForSecurityCheck to
     // nullptr and set CORSUsed to true for passing the security check in
@@ -4751,7 +4767,11 @@ CanvasRenderingContext2D::DrawDirectlyToCanvas(
   // the matrix even though this is a temp gfxContext.
   AutoRestoreTransform autoRestoreTransform(mTarget);
 
-  RefPtr<gfxContext> context = new gfxContext(tempTarget);
+  RefPtr<gfxContext> context = gfxContext::ForDrawTarget(tempTarget);
+  if (!context) {
+    gfxDevCrash(LogReason::InvalidContext) << "Canvas context problem";
+    return;
+  }
   context->SetMatrix(contextMatrix.
                        Scale(1.0 / contextScale.width,
                              1.0 / contextScale.height).
@@ -4950,19 +4970,21 @@ CanvasRenderingContext2D::DrawWindow(nsGlobalWindow& aWindow, double aX,
       GlobalAlpha() == 1.0f &&
       UsedOperation() == CompositionOp::OP_OVER)
   {
-    thebes = new gfxContext(mTarget);
+    thebes = gfxContext::ForDrawTarget(mTarget);
+    MOZ_ASSERT(thebes); // alrady checked the draw target above
     thebes->SetMatrix(gfxMatrix(matrix._11, matrix._12, matrix._21,
                                 matrix._22, matrix._31, matrix._32));
   } else {
     drawDT =
       gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(IntSize(ceil(sw), ceil(sh)),
                                                                    SurfaceFormat::B8G8R8A8);
-    if (!drawDT) {
+    if (!drawDT || !drawDT->IsValid()) {
       aError.Throw(NS_ERROR_FAILURE);
       return;
     }
 
-    thebes = new gfxContext(drawDT);
+    thebes = gfxContext::ForDrawTarget(drawDT);
+    MOZ_ASSERT(thebes); // alrady checked the draw target above
     thebes->SetMatrix(gfxMatrix::Scaling(matrix._11, matrix._22));
   }
 
@@ -5103,51 +5125,6 @@ CanvasRenderingContext2D::AsyncDrawXULElement(nsXULElement& aElem,
     docrender->SetCanvasContext(this, mThebes);
   }
 #endif
-}
-
-void
-CanvasRenderingContext2D::DrawWidgetAsOnScreen(nsGlobalWindow& aWindow,
-                                               mozilla::ErrorResult& aError)
-{
-  EnsureTarget();
-
-  // This is an internal API.
-  if (!nsContentUtils::IsCallerChrome()) {
-    aError.Throw(NS_ERROR_DOM_SECURITY_ERR);
-    return;
-  }
-
-  RefPtr<nsPresContext> presContext;
-  nsIDocShell* docshell = aWindow.GetDocShell();
-  if (docshell) {
-    docshell->GetPresContext(getter_AddRefs(presContext));
-  }
-  if (!presContext) {
-    aError.Throw(NS_ERROR_FAILURE);
-    return;
-  }
-
-  nsIWidget* widget = presContext->GetRootWidget();
-  if (!widget) {
-    aError.Throw(NS_ERROR_FAILURE);
-    return;
-  }
-  RefPtr<SourceSurface> snapshot = widget->SnapshotWidgetOnScreen();
-  if (!snapshot) {
-    aError.Throw(NS_ERROR_FAILURE);
-    return;
-  }
-
-  gfx::Rect sourceRect(gfx::Point(0, 0), gfx::Size(snapshot->GetSize()));
-  mTarget->DrawSurface(snapshot, sourceRect, sourceRect,
-                       DrawSurfaceOptions(gfx::Filter::POINT),
-                       DrawOptions(GlobalAlpha(), CompositionOp::OP_OVER,
-                                   AntialiasMode::NONE));
-  mTarget->Flush();
-
-  RedrawUser(gfxRect(0, 0,
-                     std::min(mWidth, snapshot->GetSize().width),
-                     std::min(mHeight, snapshot->GetSize().height)));
 }
 
 //
