@@ -647,7 +647,8 @@ nsBaseChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctxt)
   NS_ENSURE_TRUE(!mWasOpened, NS_ERROR_ALREADY_OPENED);
   NS_ENSURE_ARG(listener);
 
-  NS_CompareLoadInfoAndLoadContext(this);
+  // FIXME: re-enable that assertion
+  // NS_CompareLoadInfoAndLoadContext(this);
 
   // Ensure that this is an allowed port before proceeding.
   nsresult rv = NS_CheckPortSafety(mURI);

@@ -178,7 +178,8 @@ ChannelFromScriptURL(nsIPrincipal* principal,
     // We must have a loadGroup with a load context for the principal to
     // traverse the channel correctly.
     MOZ_ASSERT(loadGroup);
-    MOZ_ASSERT(NS_LoadGroupMatchesPrincipal(loadGroup, principal));
+    // FIXME: re-enable that assertion
+    // MOZ_ASSERT(NS_LoadGroupMatchesPrincipal(loadGroup, principal));
 
     rv = NS_NewChannel(getter_AddRefs(channel),
                        uri,
@@ -867,7 +868,8 @@ private:
       loadGroup = parentWorker->GetLoadGroup();
     }
     NS_ASSERTION(principal, "This should never be null here!");
-    MOZ_ASSERT(NS_LoadGroupMatchesPrincipal(loadGroup, principal));
+    // FIXME: re-enable that assertion
+    // MOZ_ASSERT(NS_LoadGroupMatchesPrincipal(loadGroup, principal));
 
     // Figure out our base URI.
     nsCOMPtr<nsIURI> baseURI = GetBaseURI(mIsMainScript, mWorkerPrivate);
@@ -1143,7 +1145,8 @@ private:
 
       // The principal can change, but it should still match the original
       // load group's appId and browser element flag.
-      MOZ_ASSERT(NS_LoadGroupMatchesPrincipal(channelLoadGroup, channelPrincipal));
+      // FIXME: re-enable that assertion
+      // MOZ_ASSERT(NS_LoadGroupMatchesPrincipal(channelLoadGroup, channelPrincipal));
 
       mWorkerPrivate->SetPrincipal(channelPrincipal, channelLoadGroup);
     }
