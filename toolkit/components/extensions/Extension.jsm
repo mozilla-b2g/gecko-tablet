@@ -104,6 +104,18 @@ var {
 
 const LOGGER_ID_BASE = "addons.webextension.";
 
+const COMMENT_REGEXP = new RegExp(String.raw`
+    ^
+    (
+      (?:
+        [^"] |
+        " (?:[^"\\] | \\.)* "
+      )*?
+    )
+
+    //.*
+  `.replace(/\s+/g, ""), "gm");
+
 var scriptScope = this;
 
 var ExtensionPage, GlobalManager;
@@ -240,7 +252,6 @@ ExtensionPage = class extends BaseContext {
     this.contentWindow = contentWindow || null;
     this.uri = uri || extension.baseURI;
     this.incognito = params.incognito || false;
-    this.unloaded = false;
 
     // This is the MessageSender property passed to extension.
     // It can be augmented by the "page-open" hook.
@@ -284,8 +295,6 @@ ExtensionPage = class extends BaseContext {
     if (this.unloaded) {
       return;
     }
-
-    this.unloaded = true;
 
     super.unload();
 
@@ -665,6 +674,9 @@ ExtensionData.prototype = {
         try {
           let text = NetUtil.readInputStreamToString(inputStream, inputStream.available(),
                                                      {charset: "utf-8"});
+
+          text = text.replace(COMMENT_REGEXP, "$1");
+
           resolve(JSON.parse(text));
         } catch (e) {
           reject(e);
@@ -1152,7 +1164,13 @@ Extension.prototype = extend(Object.create(ExtensionData.prototype), {
     }
     this.whiteListedHosts = new MatchPattern(whitelist);
 
-    this.webAccessibleResources = new MatchGlobs(manifest.web_accessible_resources || []);
+    // Strip leading slashes from web_accessible_resources.
+    let strippedWebAccessibleResources = [];
+    if (manifest.web_accessible_resources) {
+      strippedWebAccessibleResources = manifest.web_accessible_resources.map(path => path.replace(/^\/+/, ""));
+    }
+
+    this.webAccessibleResources = new MatchGlobs(strippedWebAccessibleResources);
 
     for (let directive in manifest) {
       if (manifest[directive] !== null) {

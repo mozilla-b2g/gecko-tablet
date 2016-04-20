@@ -1188,11 +1188,13 @@ html|span.ac-tag {
   height: 16px;
 }
 
-.ac-type-icon[type=switchtab] {
+.ac-type-icon[type=switchtab],
+.ac-type-icon[type=remotetab] {
   list-style-image: url("chrome://browser/skin/urlbar-tab.svg#tab");
 }
 
-.ac-type-icon[type=switchtab][selected] {
+.ac-type-icon[type=switchtab][selected],
+.ac-type-icon[type=remotetab][selected] {
   list-style-image: url("chrome://browser/skin/urlbar-tab.svg#tab-inverted");
 }
 
@@ -1957,7 +1959,12 @@ notification.pluginVulnerable > .notification-inner > .messageCloseButton:not(:h
   width: 16px;
 }
 
+/**
+ * Override the --panel-arrowcontent-padding so the background extends
+ * to the sides and bottom of the panel.
+ */
 #UITourTooltipButtons {
+  margin-left: -10px;
   margin-bottom: -10px;
 }
 

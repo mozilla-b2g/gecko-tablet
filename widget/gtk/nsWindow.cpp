@@ -555,7 +555,7 @@ nsresult
 nsWindow::DispatchEvent(WidgetGUIEvent* aEvent, nsEventStatus& aStatus)
 {
 #ifdef DEBUG
-    debug_DumpEvent(stdout, aEvent->widget, aEvent,
+    debug_DumpEvent(stdout, aEvent->mWidget, aEvent,
                     "something", 0);
 #endif
     aStatus = nsEventStatus_eIgnore;
@@ -2505,7 +2505,7 @@ nsWindow::OnEnterNotifyEvent(GdkEventCrossing *aEvent)
     WidgetMouseEvent event(true, eMouseEnterIntoWidget, this,
                            WidgetMouseEvent::eReal);
 
-    event.refPoint = GdkEventCoordsToDevicePixels(aEvent->x, aEvent->y);
+    event.mRefPoint = GdkEventCoordsToDevicePixels(aEvent->x, aEvent->y);
     event.AssignEventTime(GetWidgetEventTime(aEvent->time));
 
     LOG(("OnEnterNotify: %p\n", (void *)this));
@@ -2545,7 +2545,7 @@ nsWindow::OnLeaveNotifyEvent(GdkEventCrossing *aEvent)
     WidgetMouseEvent event(true, eMouseExitFromWidget, this,
                            WidgetMouseEvent::eReal);
 
-    event.refPoint = GdkEventCoordsToDevicePixels(aEvent->x, aEvent->y);
+    event.mRefPoint = GdkEventCoordsToDevicePixels(aEvent->x, aEvent->y);
     event.AssignEventTime(GetWidgetEventTime(aEvent->time));
 
     event.exit = is_top_level_mouse_exit(mGdkWindow, aEvent)
@@ -2615,21 +2615,21 @@ nsWindow::OnMotionNotifyEvent(GdkEventMotion *aEvent)
     guint modifierState;
     if (synthEvent) {
 #ifdef MOZ_X11
-        event.refPoint.x = nscoord(xevent.xmotion.x);
-        event.refPoint.y = nscoord(xevent.xmotion.y);
+        event.mRefPoint.x = nscoord(xevent.xmotion.x);
+        event.mRefPoint.y = nscoord(xevent.xmotion.y);
 
         modifierState = xevent.xmotion.state;
 
         event.AssignEventTime(GetWidgetEventTime(xevent.xmotion.time));
 #else
-        event.refPoint = GdkEventCoordsToDevicePixels(aEvent->x, aEvent->y);
+        event.mRefPoint = GdkEventCoordsToDevicePixels(aEvent->x, aEvent->y);
 
         modifierState = aEvent->state;
 
         event.AssignEventTime(GetWidgetEventTime(aEvent->time));
 #endif /* MOZ_X11 */
     } else {
-        event.refPoint = GetRefPoint(this, aEvent);
+        event.mRefPoint = GetRefPoint(this, aEvent);
 
         modifierState = aEvent->state;
 
@@ -2697,7 +2697,7 @@ void
 nsWindow::InitButtonEvent(WidgetMouseEvent& aEvent,
                           GdkEventButton* aGdkEvent)
 {
-    aEvent.refPoint = GetRefPoint(this, aGdkEvent);
+    aEvent.mRefPoint = GetRefPoint(this, aGdkEvent);
 
     guint modifierState = aGdkEvent->state;
     // aEvent's state includes the button state from immediately before this
@@ -3115,7 +3115,7 @@ nsWindow::OnKeyPressEvent(GdkEventKey *aEvent)
                                           WidgetMouseEvent::eReal,
                                           WidgetMouseEvent::eContextMenuKey);
 
-        contextMenuEvent.refPoint = LayoutDeviceIntPoint(0, 0);
+        contextMenuEvent.mRefPoint = LayoutDeviceIntPoint(0, 0);
         contextMenuEvent.AssignEventTime(GetWidgetEventTime(aEvent->time));
         contextMenuEvent.clickCount = 1;
         KeymapWrapper::InitInputEvent(contextMenuEvent, aEvent->state);
@@ -3222,7 +3222,7 @@ nsWindow::OnScrollEvent(GdkEventScroll *aEvent)
         break;
     }
 
-    wheelEvent.refPoint = GetRefPoint(this, aEvent);
+    wheelEvent.mRefPoint = GetRefPoint(this, aEvent);
 
     KeymapWrapper::InitInputEvent(wheelEvent, aEvent->state);
 
@@ -3380,7 +3380,7 @@ nsWindow::DispatchDragEvent(EventMessage aMsg, const LayoutDeviceIntPoint& aRefP
         InitDragEvent(event);
     }
 
-    event.refPoint = aRefPoint;
+    event.mRefPoint = aRefPoint;
     event.AssignEventTime(GetWidgetEventTime(aTime));
 
     DispatchInputEvent(&event);
@@ -6560,7 +6560,7 @@ nsWindow::GetDragInfo(WidgetMouseEvent* aMouseEvent,
                "gdk_window_get_toplevel should not return null");
     *aWindow = gdk_window;
 
-    if (!aMouseEvent->widget) {
+    if (!aMouseEvent->mWidget) {
         return false;
     }
 
@@ -6569,9 +6569,9 @@ nsWindow::GetDragInfo(WidgetMouseEvent* aMouseEvent,
     // moved since the mousedown.  (On the other hand, it's quite likely
     // that the mouse has moved, which is why we use the mouse position
     // from the event.)
-    LayoutDeviceIntPoint offset = aMouseEvent->widget->WidgetToScreenOffset();
-    *aRootX = aMouseEvent->refPoint.x + offset.x;
-    *aRootY = aMouseEvent->refPoint.y + offset.y;
+    LayoutDeviceIntPoint offset = aMouseEvent->mWidget->WidgetToScreenOffset();
+    *aRootX = aMouseEvent->mRefPoint.x + offset.x;
+    *aRootY = aMouseEvent->mRefPoint.y + offset.y;
 
     return true;
 }
@@ -6876,7 +6876,7 @@ nsWindow::SynthesizeNativeMouseScrollEvent(mozilla::LayoutDeviceIntPoint aPoint,
 nsresult
 nsWindow::SynthesizeNativeTouchPoint(uint32_t aPointerId,
                                      TouchPointerState aPointerState,
-                                     ScreenIntPoint aPointerScreenPoint,
+                                     LayoutDeviceIntPoint aPoint,
                                      double aPointerPressure,
                                      uint32_t aPointerOrientation,
                                      nsIObserver* aObserver)
@@ -6938,13 +6938,10 @@ nsWindow::SynthesizeNativeTouchPoint(uint32_t aPointerId,
   GdkDeviceManager* device_manager = gdk_display_get_device_manager(display);
   event.touch.device = gdk_device_manager_get_client_pointer(device_manager);
 
-  event.touch.x_root = DevicePixelsToGdkCoordRoundDown(aPointerScreenPoint.x);
-  event.touch.y_root = DevicePixelsToGdkCoordRoundDown(aPointerScreenPoint.y);
+  event.touch.x_root = DevicePixelsToGdkCoordRoundDown(aPoint.x);
+  event.touch.y_root = DevicePixelsToGdkCoordRoundDown(aPoint.y);
 
-  LayoutDeviceIntPoint pointInWindow =
-    ViewAs<LayoutDevicePixel>(aPointerScreenPoint,
-                              PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent)
-    - WidgetToScreenOffset();
+  LayoutDeviceIntPoint pointInWindow = aPoint - WidgetToScreenOffset();
   event.touch.x = DevicePixelsToGdkCoordRoundDown(pointInWindow.x);
   event.touch.y = DevicePixelsToGdkCoordRoundDown(pointInWindow.y);
 

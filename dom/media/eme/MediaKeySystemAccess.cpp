@@ -34,10 +34,6 @@
 #include "gmp-audio-decode.h"
 #include "gmp-video-decode.h"
 
-#if defined(XP_WIN) || defined(XP_MACOSX)
-#define PRIMETIME_EME_SUPPORTED 1
-#endif
-
 namespace mozilla {
 namespace dom {
 
@@ -280,7 +276,7 @@ MediaKeySystemAccess::GetKeySystemStatus(const nsAString& aKeySystem,
     return EnsureMinCDMVersion(mps, aKeySystem, aMinCdmVersion, aOutMessage, aOutCdmVersion);
   }
 
-#ifdef PRIMETIME_EME_SUPPORTED
+#ifdef MOZ_ADOBE_EME
   if (aKeySystem.EqualsLiteral("com.adobe.primetime")) {
     if (!Preferences::GetBool("media.gmp-eme-adobe.enabled", false)) {
       aOutMessage = NS_LITERAL_CSTRING("Adobe EME disabled");
@@ -365,7 +361,8 @@ GMPDecryptsAndGeckoDecodesH264(mozIGeckoMediaPluginService* aGMPService,
                      NS_ConvertUTF16toUTF8(aKeySystem),
                      NS_LITERAL_CSTRING(GMP_API_VIDEO_DECODER),
                      NS_LITERAL_CSTRING("h264")) &&
-         MP4Decoder::CanHandleMediaType(aContentType);
+         MP4Decoder::CanHandleMediaType(aContentType,
+                                        /* DecoderDoctorDiagnostics* */ nullptr);
 }
 
 static bool
@@ -390,7 +387,8 @@ GMPDecryptsAndGeckoDecodesAAC(mozIGeckoMediaPluginService* aGMPService,
          // decode content decrypted by the Widevine CDM.
         (!aKeySystem.EqualsLiteral("com.widevine.alpha") || WMFDecoderModule::HasAAC()) &&
 #endif
-    MP4Decoder::CanHandleMediaType(aContentType);
+    MP4Decoder::CanHandleMediaType(aContentType,
+                                   /* DecoderDoctorDiagnostics* */ nullptr);
 }
 
 static bool

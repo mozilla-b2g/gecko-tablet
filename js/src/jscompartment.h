@@ -464,7 +464,7 @@ struct JSCompartment
     js::ObjectWeakMap* objectMetadataTable;
 
     // Map from array buffers to views sharing that storage.
-    JS::WeakCache<js::InnerViewTable> innerViews;
+    js::InnerViewTable innerViews;
 
     // Inline transparent typed objects do not initially have an array buffer,
     // but can have that buffer created lazily if it is accessed later. This
@@ -584,6 +584,7 @@ struct JSCompartment
 
     void sweepAfterMinorGC();
 
+    void sweepInnerViews();
     void sweepCrossCompartmentWrappers();
     void sweepSavedStacks();
     void sweepGlobalObject(js::FreeOp* fop);
@@ -755,8 +756,28 @@ struct JSCompartment
      */
     js::NativeIterator* enumerators;
 
+  private:
     /* Used by memory reporters and invalid otherwise. */
-    void*              compartmentStats;
+    JS::CompartmentStats* compartmentStats_;
+
+  public:
+    // This should only be called when it is non-null, i.e. during memory
+    // reporting.
+    JS::CompartmentStats& compartmentStats() {
+        // We use MOZ_RELEASE_ASSERT here because in bug 1132502 there was some
+        // (inconclusive) evidence that compartmentStats_ can be nullptr
+        // unexpectedly.
+        MOZ_RELEASE_ASSERT(compartmentStats_);
+        return *compartmentStats_;
+    }
+    void nullCompartmentStats() {
+        MOZ_ASSERT(compartmentStats_);
+        compartmentStats_ = nullptr;
+    }
+    void setCompartmentStats(JS::CompartmentStats* newStats) {
+        MOZ_ASSERT(!compartmentStats_ && newStats);
+        compartmentStats_ = newStats;
+    }
 
     // These flags help us to discover if a compartment that shouldn't be alive
     // manages to outlive a GC.

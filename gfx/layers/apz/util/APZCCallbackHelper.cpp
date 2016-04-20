@@ -124,9 +124,9 @@ ScrollFrame(nsIContent* aContent,
   // Scroll the window to the desired spot
   nsIScrollableFrame* sf = nsLayoutUtils::FindScrollableFrameFor(aMetrics.GetScrollId());
   if (sf) {
+    sf->ResetScrollInfoIfGeneration(aMetrics.GetScrollGeneration());
     sf->SetScrollableByAPZ(!aMetrics.IsScrollInfoLayer());
   }
-
   bool scrollUpdated = false;
   CSSPoint apzScrollOffset = aMetrics.GetScrollOffset();
   CSSPoint actualScrollOffset = ScrollFrameTo(sf, apzScrollOffset, scrollUpdated);
@@ -330,54 +330,6 @@ APZCCallbackHelper::InitializeRootDisplayport(nsIPresShell* aPresShell)
   }
 }
 
-class AcknowledgeScrollUpdateEvent : public nsRunnable
-{
-    typedef mozilla::layers::FrameMetrics::ViewID ViewID;
-
-public:
-    AcknowledgeScrollUpdateEvent(const ViewID& aScrollId, const uint32_t& aScrollGeneration)
-        : mScrollId(aScrollId)
-        , mScrollGeneration(aScrollGeneration)
-    {
-    }
-
-    NS_IMETHOD Run() {
-        MOZ_ASSERT(NS_IsMainThread());
-
-        nsIScrollableFrame* sf = nsLayoutUtils::FindScrollableFrameFor(mScrollId);
-        if (sf) {
-            sf->ResetScrollInfoIfGeneration(mScrollGeneration);
-        }
-
-        // Since the APZ and content are in sync, we need to clear any callback transform
-        // that might have been set on the last repaint request (which might have failed
-        // due to the inflight scroll update that this message is acknowledging).
-        nsCOMPtr<nsIContent> content = nsLayoutUtils::FindContentFor(mScrollId);
-        if (content) {
-            content->SetProperty(nsGkAtoms::apzCallbackTransform, new CSSPoint(),
-                                 nsINode::DeleteProperty<CSSPoint>);
-        }
-
-        return NS_OK;
-    }
-
-protected:
-    ViewID mScrollId;
-    uint32_t mScrollGeneration;
-};
-
-void
-APZCCallbackHelper::AcknowledgeScrollUpdate(const FrameMetrics::ViewID& aScrollId,
-                                            const uint32_t& aScrollGeneration)
-{
-    nsCOMPtr<nsIRunnable> r1 = new AcknowledgeScrollUpdateEvent(aScrollId, aScrollGeneration);
-    if (!NS_IsMainThread()) {
-        NS_DispatchToMainThread(r1);
-    } else {
-        r1->Run();
-    }
-}
-
 nsIPresShell*
 APZCCallbackHelper::GetRootContentDocumentPresShellForContent(nsIContent* aContent)
 {
@@ -505,8 +457,7 @@ APZCCallbackHelper::ApplyCallbackTransform(WidgetEvent& aEvent,
           event.mTouches[i]->mRefPoint, aGuid, aScale);
     }
   } else {
-    aEvent.refPoint = ApplyCallbackTransform(
-        aEvent.refPoint, aGuid, aScale);
+    aEvent.mRefPoint = ApplyCallbackTransform(aEvent.mRefPoint, aGuid, aScale);
   }
 }
 
@@ -514,8 +465,8 @@ nsEventStatus
 APZCCallbackHelper::DispatchWidgetEvent(WidgetGUIEvent& aEvent)
 {
   nsEventStatus status = nsEventStatus_eConsumeNoDefault;
-  if (aEvent.widget) {
-    aEvent.widget->DispatchEvent(&aEvent, status);
+  if (aEvent.mWidget) {
+    aEvent.mWidget->DispatchEvent(&aEvent, status);
   }
   return status;
 }
@@ -530,9 +481,9 @@ APZCCallbackHelper::DispatchSynthesizedMouseEvent(EventMessage aMsg,
   MOZ_ASSERT(aMsg == eMouseMove || aMsg == eMouseDown ||
              aMsg == eMouseUp || aMsg == eMouseLongTap);
 
-  WidgetMouseEvent event(true, aMsg, nullptr,
+  WidgetMouseEvent event(true, aMsg, aWidget,
                          WidgetMouseEvent::eReal, WidgetMouseEvent::eNormal);
-  event.refPoint = LayoutDeviceIntPoint(aRefPoint.x, aRefPoint.y);
+  event.mRefPoint = LayoutDeviceIntPoint(aRefPoint.x, aRefPoint.y);
   event.mTime = aTime;
   event.button = WidgetMouseEvent::eLeftButton;
   event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
@@ -541,7 +492,6 @@ APZCCallbackHelper::DispatchSynthesizedMouseEvent(EventMessage aMsg,
     event.clickCount = 1;
   }
   event.mModifiers = aModifiers;
-  event.widget = aWidget;
 
   return DispatchWidgetEvent(event);
 }
@@ -811,7 +761,7 @@ APZCCallbackHelper::SendSetTargetAPZCNotification(nsIWidget* aWidget,
         }
       } else if (const WidgetWheelEvent* wheelEvent = aEvent.AsWheelEvent()) {
         waitForRefresh = PrepareForSetTargetAPZCNotification(aWidget, aGuid,
-            rootFrame, wheelEvent->refPoint, &targets);
+            rootFrame, wheelEvent->mRefPoint, &targets);
       }
       // TODO: Do other types of events need to be handled?
 

@@ -425,6 +425,19 @@ private:
 
 NS_IMPL_ISUPPORTS(ConsoleListener, nsIConsoleListener)
 
+// Before we send the error to the parent process (which
+// involves copying the memory), truncate any long lines.  CSS
+// errors in particular share the memory for long lines with
+// repeated errors, but the IPC communication we're about to do
+// will break that sharing, so we better truncate now.
+static void
+TruncateString(nsAString& aString)
+{
+  if (aString.Length() > 1000) {
+    aString.Truncate(1000);
+  }
+}
+
 NS_IMETHODIMP
 ConsoleListener::Observe(nsIConsoleMessage* aMessage)
 {
@@ -434,28 +447,19 @@ ConsoleListener::Observe(nsIConsoleMessage* aMessage)
 
   nsCOMPtr<nsIScriptError> scriptError = do_QueryInterface(aMessage);
   if (scriptError) {
-    nsString msg, sourceName, sourceLine;
+    nsAutoString msg, sourceName, sourceLine;
     nsXPIDLCString category;
     uint32_t lineNum, colNum, flags;
 
     nsresult rv = scriptError->GetErrorMessage(msg);
     NS_ENSURE_SUCCESS(rv, rv);
+    TruncateString(msg);
     rv = scriptError->GetSourceName(sourceName);
     NS_ENSURE_SUCCESS(rv, rv);
+    TruncateString(sourceName);
     rv = scriptError->GetSourceLine(sourceLine);
     NS_ENSURE_SUCCESS(rv, rv);
-
-    // Before we send the error to the parent process (which
-    // involves copying the memory), truncate any long lines.  CSS
-    // errors in particular share the memory for long lines with
-    // repeated errors, but the IPC communication we're about to do
-    // will break that sharing, so we better truncate now.
-    if (sourceName.Length() > 1000) {
-      sourceName.Truncate(1000);
-    }
-    if (sourceLine.Length() > 1000) {
-      sourceLine.Truncate(1000);
-    }
+    TruncateString(sourceLine);
 
     rv = scriptError->GetCategory(getter_Copies(category));
     NS_ENSURE_SUCCESS(rv, rv);
@@ -465,6 +469,7 @@ ConsoleListener::Observe(nsIConsoleMessage* aMessage)
     NS_ENSURE_SUCCESS(rv, rv);
     rv = scriptError->GetFlags(&flags);
     NS_ENSURE_SUCCESS(rv, rv);
+
     mChild->SendScriptError(msg, sourceName, sourceLine,
                             lineNum, colNum, flags, category);
     return NS_OK;

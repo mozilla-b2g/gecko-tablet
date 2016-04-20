@@ -374,14 +374,14 @@ var snapshotFormatters = {
 
     // Adapter tbodies.
     let adapterKeys = [
-      ["adapterDescription"],
-      ["adapterVendorID"],
-      ["adapterDeviceID"],
-      ["driverVersion"],
-      ["driverDate"],
-      ["adapterDrivers"],
-      ["adapterSubsysID"],
-      ["adapterRAM"],
+      ["adapterDescription", "gpuDescription"],
+      ["adapterVendorID", "gpuVendorID"],
+      ["adapterDeviceID", "gpuDeviceID"],
+      ["driverVersion", "gpuDriverVersion"],
+      ["driverDate", "gpuDriverDate"],
+      ["adapterDrivers", "gpuDrivers"],
+      ["adapterSubsysID", "gpuSubsysID"],
+      ["adapterRAM", "gpuRAM"],
     ];
 
     function showGpu(id, suffix) {
@@ -390,8 +390,8 @@ var snapshotFormatters = {
       }
 
       let trs = [];
-      for (let key of adapterKeys) {
-        let value = get(key);
+      for (let [prop, key] of adapterKeys) {
+        let value = get(prop);
         if (value === undefined || value === "")
           continue;
         trs.push(buildRow(key, value));
@@ -406,16 +406,16 @@ var snapshotFormatters = {
       if ("isGPU2Active" in data && ((suffix == "2") != data.isGPU2Active)) {
         active = "no";
       }
-      addRow(id, "active", strings.GetStringFromName(active));
+      addRow(id, "gpuActive", strings.GetStringFromName(active));
       addRows(id, trs);
     }
     showGpu("gpu-1", "");
     showGpu("gpu-2", "2");
 
     // Remove adapter keys.
-    for (let key of adapterKeys) {
-      delete data[key];
-      delete data[key + "2"];
+    for (let [prop, key] of adapterKeys) {
+      delete data[prop];
+      delete data[prop + "2"];
     }
     delete data.isGPU2Active;
 
@@ -726,6 +726,10 @@ Serializer.prototype = {
     this._currentLine += text;
   },
 
+  _isHiddenSubHeading: function (th) {
+    return th.parentNode.parentNode.style.display == "none";
+  },
+
   _serializeTable: function (table) {
     // Collect the table's column headings if in fact there are any.  First
     // check thead.  If there's no thead, check the first tr.
@@ -738,9 +742,10 @@ Serializer.prototype = {
       // If there's a contiguous run of th's in the children starting from the
       // rightmost child, then consider them to be column headings.
       for (let i = tableHeadingCols.length - 1; i >= 0; i--) {
-        if (tableHeadingCols[i].localName != "th")
+        let col = tableHeadingCols[i];
+        if (col.localName != "th" || col.classList.contains("title-column"))
           break;
-        colHeadings[i] = this._nodeText(tableHeadingCols[i]).trim();
+        colHeadings[i] = this._nodeText(col).trim();
       }
     }
     let hasColHeadings = Object.keys(colHeadings).length > 0;
@@ -784,7 +789,12 @@ Serializer.prototype = {
         continue;
       let children = trs[i].querySelectorAll("th,td");
       let rowHeading = this._nodeText(children[0]).trim();
-      this._appendText(rowHeading + ": " + this._nodeText(children[1]).trim());
+      if (children[0].classList.contains("title-column")) {
+        if (!this._isHiddenSubHeading(children[0]))
+          this._appendText(rowHeading);
+      } else {
+        this._appendText(rowHeading + ": " + this._nodeText(children[1]).trim());
+      }
       this._startNewLine();
     }
     this._startNewLine();

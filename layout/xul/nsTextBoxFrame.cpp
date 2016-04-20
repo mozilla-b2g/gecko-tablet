@@ -68,7 +68,7 @@ NS_IMPL_FRAMEARENA_HELPERS(nsTextBoxFrame)
 
 NS_QUERYFRAME_HEAD(nsTextBoxFrame)
   NS_QUERYFRAME_ENTRY(nsTextBoxFrame)
-NS_QUERYFRAME_TAIL_INHERITING(nsTextBoxFrameSuper)
+NS_QUERYFRAME_TAIL_INHERITING(nsLeafBoxFrame)
 
 nsresult
 nsTextBoxFrame::AttributeChanged(int32_t         aNameSpaceID,
@@ -115,7 +115,7 @@ nsTextBoxFrame::Init(nsIContent*       aContent,
                      nsContainerFrame* aParent,
                      nsIFrame*         aPrevInFlow)
 {
-    nsTextBoxFrameSuper::Init(aContent, aParent, aPrevInFlow);
+    nsLeafBoxFrame::Init(aContent, aParent, aPrevInFlow);
 
     bool aResize;
     bool aRedraw;
@@ -130,7 +130,7 @@ nsTextBoxFrame::DestroyFrom(nsIFrame* aDestructRoot)
 {
     // unregister access key
     RegUnregAccessKey(false);
-    nsTextBoxFrameSuper::DestroyFrom(aDestructRoot);
+    nsLeafBoxFrame::DestroyFrom(aDestructRoot);
 }
 
 bool
@@ -419,7 +419,7 @@ nsTextBoxFrame::DrawText(nsRenderingContext& aRenderingContext,
         break;
       }
       const nsStyleTextReset* styleText = context->StyleTextReset();
-      
+
       if (decorMask & styleText->mTextDecorationLine) {  // a decoration defined here
         nscolor color;
         if (aOverrideColor) {
@@ -428,7 +428,7 @@ nsTextBoxFrame::DrawText(nsRenderingContext& aRenderingContext,
           bool isForeground;
           styleText->GetDecorationColor(color, isForeground);
           if (isForeground) {
-            color = nsLayoutUtils::GetColor(f, eCSSProperty_color);
+            color = nsLayoutUtils::GetColor(f, context->GetTextFillColorProp());
           }
         }
         uint8_t style = styleText->GetDecorationStyle();
@@ -1021,7 +1021,7 @@ nsTextBoxFrame::ComputesOwnOverflowArea()
 nsTextBoxFrame::MarkIntrinsicISizesDirty()
 {
     mNeedsRecalc = true;
-    nsTextBoxFrameSuper::MarkIntrinsicISizesDirty();
+    nsLeafBoxFrame::MarkIntrinsicISizesDirty();
 }
 
 void

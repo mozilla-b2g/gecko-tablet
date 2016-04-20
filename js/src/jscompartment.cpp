@@ -70,7 +70,6 @@ JSCompartment::JSCompartment(Zone* zone, const JS::CompartmentOptions& options =
     initialShapes(zone, InitialShapeSet()),
     selfHostingScriptSource(nullptr),
     objectMetadataTable(nullptr),
-    innerViews(zone, InnerViewTable()),
     lazyArrayBuffers(nullptr),
     nonSyntacticLexicalScopes_(nullptr),
     gcIncomingGrayPointers(nullptr),
@@ -80,7 +79,7 @@ JSCompartment::JSCompartment(Zone* zone, const JS::CompartmentOptions& options =
     debugScriptMap(nullptr),
     debugScopes(nullptr),
     enumerators(nullptr),
-    compartmentStats(nullptr),
+    compartmentStats_(nullptr),
     scheduledForDestruction(false),
     maybeAlive(true),
     jitCompartment_(nullptr),
@@ -665,6 +664,12 @@ JSCompartment::sweepAfterMinorGC()
 
     if (innerViews.needsSweepAfterMinorGC())
         innerViews.sweepAfterMinorGC();
+}
+
+void
+JSCompartment::sweepInnerViews()
+{
+    innerViews.sweep();
 }
 
 void

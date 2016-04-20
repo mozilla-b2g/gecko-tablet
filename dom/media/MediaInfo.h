@@ -504,6 +504,10 @@ public:
     {}
     ChannelLayout(uint32_t aChannels, const Channel* aConfig)
     {
+      if (!aConfig) {
+        mValid = false;
+        return;
+      }
       mChannels.AppendElements(aConfig, aChannels);
       UpdateChannelMap();
     }
@@ -599,6 +603,16 @@ public:
   bool Interleaved() const
   {
     return mInterleaved;
+  }
+  bool operator==(const AudioConfig& aOther) const
+  {
+    return mChannelLayout == aOther.mChannelLayout &&
+      mRate == aOther.mRate && mFormat == aOther.mFormat &&
+      mInterleaved == aOther.mInterleaved;
+  }
+  bool operator!=(const AudioConfig& aOther) const
+  {
+    return !(*this == aOther);
   }
 
   static const char* FormatToString(SampleFormat aFormat);
