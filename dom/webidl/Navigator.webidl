@@ -278,7 +278,7 @@ partial interface Navigator {
 
 #ifdef MOZ_WEBSMS_BACKEND
 partial interface Navigator {
-  [CheckAnyPermissions="sms", Pref="dom.sms.enabled", AvailableIn="CertifiedApps"]
+  [ChromeOnly, Pref="dom.sms.enabled"]
   readonly attribute MozMobileMessageManager? mozMobileMessage;
 };
 #endif
@@ -297,30 +297,30 @@ partial interface Navigator {
 
 #ifdef MOZ_B2G_RIL
 partial interface Navigator {
-  [Throws, Pref="dom.mobileconnection.enabled", CheckAnyPermissions="mobileconnection mobilenetwork", UnsafeInPrerendering]
+  [Throws, Pref="dom.mobileconnection.enabled", ChromeOnly, UnsafeInPrerendering]
   readonly attribute MozMobileConnectionArray mozMobileConnections;
 };
 
 partial interface Navigator {
-  [Throws, Pref="dom.cellbroadcast.enabled", CheckAnyPermissions="cellbroadcast",
-   AvailableIn="CertifiedApps", UnsafeInPrerendering]
+  [Throws, Pref="dom.cellbroadcast.enabled", ChromeOnly,
+   UnsafeInPrerendering]
   readonly attribute MozCellBroadcast mozCellBroadcast;
 };
 
 partial interface Navigator {
-  [Throws, Pref="dom.voicemail.enabled", CheckAnyPermissions="voicemail",
-   AvailableIn="CertifiedApps", UnsafeInPrerendering]
+  [Throws, Pref="dom.voicemail.enabled", ChromeOnly,
+   UnsafeInPrerendering]
   readonly attribute MozVoicemail mozVoicemail;
 };
 
 partial interface Navigator {
-  [Throws, Pref="dom.icc.enabled", CheckAnyPermissions="mobileconnection",
-   AvailableIn="CertifiedApps", UnsafeInPrerendering]
+  [Throws, Pref="dom.icc.enabled", ChromeOnly,
+   UnsafeInPrerendering]
   readonly attribute MozIccManager? mozIccManager;
 };
 
 partial interface Navigator {
-  [Throws, Pref="dom.telephony.enabled", CheckAnyPermissions="telephony", UnsafeInPrerendering]
+  [Throws, Pref="dom.telephony.enabled", ChromeOnly, UnsafeInPrerendering]
   readonly attribute Telephony? mozTelephony;
 };
 #endif // MOZ_B2G_RIL
