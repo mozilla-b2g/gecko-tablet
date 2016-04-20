@@ -26,7 +26,7 @@ EXTRA_COMPONENTS += [
     'PresentationRequestUIGlue.js',
     'ProcessGlobal.js',
     'SmsProtocolHandler.js',
-    'SystemMessageGlue.js',
+    'SystemMessageInternal.js',
     'TelProtocolHandler.js',
     'WebappsUpdateTimer.js',
 ]
@@ -84,7 +84,8 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] != 'gonk':
     ]
 
 XPIDL_SOURCES += [
-    'nsIGaiaChrome.idl'
+    'nsIGaiaChrome.idl',
+    'nsISystemMessagesInternal.idl'
 ]
 
 XPIDL_MODULE = 'gaia_chrome'
