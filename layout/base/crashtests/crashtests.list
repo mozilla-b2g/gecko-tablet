@@ -470,3 +470,4 @@ load 1162813.xul
 load 1163583.html
 load 1234622-1.html
 load 1235467-1.html
+pref(dom.webcomponents.enabled,true) load 1261351.html
