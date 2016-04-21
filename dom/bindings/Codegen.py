@@ -1852,18 +1852,6 @@ def isChromeOnly(m):
     return m.getExtendedAttribute("ChromeOnly")
 
 
-def getAvailableInTestFunc(obj):
-    availableIn = obj.getExtendedAttribute("AvailableIn")
-    if availableIn is None:
-        return None
-    assert isinstance(availableIn, list) and len(availableIn) == 1
-    if availableIn[0] == "PrivilegedApps":
-        return "IsInPrivilegedApp"
-    if availableIn[0] == "CertifiedApps":
-        return "IsInCertifiedApp"
-    raise TypeError("Unknown AvailableIn value '%s'" % availableIn[0])
-
-
 class MemberCondition:
     """
     An object representing the condition for a member to actually be
@@ -1872,20 +1860,12 @@ class MemberCondition:
 
     pref: The name of the preference.
     func: The name of the function.
-    available: A string indicating where we should be available.
-    checkAnyPermissions: An integer index for the anypermissions_* to use.
-    checkAllPermissions: An integer index for the allpermissions_* to use.
     nonExposedGlobals: A set of names of globals.  Can be empty, in which case
                        it's treated the same way as None.
     """
-    def __init__(self, pref=None, func=None, available=None,
-                 checkAnyPermissions=None, checkAllPermissions=None,
-                 nonExposedGlobals=None):
+    def __init__(self, pref=None, func=None, nonExposedGlobals=None):
         assert pref is None or isinstance(pref, str)
         assert func is None or isinstance(func, str)
-        assert available is None or isinstance(available, str)
-        assert checkAnyPermissions is None or isinstance(checkAnyPermissions, int)
-        assert checkAllPermissions is None or isinstance(checkAllPermissions, int)
         assert nonExposedGlobals is None or isinstance(nonExposedGlobals, set)
         self.pref = pref
 
@@ -1894,15 +1874,6 @@ class MemberCondition:
                 return "nullptr"
             return "&" + val
         self.func = toFuncPtr(func)
-        self.available = toFuncPtr(available)
-        if checkAnyPermissions is None:
-            self.checkAnyPermissions = "nullptr"
-        else:
-            self.checkAnyPermissions = "anypermissions_%i" % checkAnyPermissions
-        if checkAllPermissions is None:
-            self.checkAllPermissions = "nullptr"
-        else:
-            self.checkAllPermissions = "allpermissions_%i" % checkAllPermissions
 
         if nonExposedGlobals:
             # Nonempty set
@@ -1914,9 +1885,6 @@ class MemberCondition:
 
     def __eq__(self, other):
         return (self.pref == other.pref and self.func == other.func and
-                self.available == other.available and
-                self.checkAnyPermissions == other.checkAnyPermissions and
-                self.checkAllPermissions == other.checkAllPermissions and
                 self.nonExposedGlobals == other.nonExposedGlobals)
 
     def __ne__(self, other):
@@ -1925,9 +1893,6 @@ class MemberCondition:
     def hasDisablers(self):
         return (self.pref is not None or
                 self.func != "nullptr" or
-                self.available != "nullptr" or
-                self.checkAnyPermissions != "nullptr" or
-                self.checkAllPermissions != "nullptr" or
                 self.nonExposedGlobals != "0")
 
 
@@ -2012,9 +1977,6 @@ class PropertyDefiner:
                                           "Pref"),
             PropertyDefiner.getStringAttr(interfaceMember,
                                           "Func"),
-            getAvailableInTestFunc(interfaceMember),
-            descriptor.checkAnyPermissionsIndicesForMembers.get(interfaceMember.identifier.name),
-            descriptor.checkAllPermissionsIndicesForMembers.get(interfaceMember.identifier.name),
             nonExposureSet)
 
     def generatePrefableArray(self, array, name, specFormatter, specTerminator,
@@ -2058,7 +2020,7 @@ class PropertyDefiner:
         disablersTemplate = dedent(
             """
             static PrefableDisablers %s_disablers%d = {
-              true, %s, %s, %s, %s, %s
+              true, %s, %s
             };
             """)
         prefableWithDisablersTemplate = '  { &%s_disablers%d, &%s_specs[%d] }'
@@ -2079,10 +2041,7 @@ class PropertyDefiner:
                 disablers.append(disablersTemplate %
                                  (name, len(specs),
                                   condition.nonExposedGlobals,
-                                  condition.func,
-                                  condition.available,
-                                  condition.checkAnyPermissions,
-                                  condition.checkAllPermissions))
+                                  condition.func))
             else:
                 prefableSpecs.append(prefableWithoutDisablersTemplate %
                                      (name, len(specs)))
@@ -3330,15 +3289,6 @@ class CGConstructorEnabled(CGAbstractMethod):
         if func:
             assert isinstance(func, list) and len(func) == 1
             conditions.append("%s(aCx, aObj)" % func[0])
-        availableIn = getAvailableInTestFunc(iface)
-        if availableIn:
-            conditions.append("%s(aCx, aObj)" % availableIn)
-        checkAnyPermissions = self.descriptor.checkAnyPermissionsIndex
-        if checkAnyPermissions is not None:
-            conditions.append("CheckAnyPermissions(aCx, aObj, anypermissions_%i)" % checkAnyPermissions)
-        checkAllPermissions = self.descriptor.checkAllPermissionsIndex
-        if checkAllPermissions is not None:
-            conditions.append("CheckAllPermissions(aCx, aObj, allpermissions_%i)" % checkAllPermissions)
         # We should really have some conditions
         assert len(body) or len(conditions)
 
@@ -11983,17 +11933,6 @@ class CGDescriptor(CGThing):
         if descriptor.concrete and descriptor.wrapperCache:
             cgThings.append(CGClassObjectMovedHook(descriptor))
 
-        for name in ["anypermissions", "allpermissions"]:
-            permissions = getattr(descriptor, name)
-            if len(permissions):
-                for (k, v) in sorted(permissions.items()):
-                    perms = CGList((CGGeneric('"%s",' % p) for p in k), joiner="\n")
-                    perms.append(CGGeneric("nullptr"))
-                    cgThings.append(CGWrapper(CGIndenter(perms),
-                                              pre="static const char* const %s_%i[] = {\n" % (name, v),
-                                              post="\n};\n",
-                                              defineOnly=True))
-
         # Generate the _ClearCachedFooValue methods before the property arrays that use them.
         if descriptor.interface.isJSImplemented():
             for m in clearableCachedAttrs(descriptor):
@@ -16357,40 +16296,6 @@ class GlobalGenRoots():
         curr = CGIncludeGuard('UnionConversions', curr)
 
         # Done.
-        return curr
-
-    @staticmethod
-    def FeatureList(config):
-        things = set()
-        for d in config.getDescriptors():
-            if not d.interface.isExternal() and d.featureDetectibleThings is not None:
-                things.update(d.featureDetectibleThings)
-        things = CGList((CGGeneric(declare='"%s",' % t) for t in sorted(things)), joiner="\n")
-        things.append(CGGeneric(declare="nullptr"))
-        things = CGWrapper(CGIndenter(things),
-                           pre="static const char* const FeatureList[] = {\n",
-                           post="\n};\n")
-
-        helper_pre = "bool IsFeatureDetectible(const nsAString& aFeature) {\n"
-        helper = CGWrapper(CGIndenter(things),
-                           pre=helper_pre,
-                           post=dedent("""
-              const char* const* feature = FeatureList;
-              while (*feature) {
-                if (aFeature.EqualsASCII(*feature)) {
-                  return true;
-                }
-                ++feature;
-              }
-
-              return false;
-            }
-        """))
-
-        curr = CGNamespace.build(['mozilla', 'dom'], helper)
-        curr = CGHeaders([], [], [], [], ["nsString.h"], [], 'FeatureList', curr)
-        curr = CGIncludeGuard('FeatureList', curr)
-
         return curr
 
 
