@@ -11,6 +11,12 @@ flags:
     - upload-symbols
 
 builds:
+  aries-eng:
+    platforms:
+      - b2g
+    types:
+      opt:
+        task: tasks/builds/b2g_aries_eng.yml
   emulator-x86-l:
     platforms:
       - b2g
