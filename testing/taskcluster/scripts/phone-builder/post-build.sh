@@ -12,9 +12,6 @@ mkdir -p $HOME/artifacts-public
 
 DEVICE=${TARGET%%-*}
 
-ls -halR $WORKSPACE/B2G/upload/
-ls -halR $WORKSPACE/B2G/upload-public/
-
 mv $WORKSPACE/B2G/upload/sources.xml $HOME/artifacts/sources.xml
 mv $WORKSPACE/B2G/upload/b2g-*.android-arm.tar.gz $HOME/artifacts/b2g-android-arm.tar.gz
 mv $WORKSPACE/B2G/upload/${TARGET}.zip $HOME/artifacts/${TARGET}.zip
