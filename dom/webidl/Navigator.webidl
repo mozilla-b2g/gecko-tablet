@@ -415,12 +415,12 @@ partial interface Navigator {
 };
 
 partial interface Navigator {
-  [Pref="dom.tv.enabled", CheckAnyPermissions="tv", AvailableIn=CertifiedApps]
+  [Pref="dom.tv.enabled", ChromeOnly]
   readonly attribute TVManager? tv;
 };
 
 partial interface Navigator {
-  [Throws, Pref="dom.inputport.enabled", CheckAnyPermissions="inputport", AvailableIn=CertifiedApps]
+  [Throws, Pref="dom.inputport.enabled", ChromeOnly]
   readonly attribute InputPortManager inputPortManager;
 };
 
