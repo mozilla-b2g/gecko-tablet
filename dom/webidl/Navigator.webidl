@@ -355,7 +355,7 @@ partial interface Navigator {
 #ifdef MOZ_TIME_MANAGER
 // nsIDOMMozNavigatorTime
 partial interface Navigator {
-  [Throws, CheckAnyPermissions="time", UnsafeInPrerendering]
+  [Throws, ChromeOnly, UnsafeInPrerendering]
   readonly attribute MozTimeManager mozTime;
 };
 #endif // MOZ_TIME_MANAGER
