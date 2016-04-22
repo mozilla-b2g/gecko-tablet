@@ -214,13 +214,13 @@ partial interface Navigator {
   /**
    * Navigator requests to add an idle observer to the existing window.
    */
-  [Throws, CheckAnyPermissions="idle"]
+  [Throws, ChromeOnly]
   void addIdleObserver(MozIdleObserver aIdleObserver);
 
   /**
    * Navigator requests to remove an idle observer from the existing window.
    */
-  [Throws, CheckAnyPermissions="idle"]
+  [Throws, ChromeOnly]
   void removeIdleObserver(MozIdleObserver aIdleObserver);
 
   /**
