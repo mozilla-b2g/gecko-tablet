@@ -146,7 +146,7 @@ interface BrowserElementPrivileged {
 
   [Throws,
    Pref="dom.mozBrowserFramesEnabled",
-   CheckAllPermissions="browser input-manage"]
+   ChromeOnly]
   DOMRequest setInputMethodActive(boolean isActive);
 
   [Throws,
