@@ -94,10 +94,10 @@ interface NavigatorStorageUtils {
 
 [NoInterfaceObject]
 interface NavigatorFeatures {
-  [CheckAnyPermissions="feature-detection", Throws]
+  [ChromeOnly, Throws]
   Promise<any> getFeature(DOMString name);
 
-  [CheckAnyPermissions="feature-detection", Throws]
+  [ChromeOnly, Throws]
   Promise<any> hasFeature(DOMString name);
 };
 
