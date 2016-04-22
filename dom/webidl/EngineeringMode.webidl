@@ -4,8 +4,7 @@
 
 [JSImplementation="@mozilla.org/dom/engineering-mode-api;1",
  NavigatorProperty="engineeringMode",
- AvailableIn=CertifiedApps,
- CheckAnyPermissions="engineering-mode"]
+ ChromeOnly]
 interface EngineeringMode : EventTarget {
   Promise<DOMString> getValue(DOMString name);
   Promise<void> setValue(DOMString name, DOMString value);
