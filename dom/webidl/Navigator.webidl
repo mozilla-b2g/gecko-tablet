@@ -347,7 +347,7 @@ partial interface Navigator {
 
 #ifdef MOZ_B2G_FM
 partial interface Navigator {
-  [Throws, CheckAnyPermissions="fmradio", UnsafeInPrerendering]
+  [Throws, ChromeOnly, UnsafeInPrerendering]
   readonly attribute FMRadio mozFMRadio;
 };
 #endif // MOZ_B2G_FM
