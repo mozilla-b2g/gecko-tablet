@@ -45,7 +45,6 @@
 #include "nsRefPtrHashtable.h"
 #include "nsClassHashtable.h"
 #include "nsPresArena.h"
-#include "nsIImageLoadingContent.h"
 #include "nsMargin.h"
 #include "nsFrameState.h"
 
@@ -497,6 +496,15 @@ public:
   * Returns nullptr if is XUL document.
   */
   virtual nsCanvasFrame* GetCanvasFrame() const = 0;
+
+  /**
+   * Gets the real primary frame associated with the content object.
+   *
+   * In the case of absolutely positioned elements and floated elements,
+   * the real primary frame is the frame that is out of the flow and not the
+   * placeholder frame.
+   */
+  virtual nsIFrame* GetRealPrimaryFrameFor(nsIContent* aContent) const = 0;
 
   /**
    * Gets the placeholder frame associated with the specified frame. This is
@@ -1591,11 +1599,12 @@ public:
   virtual void RebuildApproximateFrameVisibility(nsRect* aRect = nullptr,
                                                  bool aRemoveOnly = false) = 0;
 
-  /// Ensures @aFrame is in the list of approximately visible frames.
-  virtual void EnsureFrameInApproximatelyVisibleList(nsIFrame* aFrame) = 0;
+  /// Adds @aFrame to the list of frames which were visible within the
+  /// displayport during the last paint.
+  virtual void MarkFrameVisibleInDisplayPort(nsIFrame* aFrame) = 0;
 
-  /// Removes @aFrame from the list of approximately visible frames if present.
-  virtual void RemoveFrameFromApproximatelyVisibleList(nsIFrame* aFrame) = 0;
+  /// Marks @aFrame nonvisible and removes it from all lists of visible frames.
+  virtual void MarkFrameNonvisible(nsIFrame* aFrame) = 0;
 
   /// Whether we should assume all frames are visible.
   virtual bool AssumeAllFramesVisible() = 0;

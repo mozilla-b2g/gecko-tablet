@@ -434,9 +434,9 @@ Accessible::NativeState()
 
     // XXX we should look at layout for non XUL box frames, but need to decide
     // how that interacts with ARIA.
-    if (HasOwnContent() && mContent->IsXULElement() && frame->IsBoxFrame()) {
+    if (HasOwnContent() && mContent->IsXULElement() && frame->IsXULBoxFrame()) {
       const nsStyleXUL* xulStyle = frame->StyleXUL();
-      if (xulStyle && frame->IsBoxFrame()) {
+      if (xulStyle && frame->IsXULBoxFrame()) {
         // In XUL all boxes are either vertical or horizontal
         if (xulStyle->mBoxOrient == NS_STYLE_BOX_ORIENT_VERTICAL)
           state |= states::VERTICAL;
@@ -854,7 +854,7 @@ Accessible::HandleAccEvent(AccEvent* aEvent)
           break;
 
         case nsIAccessibleEvent::EVENT_HIDE:
-          ipcDoc->SendHideEvent(id);
+          ipcDoc->SendHideEvent(id, aEvent->IsFromUserInput());
           break;
 
         case nsIAccessibleEvent::EVENT_REORDER:

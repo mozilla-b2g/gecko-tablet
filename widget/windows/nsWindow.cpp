@@ -6850,7 +6850,9 @@ nsWindow::HasBogusPopupsDropShadowOnMultiMonitor() {
         nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
         if (gfxInfo) {
           int32_t status;
-          if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_DIRECT3D_9_LAYERS, &status))) {
+          nsCString discardFailureId;
+          if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_DIRECT3D_9_LAYERS,
+                                                     discardFailureId, &status))) {
             if (status == nsIGfxInfo::FEATURE_STATUS_OK ||
                 gfxPrefs::LayersAccelerationForceEnabled())
             {
@@ -7643,13 +7645,11 @@ nsWindow::DealWithPopups(HWND aWnd, UINT aMessage,
     nsIntPoint pos(pt.x, pt.y);
 
     consumeRollupEvent =
-      rollupListener->Rollup(popupsToRollup, true, &pos, &mLastRollup) ||
-      consumeRollupEvent;
+      rollupListener->Rollup(popupsToRollup, true, &pos, &mLastRollup);
     NS_IF_ADDREF(mLastRollup);
   } else {
     consumeRollupEvent =
-      rollupListener->Rollup(popupsToRollup, true, nullptr, nullptr) ||
-      consumeRollupEvent;
+      rollupListener->Rollup(popupsToRollup, true, nullptr, nullptr);
   }
 
   // Tell hook to stop processing messages

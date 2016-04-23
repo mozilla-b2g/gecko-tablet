@@ -245,6 +245,12 @@ pref("services.kinto.changes.path", "/buckets/monitor/collections/changes/record
 pref("services.kinto.bucket", "blocklists");
 pref("services.kinto.onecrl.collection", "certificates");
 pref("services.kinto.onecrl.checked", 0);
+pref("services.kinto.addons.collection", "addons");
+pref("services.kinto.addons.checked", 0);
+pref("services.kinto.plugins.collection", "plugins");
+pref("services.kinto.plugins.checked", 0);
+pref("services.kinto.gfx.collection", "gfx");
+pref("services.kinto.gfx.checked", 0);
 
 // for now, let's keep kinto update out of the release channel (pending
 // collection signatures)
@@ -304,6 +310,9 @@ pref("browser.search.order.US.3", "chrome://browser/locale/region.properties");
 
 // disable updating
 pref("browser.search.update", false);
+
+// enable tracking protection for private browsing
+pref("privacy.trackingprotection.pbmode.enabled", true);
 
 // disable search suggestions by default
 pref("browser.search.suggest.enabled", false);
@@ -646,14 +655,46 @@ pref("media.mediasource.enabled", true);
 pref("image.downscale-during-decode.enabled", true);
 
 #ifdef MOZ_SAFE_BROWSING
+pref("browser.safebrowsing.enabled", true);
+pref("browser.safebrowsing.malware.enabled", true);
 pref("browser.safebrowsing.downloads.enabled", false);
 pref("browser.safebrowsing.downloads.remote.enabled", false);
+pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
+pref("browser.safebrowsing.downloads.remote.url", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.downloads.remote.block_dangerous",            true);
+pref("browser.safebrowsing.downloads.remote.block_dangerous_host",       true);
+pref("browser.safebrowsing.downloads.remote.block_potentially_unwanted", false);
+pref("browser.safebrowsing.downloads.remote.block_uncommon",             false);
+pref("browser.safebrowsing.debug", false);
+
+pref("browser.safebrowsing.provider.google.lists", "goog-badbinurl-shavar,goog-downloadwhite-digest256,goog-phish-shavar,goog-malware-shavar,goog-unwanted-shavar");
+pref("browser.safebrowsing.provider.google.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.provider.google.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
+pref("browser.safebrowsing.provider.google.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
+
+pref("browser.safebrowsing.reportPhishMistakeURL", "https://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%&url=");
+pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%&url=");
+pref("browser.safebrowsing.reportMalwareMistakeURL", "https://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%&url=");
 
 pref("browser.safebrowsing.id", @MOZ_APP_UA_NAME@);
 
 // Name of the about: page contributed by safebrowsing to handle display of error
 // pages on phishing/malware hits.  (bug 399233)
 pref("urlclassifier.alternate_error_page", "blocked");
+
+// The number of random entries to send with a gethash request.
+pref("urlclassifier.gethashnoise", 4);
+
+// Gethash timeout for Safebrowsing.
+pref("urlclassifier.gethash.timeout_ms", 5000);
+
+// If an urlclassifier table has not been updated in this number of seconds,
+// a gethash request will be forced to check that the result is still in
+// the database.
+pref("urlclassifier.max-complete-age", 2700);
+
+// Tables for application reputation.
+pref("urlclassifier.downloadBlockTable", "goog-badbinurl-shavar");
 #endif
 
 // True if this is the first time we are showing about:firstrun
@@ -867,11 +908,7 @@ pref("reader.toolbar.vertical", false);
 pref("toolkit.telemetry.unified", false);
 
 // Unified AccessibleCarets (touch-caret and selection-carets).
-#ifdef NIGHTLY_BUILD
 pref("layout.accessiblecaret.enabled", true);
-#else
-pref("layout.accessiblecaret.enabled", false);
-#endif
 
 // AccessibleCaret CSS for the Android L style assets.
 pref("layout.accessiblecaret.width", "22.0");

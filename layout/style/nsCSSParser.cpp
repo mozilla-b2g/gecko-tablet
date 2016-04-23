@@ -35,6 +35,7 @@
 #include "nsColor.h"
 #include "nsCSSPseudoClasses.h"
 #include "nsCSSPseudoElements.h"
+#include "nsCSSAnonBoxes.h"
 #include "nsNameSpaceManager.h"
 #include "nsXMLNameSpaceMap.h"
 #include "nsError.h"
@@ -964,7 +965,7 @@ protected:
   // Assuming a [ <line-names>? ] has already been parsed,
   // parse the rest of a <track-list>.
   //
-  // This exists because [ <line-names>? ] is ambiguous in the 'grid'
+  // This exists because [ <line-names>? ] is ambiguous in the 'grid-template'
   // shorthand: it can be either the start of a <track-list> (in
   // a <'grid-template-rows'>) or of the intertwined syntax that sets both
   // grid-template-rows and grid-template-areas.
@@ -5927,6 +5928,13 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
     return eSelectorParsingStatus_Error;
   }
 
+  if (nsCSSAnonBoxes::IsNonElement(pseudo)) {
+    // Non-element anonymous boxes should not match any rule.
+    REPORT_UNEXPECTED_TOKEN(PEPseudoSelUnknown);
+    UngetToken();
+    return eSelectorParsingStatus_Error;
+  }
+
   // We currently allow :-moz-placeholder and ::-moz-placeholder. We have to
   // be a bit stricter regarding the pseudo-element parsing rules.
   if (pseudoElementType == CSSPseudoElementType::mozPlaceholder &&
@@ -8522,7 +8530,7 @@ CSSParserImpl::ParseGridLineNames(nsCSSValue& aValue)
   nsCSSValueList* item;
   if (aValue.GetUnit() == eCSSUnit_List) {
     // Find the end of an existing list.
-    // The 'grid' shorthand uses this, at most once for a given list.
+    // The grid-template shorthand uses this, at most once for a given list.
 
     // NOTE: we could avoid this traversal by somehow keeping around
     // a pointer to the last item from the previous call.
@@ -9360,7 +9368,7 @@ CSSParserImpl::ParseGridTemplate()
   return ParseGridTemplateColumnsRows(eCSSProperty_grid_template_columns);
 }
 
-// Helper for parsing <'grid-template'> part of the 'grid' shorthand:
+// Helper for parsing the 'grid-template' shorthand:
 // Parse [ <line-names>? <string> <track-size>? <line-names>? ]+
 // with a <line-names>? already consumed, stored in |aFirstLineNames|,
 // and the current token a <string>
@@ -11478,6 +11486,8 @@ CSSParserImpl::ParsePropertyByFunction(nsCSSProperty aPropID)
   case eCSSProperty_grid_template_columns:
   case eCSSProperty_grid_template_rows:
     return ParseGridTemplateColumnsRows(aPropID);
+  case eCSSProperty_grid_template:
+    return ParseGridTemplate();
   case eCSSProperty_grid:
     return ParseGrid();
   case eCSSProperty_grid_column_start:
@@ -15163,6 +15173,9 @@ CSSParserImpl::ParseTextCombineUpright(nsCSSValue& aValue)
   // if 'digits', need to check for an explicit number [2, 3, 4]
   if (eCSSUnit_Enumerated == aValue.GetUnit() &&
       aValue.GetIntValue() == NS_STYLE_TEXT_COMBINE_UPRIGHT_DIGITS_2) {
+    if (!nsLayoutUtils::TextCombineUprightDigitsEnabled()) {
+      return false;
+    }
     if (!GetToken(true)) {
       return true;
     }

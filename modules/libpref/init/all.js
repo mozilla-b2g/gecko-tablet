@@ -351,6 +351,13 @@ pref("media.mp3.enabled", true);
 pref("media.apple.mp3.enabled", true);
 pref("media.apple.mp4.enabled", true);
 #endif
+
+// Filter what triggers user notifications.
+// See DecoderDoctorDocumentWatcher::ReportAnalysis for details.
+pref("media.decoder-doctor.notifications-allowed", "MediaWidevineNoWMFNoSilverlight");
+// Whether we report partial failures.
+pref("media.decoder-doctor.verbose", false);
+
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", true);
 pref("media.navigator.video.enabled", true);
@@ -471,10 +478,10 @@ pref("media.getusermedia.screensharing.enabled", true);
 #endif
 
 #ifdef RELEASE_BUILD
-pref("media.getusermedia.screensharing.allowed_domains", "webex.com,*.webex.com,ciscospark.com,*.ciscospark.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,appear.in,*.appear.in,tokbox.com,*.tokbox.com,*.sso.francetelecom.fr,*.si.francetelecom.fr,*.sso.infra.ftgroup,*.multimedia-conference.orange-business.com,*.espacecollaboration.orange-business.com,free.gotomeeting.com,g2m.me,*.g2m.me,example.com,*.mypurecloud.com,*.mypurecloud.com.au,spreed.me,*.spreed.me,*.spreed.com,air.mozilla.org,*.circuit.com,*.yourcircuit.com,circuit.siemens.com,yourcircuit.siemens.com,circuitsandbox.net,*.unify.com,tandi.circuitsandbox.net,*.ericsson.net,*.cct.ericsson.net,*.opentok.com,*.conf.meetecho.com,meet.jit.si,*.meet.jit.si,web.stage.speakeasyapp.net,web.speakeasyapp.net,*.hipchat.me,*.beta-wspbx.com,*.wspbx.com,*.unifiedcloudit.com,*.smartboxuc.com,*.smartbox-uc.com,*.panterranetworks.com,pexipdemo.com,*.pexipdemo.com,pex.me,*.pex.me,*.rd.pexip.com,1click.io,*.1click.io,*.fuze.com,*.fuzemeeting.com,*.thinkingphones.com,gotomeeting.com,*.gotomeeting.com,gotowebinar.com,*.gotowebinar.com,gototraining.com,*.gototraining.com,citrix.com,*.citrix.com,expertcity.com,*.expertcity.com,citrixonline.com,*.citrixonline.com,g2m.me,*.g2m.me,gotomeet.me,*.gotomeet.me,gotomeet.at,*.gotomeet.at");
+pref("media.getusermedia.screensharing.allowed_domains", "webex.com,*.webex.com,ciscospark.com,*.ciscospark.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,appear.in,*.appear.in,tokbox.com,*.tokbox.com,*.sso.francetelecom.fr,*.si.francetelecom.fr,*.sso.infra.ftgroup,*.multimedia-conference.orange-business.com,*.espacecollaboration.orange-business.com,free.gotomeeting.com,g2m.me,*.g2m.me,*.mypurecloud.com,*.mypurecloud.com.au,spreed.me,*.spreed.me,*.spreed.com,air.mozilla.org,*.circuit.com,*.yourcircuit.com,circuit.siemens.com,yourcircuit.siemens.com,circuitsandbox.net,*.unify.com,tandi.circuitsandbox.net,*.ericsson.net,*.cct.ericsson.net,*.opentok.com,*.conf.meetecho.com,meet.jit.si,*.meet.jit.si,web.stage.speakeasyapp.net,web.speakeasyapp.net,*.hipchat.me,*.beta-wspbx.com,*.wspbx.com,*.unifiedcloudit.com,*.smartboxuc.com,*.smartbox-uc.com,*.panterranetworks.com,pexipdemo.com,*.pexipdemo.com,pex.me,*.pex.me,*.rd.pexip.com,1click.io,*.1click.io,*.fuze.com,*.fuzemeeting.com,*.thinkingphones.com,gotomeeting.com,*.gotomeeting.com,gotowebinar.com,*.gotowebinar.com,gototraining.com,*.gototraining.com,citrix.com,*.citrix.com,expertcity.com,*.expertcity.com,citrixonline.com,*.citrixonline.com,g2m.me,*.g2m.me,gotomeet.me,*.gotomeet.me,gotomeet.at,*.gotomeet.at,miriadaxdes.miriadax.net,certificacion.miriadax.net,miriadax.net");
 #else
- // temporary value, not intended for release - bug 1049087
-pref("media.getusermedia.screensharing.allowed_domains", "mozilla.github.io,webex.com,*.webex.com,ciscospark.com,*.ciscospark.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,appear.in,*.appear.in,tokbox.com,*.tokbox.com,*.sso.francetelecom.fr,*.si.francetelecom.fr,*.sso.infra.ftgroup,*.multimedia-conference.orange-business.com,*.espacecollaboration.orange-business.com,free.gotomeeting.com,g2m.me,*.g2m.me,example.com,*.mypurecloud.com,*.mypurecloud.com.au,spreed.me,*.spreed.me,*.spreed.com,air.mozilla.org,*.circuit.com,*.yourcircuit.com,circuit.siemens.com,yourcircuit.siemens.com,circuitsandbox.net,*.unify.com,tandi.circuitsandbox.net,*.ericsson.net,*.cct.ericsson.net,*.opentok.com,*.conf.meetecho.com,meet.jit.si,*.meet.jit.si,web.stage.speakeasyapp.net,web.speakeasyapp.net,*.hipchat.me,*.beta-wspbx.com,*.wspbx.com,*.unifiedcloudit.com,*.smartboxuc.com,*.smartbox-uc.com,*.panterranetworks.com,pexipdemo.com,*.pexipdemo.com,pex.me,*.pex.me,*.rd.pexip.com,1click.io,*.1click.io,*.fuze.com,*.fuzemeeting.com,*.thinkingphones.com,gotomeeting.com,*.gotomeeting.com,gotowebinar.com,*.gotowebinar.com,gototraining.com,*.gototraining.com,citrix.com,*.citrix.com,expertcity.com,*.expertcity.com,citrixonline.com,*.citrixonline.com,g2m.me,*.g2m.me,gotomeet.me,*.gotomeet.me,gotomeet.at,*.gotomeet.at");
+ // includes Mozilla's test domain: mozilla.github.io (not intended for release)
+pref("media.getusermedia.screensharing.allowed_domains", "mozilla.github.io,webex.com,*.webex.com,ciscospark.com,*.ciscospark.com,projectsquared.com,*.projectsquared.com,*.room.co,room.co,beta.talky.io,talky.io,*.clearslide.com,appear.in,*.appear.in,tokbox.com,*.tokbox.com,*.sso.francetelecom.fr,*.si.francetelecom.fr,*.sso.infra.ftgroup,*.multimedia-conference.orange-business.com,*.espacecollaboration.orange-business.com,free.gotomeeting.com,g2m.me,*.g2m.me,*.mypurecloud.com,*.mypurecloud.com.au,spreed.me,*.spreed.me,*.spreed.com,air.mozilla.org,*.circuit.com,*.yourcircuit.com,circuit.siemens.com,yourcircuit.siemens.com,circuitsandbox.net,*.unify.com,tandi.circuitsandbox.net,*.ericsson.net,*.cct.ericsson.net,*.opentok.com,*.conf.meetecho.com,meet.jit.si,*.meet.jit.si,web.stage.speakeasyapp.net,web.speakeasyapp.net,*.hipchat.me,*.beta-wspbx.com,*.wspbx.com,*.unifiedcloudit.com,*.smartboxuc.com,*.smartbox-uc.com,*.panterranetworks.com,pexipdemo.com,*.pexipdemo.com,pex.me,*.pex.me,*.rd.pexip.com,1click.io,*.1click.io,*.fuze.com,*.fuzemeeting.com,*.thinkingphones.com,gotomeeting.com,*.gotomeeting.com,gotowebinar.com,*.gotowebinar.com,gototraining.com,*.gototraining.com,citrix.com,*.citrix.com,expertcity.com,*.expertcity.com,citrixonline.com,*.citrixonline.com,g2m.me,*.g2m.me,gotomeet.me,*.gotomeet.me,gotomeet.at,*.gotomeet.at,miriadaxdes.miriadax.net,certificacion.miriadax.net,miriadax.net");
 #endif
 // OS/X 10.6 and XP have screen/window sharing off by default due to various issues - Caveat emptor
 pref("media.getusermedia.screensharing.allow_on_old_platforms", false);
@@ -1774,6 +1781,7 @@ pref("network.prefetch-next", true);
 // enables the predictive service
 pref("network.predictor.enabled", true);
 pref("network.predictor.enable-hover-on-ssl", false);
+pref("network.predictor.enable-prefetch", true);
 pref("network.predictor.page-degradation.day", 0);
 pref("network.predictor.page-degradation.week", 5);
 pref("network.predictor.page-degradation.month", 10);
@@ -1784,9 +1792,12 @@ pref("network.predictor.subresource-degradation.week", 10);
 pref("network.predictor.subresource-degradation.month", 25);
 pref("network.predictor.subresource-degradation.year", 50);
 pref("network.predictor.subresource-degradation.max", 100);
+pref("network.predictor.prefetch-rolling-load-count", 10);
+pref("network.predictor.prefetch-min-confidence", 100);
 pref("network.predictor.preconnect-min-confidence", 90);
 pref("network.predictor.preresolve-min-confidence", 60);
 pref("network.predictor.redirect-likely-confidence", 75);
+pref("network.predictor.prefetch-force-valid-for", 10);
 pref("network.predictor.max-resources-per-entry", 100);
 pref("network.predictor.max-uri-length", 500);
 pref("network.predictor.cleaned-up", false);
@@ -2427,7 +2438,9 @@ pref("layout.css.background-clip-text.enabled", true);
 pref("layout.css.vertical-text.enabled", true);
 
 // Is support for CSS text-combine-upright (tate-chu-yoko) enabled?
-pref("layout.css.text-combine-upright.enabled", false);
+pref("layout.css.text-combine-upright.enabled", true);
+// Is support for CSS text-combine-upright: digits 2-4 enabled?
+pref("layout.css.text-combine-upright-digits.enabled", false);
 
 // Is support for object-fit and object-position enabled?
 pref("layout.css.object-fit-and-position.enabled", true);
@@ -2568,11 +2581,7 @@ pref("dom.animations-api.core.enabled", true);
 // API) enabled?
 // Note that if dom.animations-api.core.enabled is true, this preference is
 // ignored.
-#ifdef RELEASE_BUILD
-pref("dom.animations-api.element-animate.enabled", false);
-#else
 pref("dom.animations-api.element-animate.enabled", true);
-#endif
 
 // pref to permit users to make verified SOAP calls by default
 pref("capability.policy.default.SOAPCall.invokeVerifySourceHeader", "allAccess");
@@ -4957,7 +4966,6 @@ pref("dom.inter-app-communication-api.enabled", false);
 // Disable mapped array buffer by default.
 pref("dom.mapped_arraybuffer.enabled", false);
 
-#ifdef MOZ_SAFE_BROWSING
 // The tables used for Safebrowsing phishing and malware checks.
 pref("urlclassifier.malwareTable", "goog-malware-shavar,goog-unwanted-shavar,test-malware-simple,test-unwanted-simple");
 pref("urlclassifier.phishTable", "goog-phish-shavar,test-phish-simple");
@@ -4969,41 +4977,6 @@ pref("urlclassifier.disallow_completions", "test-malware-simple,test-phish-simpl
 // checks.
 pref("urlclassifier.trackingTable", "test-track-simple,mozstd-track-digest256");
 pref("urlclassifier.trackingWhitelistTable", "test-trackwhite-simple,mozstd-trackwhite-digest256");
-
-// Tables for application reputation.
-pref("urlclassifier.downloadBlockTable", "goog-badbinurl-shavar");
-
-// The number of random entries to send with a gethash request.
-pref("urlclassifier.gethashnoise", 4);
-
-// Gethash timeout for Safebrowsing.	
-pref("urlclassifier.gethash.timeout_ms", 5000);
-
-// If an urlclassifier table has not been updated in this number of seconds,
-// a gethash request will be forced to check that the result is still in
-// the database.
-pref("urlclassifier.max-complete-age", 2700);
-
-pref("browser.safebrowsing.enabled", true);
-pref("browser.safebrowsing.malware.enabled", true);
-
-pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
-pref("browser.safebrowsing.downloads.remote.url", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
-pref("browser.safebrowsing.downloads.remote.block_dangerous",            true);
-pref("browser.safebrowsing.downloads.remote.block_dangerous_host",       true);
-pref("browser.safebrowsing.downloads.remote.block_potentially_unwanted", false);
-pref("browser.safebrowsing.downloads.remote.block_uncommon",             false);
-pref("browser.safebrowsing.debug", false);
-
-pref("browser.safebrowsing.provider.google.lists", "goog-badbinurl-shavar,goog-downloadwhite-digest256,goog-phish-shavar,goog-malware-shavar,goog-unwanted-shavar");
-pref("browser.safebrowsing.provider.google.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
-pref("browser.safebrowsing.provider.google.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.provider.google.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
-
-pref("browser.safebrowsing.reportPhishMistakeURL", "https://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%&url=");
-pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%&url=");
-pref("browser.safebrowsing.reportMalwareMistakeURL", "https://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%&url=");
-
 
 // The table and global pref for blocking access to sites forbidden by policy
 pref("browser.safebrowsing.forbiddenURIs.enabled", false);
@@ -5027,7 +5000,6 @@ pref("browser.safebrowsing.provider.mozilla.lists.mozfull.description", "mozfull
 
 // Allow users to ignore Safe Browsing warnings.
 pref("browser.safebrowsing.allowOverride", true);
-#endif
 
 // Turn off Spatial navigation by default.
 pref("snav.enabled", false);

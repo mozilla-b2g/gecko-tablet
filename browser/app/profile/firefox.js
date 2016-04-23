@@ -46,7 +46,7 @@ pref("extensions.getAddons.get.url", "https://services.addons.mozilla.org/%LOCAL
 pref("extensions.getAddons.getWithPerformance.url", "https://services.addons.mozilla.org/%LOCALE%/firefox/api/%API_VERSION%/search/guid:%IDS%?src=firefox&appOS=%OS%&appVersion=%VERSION%&tMain=%TIME_MAIN%&tFirstPaint=%TIME_FIRST_PAINT%&tSessionRestored=%TIME_SESSION_RESTORED%");
 pref("extensions.getAddons.search.browseURL", "https://addons.mozilla.org/%LOCALE%/firefox/search?q=%TERMS%&platform=%OS%&appver=%VERSION%");
 pref("extensions.getAddons.search.url", "https://services.addons.mozilla.org/%LOCALE%/firefox/api/%API_VERSION%/search/%TERMS%/all/%MAX_RESULTS%/%OS%/%VERSION%/%COMPATIBILITY_MODE%?src=firefox");
-pref("extensions.webservice.discoverURL", "https://services.addons.mozilla.org/%LOCALE%/firefox/discovery/pane/%VERSION%/%OS%/%COMPATIBILITY_MODE%");
+pref("extensions.webservice.discoverURL", "https://discovery.addons.mozilla.org/%LOCALE%/firefox/discovery/pane/%VERSION%/%OS%/%COMPATIBILITY_MODE%");
 pref("extensions.getAddons.recommended.url", "https://services.addons.mozilla.org/%LOCALE%/%APP%/api/%API_VERSION%/list/recommended/all/%MAX_RESULTS%/%OS%/%VERSION%?src=firefox");
 pref("extensions.getAddons.link.url", "https://addons.mozilla.org/%LOCALE%/firefox/");
 
@@ -68,6 +68,12 @@ pref("services.kinto.changes.path", "/buckets/monitor/collections/changes/record
 pref("services.kinto.bucket", "blocklists");
 pref("services.kinto.onecrl.collection", "certificates");
 pref("services.kinto.onecrl.checked", 0);
+pref("services.kinto.addons.collection", "addons");
+pref("services.kinto.addons.checked", 0);
+pref("services.kinto.plugins.collection", "plugins");
+pref("services.kinto.plugins.checked", 0);
+pref("services.kinto.gfx.collection", "gfx");
+pref("services.kinto.gfx.checked", 0);
 
 // for now, let's keep kinto update out of the release channel
 #ifdef RELEASE_BUILD
@@ -780,8 +786,26 @@ pref("gecko.handlerService.schemes.ircs.3.uriTemplate", "chrome://browser-region
 pref("gecko.handlerService.allowRegisterFromDifferentHost", false);
 
 #ifdef MOZ_SAFE_BROWSING
+pref("browser.safebrowsing.enabled", true);
+pref("browser.safebrowsing.malware.enabled", true);
 pref("browser.safebrowsing.downloads.enabled", true);
 pref("browser.safebrowsing.downloads.remote.enabled", true);
+pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
+pref("browser.safebrowsing.downloads.remote.url", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.downloads.remote.block_dangerous",            true);
+pref("browser.safebrowsing.downloads.remote.block_dangerous_host",       true);
+pref("browser.safebrowsing.downloads.remote.block_potentially_unwanted", false);
+pref("browser.safebrowsing.downloads.remote.block_uncommon",             false);
+pref("browser.safebrowsing.debug", false);
+
+pref("browser.safebrowsing.provider.google.lists", "goog-badbinurl-shavar,goog-downloadwhite-digest256,goog-phish-shavar,goog-malware-shavar,goog-unwanted-shavar");
+pref("browser.safebrowsing.provider.google.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.provider.google.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
+pref("browser.safebrowsing.provider.google.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
+
+pref("browser.safebrowsing.reportPhishMistakeURL", "https://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%&url=");
+pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%&url=");
+pref("browser.safebrowsing.reportMalwareMistakeURL", "https://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%&url=");
 
 #ifdef MOZILLA_OFFICIAL
 // Normally the "client ID" sent in updates is appinfo.name, but for
@@ -793,6 +817,18 @@ pref("browser.safebrowsing.id", "navclient-auto-ffox");
 // pages on phishing/malware hits.  (bug 399233)
 pref("urlclassifier.alternate_error_page", "blocked");
 
+// The number of random entries to send with a gethash request.
+pref("urlclassifier.gethashnoise", 4);
+
+// Gethash timeout for Safebrowsing.
+pref("urlclassifier.gethash.timeout_ms", 5000);
+
+// If an urlclassifier table has not been updated in this number of seconds,
+// a gethash request will be forced to check that the result is still in
+// the database.
+pref("urlclassifier.max-complete-age", 2700);
+// Tables for application reputation.
+pref("urlclassifier.downloadBlockTable", "goog-badbinurl-shavar");
 #ifdef XP_WIN
 // Only download the whitelist on Windows, since the whitelist is
 // only useful for suppressing remote lookups for signed binaries which we can
