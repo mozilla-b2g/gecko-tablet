@@ -90,17 +90,41 @@ tests:
         task: tasks/tests/mulet_mochitests.yml
       tasks/builds/mulet_linux_dbg.yml:
         task: tasks/tests/mulet_mochitests.yml
+      tasks/builds/opt_linux64.yml:
+        task: tasks/tests/fx_linux64_mochitest_plain.yml
+      tasks/builds/dbg_linux64.yml:
+        task: tasks/tests/fx_linux64_mochitest_plain_dbg.yml
+  mochitest-e10s:
+    allowed_build_tasks:
+      tasks/builds/opt_linux64.yml:
+        task: tasks/tests/fx_linux64_mochitest_plain_e10s.yml
+      tasks/builds/dbg_linux64.yml:
+        task: tasks/tests/fx_linux64_mochitest_plain_e10s_dbg.yml
+  mochitest-a11y:
+    allowed_build_tasks:
+      tasks/builds/opt_linux64.yml:
+        task: tasks/tests/fx_linux64_mochitest_a11y.yml
+      tasks/builds/dbg_linux64.yml:
+        task: tasks/tests/fx_linux64_mochitest_a11y_dbg.yml
   reftest:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
         task: tasks/tests/mulet_reftests.yml
       tasks/builds/mulet_linux_dbg.yml:
         task: tasks/tests/mulet_reftests.yml
-  mochitest-e10s:
-    allowed_build_tasks:
+      tasks/builds/opt_linux64.yml:
+        task: tasks/tests/fx_linux64_reftest.yml
       tasks/builds/dbg_linux64.yml:
-        task: tasks/tests/fx_linux64_mochitest_plain_e10s.yml
-  mochitest-a11y:
+        task: tasks/tests/fx_linux64_reftest_dbg.yml
+  reftest-e10s:
     allowed_build_tasks:
+      tasks/builds/opt_linux64.yml:
+        task: tasks/tests/fx_linux64_reftest_e10s.yml
       tasks/builds/dbg_linux64.yml:
-        task: tasks/tests/fx_linux64_mochitest_a11y.yml
+        task: tasks/tests/fx_linux64_reftest_e10s_dbg.yml
+  xpcshell:
+    allowed_build_tasks:
+      tasks/builds/opt_linux64.yml:
+        task: tasks/tests/fx_linux64_xpcshell.yml
+      tasks/builds/dbg_linux64.yml:
+        task: tasks/tests/fx_linux64_xpcshell_dbg.yml
