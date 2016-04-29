@@ -56,18 +56,53 @@ var Places = {
     }
 
     var objectStore = this.db.createObjectStore(this.SITES_STORE,
-      { keyPath: 'hostname' });
+      { keyPath: 'id' });
 
     objectStore.createIndex('frecency', 'frecency', { unique: false });
 
-    objectStore.transaction.oncomplete = function() {
+    objectStore.transaction.oncomplete = (function() {
       console.log('Sites store created successfully');
-    };
+      this.populate();
+    }).bind(this);
   
     objectStore.transaction.onerror = function() {
       console.log('Error creating Sites store');
     };
 
+  },
+
+  /**
+   * Populate the database with default content.
+   */
+  populate: function() {
+    fetch('chrome://b2g/content/shared/defaults/sites.json').then((function(response) {
+      if(response.ok) {
+        response.json().then((function(manifests) {
+          manifests.forEach(function(manifestObject) {
+            var siteObject = new Site(manifestObject);
+            this.addSite(siteObject);
+          }, this);
+        }).bind(this));
+        this.broadcastChannel.postMessage('siteupdated');
+      } else {
+        console.error('Bad network response while fetching default sites');
+      }
+    }).bind(this))
+    .catch(function(error) {
+      console.error('Failed to fetch default sites: ' + error.message);
+    });    
+  },
+
+  addSite: function(siteObject) {
+    var transaction = this.db.transaction(this.SITES_STORE, 'readwrite');
+    var objectStore = transaction.objectStore(this.SITES_STORE);
+    var request = objectStore.add(siteObject);
+    request.onsuccess = function() {
+      console.log('Successfully added site to Places database with id ' + siteObject.id);
+    }
+    request.onerror = function() {
+      console.error('Failed to add site to Places database with id ' + siteObject.id);
+    }
   },
 
   /**
@@ -79,39 +114,34 @@ var Places = {
     var transaction = this.db.transaction(this.SITES_STORE, 'readwrite');
     var objectStore = transaction.objectStore(this.SITES_STORE);
     var urlObject = new URL(url);
-    var hostname = urlObject.hostname;
+    var id = urlObject.hostname;
     var startUrl = urlObject.origin + '/';
-    var readRequest = objectStore.get(hostname);
+    var readRequest = objectStore.get(id);
     readRequest.onsuccess = (function() {
       // If site doesn't exist, create it
       if (!readRequest.result) {
         var writeRequest = objectStore.add({
-          'hostname': hostname,
+          'id': id,
           'startUrl': startUrl,
           'frecency': 1
         });
       // Otherwise update site frecency
       } else {
-        var frecency = ++readRequest.result.frecency;
-        var writeRequest = objectStore.put({
-          'hostname': hostname,
-          'startUrl': startUrl,
-          'frecency': frecency
-        });
+        var result = readRequest.result;
+        result.frecency = (result.frecency ? ++result.frecency : 1);
+        var writeRequest = objectStore.put(result);
       }
   
       writeRequest.onsuccess = (function() {
-        this.broadcastChannel.postMessage('siteupdated'); 
-        console.log('Successfully updated site ' + hostname +
-          ' with frecency ' + frecency + ' and start_url ' + startUrl);
+        this.broadcastChannel.postMessage('siteupdated');
       }).bind(this);
   
       writeRequest.onerror = function() {
-        console.error('Error updating site ' + hostname);
+        console.error('Error updating site ' + id);
       };
     }).bind(this);
     readRequest.onerror = function() {
-      console.error('Error reading site ' + hostname);
+      console.error('Error reading site ' + id);
     }
   },
 

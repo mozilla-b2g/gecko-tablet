@@ -21,11 +21,14 @@ html, body {
   margin-left: 0;
   margin-right: 1rem;
   margin-bottom: 1rem;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 7.5rem;
 }
 
 .tile .tile-name {
   display: block;
-  margin-top: 10rem;
+  margin-top: 11rem;
   font-size: 1.1rem;
   overflow: hidden;
   text-overflow: ellipsis;
