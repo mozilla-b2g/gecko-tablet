@@ -1,0 +1,148 @@
+[
+  {
+    "name": "Facebook",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/facebook.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://touch.facebook.com/",
+    "theme_color": "#3b5998",
+    "background_color": "#3b5998"
+  },
+  {
+    "name": "Twitter",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/twitter.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://mobile.twitter.com",
+    "theme_color": "#55acee",
+    "background_color": "#55acee"
+  },
+  {
+    "name": "Netflix",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/netflix.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://www.netflix.com",
+    "background_color": "#ffffff"
+  },
+  {
+    "name": "YouTube",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/youtube.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://m.youtube.com/",
+    "theme_color": "#e62117",
+    "background_color": "#292929"
+  },
+  {
+    "name": "The Guardian",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/guardian.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "http://www.theguardian.com/",
+    "theme_color": "#005689",
+    "background_color": "#005689"
+  },
+  {
+    "name": "Kindle",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/kindle.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://read.amazon.com/",
+    "background_color": "#000000"
+  },
+  {
+    "name": "Amazon",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/amazon.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "http://www.amazon.com/",
+    "background_color": "#ffffff"
+  },
+  {
+    "name": "eBay",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/ebay.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "http://m.ebay.com/",
+    "background_color": "#f0efec"
+  },
+  {
+    "name": "Wikipedia",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/wikipedia.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://en.m.wikipedia.org/",
+    "background_color": "#f8f8f8"
+  },
+  {
+    "name": "Pinterest",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/pinterest.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://pinterest.com/",
+    "background_color": "#be2026"
+  },
+  {
+    "name": "SoundCloud",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/soundcloud.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://m.soundcloud.com/",
+    "background_color": "#ff5419"
+  },
+  {
+    "name": "PlayerFM",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/playerfm.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "https://player.fm/",
+    "theme_color": "",
+    "background_color": "#d81c21"
+  },
+  {
+    "name": "Swooop",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/swooop.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "http://playcanv.as/p/JtL2iqIH",
+    "scope": "/p/JtL2iqIH",
+    "background_color": "#61aafd"
+  },
+  {
+    "name": "slither.io",
+    "icons": [{
+      "src": "chrome://b2g/content/shared/defaults/icons/slither.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "http://slither.io/",
+    "background_color": "#282935"
+  }
+]
