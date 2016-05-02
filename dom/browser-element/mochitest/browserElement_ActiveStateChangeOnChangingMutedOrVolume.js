@@ -2,9 +2,8 @@
 
 SimpleTest.waitForExplicitFinish();
 browserElementTestHelpers.setEnabledPref(true);
-browserElementTestHelpers.addPermission();
 
-var fileURL = 'http://example.org/tests/dom/browser-element/mochitest/file_browserElement_ActiveStateChangeOnChangingMutedOrVolume.html';
+var fileURL = 'chrome://mochitests/content/chrome/dom/browser-element/mochitest/file_browserElement_ActiveStateChangeOnChangingMutedOrVolume.html';
 var generator = runTests();
 var testFrame;
 var ac;
@@ -94,7 +93,7 @@ function setupTestFrame() {
     testFrame.removeEventListener('mozbrowserloadend', loadend);
     ok("allowedAudioChannels" in testFrame, "allowedAudioChannels exist");
     var channels = testFrame.allowedAudioChannels;
-    is(channels.length, 1, "1 audio channel by default");
+    is(channels.length, 9, "9 audio channel by default");
 
     ac = channels[0];
 

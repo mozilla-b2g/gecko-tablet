@@ -6,7 +6,6 @@
 'use strict';
 SimpleTest.waitForExplicitFinish();
 browserElementTestHelpers.setEnabledPref(true);
-browserElementTestHelpers.addPermission();
 
 const EMPTY_URL = 'file_empty.html';
 const MICRODATA_URL = 'file_microdata.html';
