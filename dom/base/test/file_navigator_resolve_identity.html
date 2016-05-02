@@ -10,18 +10,18 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=985827
   <link rel="stylesheet" type="text/css" href="chrome://mochikit/content/tests/SimpleTest/test.css"/>
   <script type="application/javascript">
 
-  /** Test for Bug 985827 **/
+  function test() {
+    var is = parent.is;
 
-  SimpleTest.waitForExplicitFinish();
+    // Test WebIDL NavigatorProperty objects
+    var x = navigator.mozContacts;
+    is(typeof x, "object", "Should have a mozContacts object");
+    delete navigator.mozContacts;
+    var y = navigator.mozContacts;
+    is(x, y, "Should have gotten the same mozContacts object again");
+  }
 
-  addEventListener('load', function() {
-    var iframe = document.createElement("iframe");
-    var dir = "chrome://mochitests/content/chrome/dom/base/test/";
-    iframe.src = dir + "file_navigator_resolve_identity.html";
-    document.body.appendChild(iframe);
-    iframe.onload = function() { SimpleTest.finish(); };
-  });
-
+  test();
   </script>
 </head>
 <body>
