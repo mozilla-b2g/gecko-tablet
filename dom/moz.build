@@ -45,7 +45,6 @@ DIRS += [
     'base',
     'bluetooth',
     'archivereader',
-    'requestsync',
     'bindings',
     'battery',
     'browser-element',
