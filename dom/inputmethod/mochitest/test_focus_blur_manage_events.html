@@ -133,8 +133,6 @@ function setupInputAppFrame() {
 
     let inputAppFrame = document.createElement('iframe');
     inputAppFrame.setAttribute('mozbrowser', true);
-    // FIXME: Bug 1270790
-    inputAppFrame.setAttribute('remote', true);
     inputAppFrame.src = imeUrl;
     document.body.appendChild(inputAppFrame);
 
