@@ -69,5 +69,8 @@ function runTest() {
 }
 
 addEventListener('testready', function() {
-  SimpleTest.executeSoon(runTest);
+  SpecialPowers.pushPrefEnv({'set': [["b2g.system_startup_url", window.location.href]]},
+                            function() {
+    SimpleTest.executeSoon(runTest);
+  });
 });

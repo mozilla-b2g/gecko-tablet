@@ -595,20 +595,23 @@ nsBrowserElement::GenerateAllowedAudioChannels(
     return;
   }
 
-  // Since we don't have permissions anymore let any window pick its channel
-  const nsAttrValue::EnumTable* audioChannelTable =
-    AudioChannelService::GetAudioChannelTable();
+  // Since we don't have permissions anymore let only chrome windows pick a
+  // non-default channel
+  if (nsContentUtils::IsChromeDoc(doc)) {
+    const nsAttrValue::EnumTable* audioChannelTable =
+      AudioChannelService::GetAudioChannelTable();
 
-  for (uint32_t i = 0; audioChannelTable && audioChannelTable[i].tag; ++i) {
-    AudioChannel value = (AudioChannel)audioChannelTable[i].value;
-    RefPtr<BrowserElementAudioChannel> ac =
-      BrowserElementAudioChannel::Create(aWindow, aFrameLoader, aAPI,
-                                         value, aRv);
-    if (NS_WARN_IF(aRv.Failed())) {
-      return;
+    for (uint32_t i = 0; audioChannelTable && audioChannelTable[i].tag; ++i) {
+      AudioChannel value = (AudioChannel)audioChannelTable[i].value;
+      RefPtr<BrowserElementAudioChannel> ac =
+        BrowserElementAudioChannel::Create(aWindow, aFrameLoader, aAPI,
+                                           value, aRv);
+      if (NS_WARN_IF(aRv.Failed())) {
+        return;
+      }
+
+      channels.AppendElement(ac);
     }
-
-    channels.AppendElement(ac);
   }
 
   aAudioChannels.SwapElements(channels);

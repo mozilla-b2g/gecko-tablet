@@ -11,6 +11,7 @@
 #include "nsIDocument.h"
 #include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
+#include "nsIURI.h"
 
 using namespace mozilla::dom;
 
@@ -112,6 +113,25 @@ AudioChannelAgent::FindCorrectWindow(nsPIDOMWindowInner* aWindow)
 
   if (nsContentUtils::IsChromeDoc(doc)) {
     return NS_OK;
+  }
+
+  nsAdoptingCString systemAppUrl =
+    mozilla::Preferences::GetCString("b2g.system_startup_url");
+  if (!systemAppUrl) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIPrincipal> principal = doc->NodePrincipal();
+  nsCOMPtr<nsIURI> uri;
+  principal->GetURI(getter_AddRefs(uri));
+
+  if (uri) {
+    nsAutoCString spec;
+    uri->GetSpec(spec);
+
+    if (spec.Equals(systemAppUrl)) {
+      return NS_OK;
+    }
   }
 
   return FindCorrectWindow(parent);

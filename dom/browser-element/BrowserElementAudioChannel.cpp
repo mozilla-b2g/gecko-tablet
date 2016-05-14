@@ -521,6 +521,40 @@ BrowserElementAudioChannel::ProcessStateChanged(const char16_t* aData)
   DispatchTrustedEvent(NS_LITERAL_STRING("activestatechanged"));
 }
 
+bool
+BrowserElementAudioChannel::IsSystemAppWindow(nsPIDOMWindowOuter* aWindow) const
+{
+  nsCOMPtr<nsIDocument> doc = aWindow->GetExtantDoc();
+  if (!doc) {
+    return false;
+  }
+
+  if (nsContentUtils::IsChromeDoc(doc)) {
+    return true;
+  }
+
+  nsAdoptingCString systemAppUrl =
+    mozilla::Preferences::GetCString("b2g.system_startup_url");
+  if (!systemAppUrl) {
+    return false;
+  }
+
+  nsCOMPtr<nsIPrincipal> principal = doc->NodePrincipal();
+  nsCOMPtr<nsIURI> uri;
+  principal->GetURI(getter_AddRefs(uri));
+
+  if (uri) {
+    nsAutoCString spec;
+    uri->GetSpec(spec);
+
+    if (spec.Equals(systemAppUrl)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 nsresult
 BrowserElementAudioChannel::IsFromNestedFrame(nsISupports* aSubject,
                                               bool& aIsNested) const
@@ -544,16 +578,8 @@ BrowserElementAudioChannel::IsFromNestedFrame(nsISupports* aSubject,
   // Since the normal OOP processes are opened out from b2g process, the owner
   // of their tabParent are the same - system app window. Therefore, in order
   // to find the case of nested MozFrame, we need to exclude this situation.
-  bool isSystemApp = false;
-
-
   nsCOMPtr<nsPIDOMWindowOuter> window = element->OwnerDoc()->GetWindow();
-  nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
-  if (doc && nsContentUtils::IsChromeDoc(doc)) {
-    isSystemApp = true;
-  }
-
-  if (window == mFrameWindow && !isSystemApp) {
+  if (window == mFrameWindow && !IsSystemAppWindow(window)) {
     aIsNested = true;
     return NS_OK;
   }

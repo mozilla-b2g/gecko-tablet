@@ -72,7 +72,6 @@ function runTests() {
 function setupTestFrame() {
   testFrame = document.createElement('iframe');
   testFrame.setAttribute('mozbrowser', 'true');
-  testFrame.setAttribute('mozapp', 'http://example.org/manifest.webapp');
   testFrame.src = fileURL;
 
   function loadend() {
@@ -97,7 +96,8 @@ function setupTestFrame() {
 }
 
 addEventListener('testready', function() {
-  SpecialPowers.pushPrefEnv({'set': [["dom.audiochannel.mutedByDefault", true]]},
+  SpecialPowers.pushPrefEnv({'set': [["b2g.system_startup_url", window.location.href],
+                                     ["dom.audiochannel.mutedByDefault", true]]},
                             function() {
     SimpleTest.executeSoon(setupTestFrame);
   });

@@ -19,6 +19,7 @@ addLoadEvent(() => {
       SpecialPowers.pushPrefEnv(
         {'set': [["dom.mozBrowserFramesEnabled", true],
                  ["dom.webapps.useCurrentProfile", true],
+                 ["b2g.system_startup_url", window.location.href],
                  ["media.useAudioChannelAPI", true]]},
         () => { generator.next(); })
     });
@@ -73,7 +74,6 @@ function runTest(aOOPCEnabled) {
     var iframe = document.createElement('iframe');
     iframe.setAttribute('mozbrowser', true);
     iframe.setAttribute('remote', aOOPCEnabled);
-    iframe.setAttribute('mozapp', manifestURI);
     iframe.src = srcURI;
 
     iframe.addEventListener('mozbrowserloadend', () => {

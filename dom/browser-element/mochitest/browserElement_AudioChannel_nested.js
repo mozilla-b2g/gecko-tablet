@@ -12,7 +12,6 @@ browserElementTestHelpers.addPermission();
 function runTests() {
   var iframe = document.createElement('iframe');
   iframe.setAttribute('mozbrowser', 'true');
-  iframe.setAttribute('mozapp', 'http://example.org/manifest.webapp');
 
   var listener = function(e) {
     var message = e.detail.message;
@@ -72,5 +71,8 @@ function runTests() {
 }
 
 addEventListener('testready', function() {
-  SimpleTest.executeSoon(runTests);
+  SpecialPowers.pushPrefEnv({'set': [["b2g.system_startup_url", window.location.href]]},
+                            function() {
+    SimpleTest.executeSoon(runTests);
+  });
 });
