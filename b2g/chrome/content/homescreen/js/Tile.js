@@ -6,40 +6,47 @@
 
 /**
  * Tile Constructor.
+ *
+ * @param {Object} siteObject A SiteObject representing a site.
+ * @param {Boolean} pinned Whether or not the site is pinned.
  */
-var Tile = function(siteObject) {
+var Tile = function(siteObject, pinned) {
   this.container = document.getElementById('top-sites');
   this.siteObject = siteObject;
-  this.render();
+  this.render(pinned);
   return this;
 };
-
 
 /** 
  * Generate Tile View.
  */
 Tile.prototype.view = function() {
   var style = '';
+  var backgroundBrightness = 'light';
   if (this.siteObject.backgroundColor) {
     style += 'background-color: ' + this.siteObject.backgroundColor + ';';
     var rgb = this._hexToRgb(this.siteObject.backgroundColor);
-    var textColor = this._blackOrWhite(rgb);
-    style +='color: ' + textColor + ';';
+    backgroundBrightness = this._darkOrLight(rgb);
   }
   if (this.siteObject.icons && this.siteObject.icons[0])
     style += 'background-image: url(' + this.siteObject.icons[0].src +  ');'
   var label = this.siteObject.name || this.siteObject.id;
-  return '<li id="tile-' + this.siteObject.id +'" class="tile" style="'
-    + style + '"><span class="tile-name">' + label + '</span></li>';
+  return '<li id="tile-' + this.siteObject.id +'" class="tile ' + backgroundBrightness
+    + '" style="' + style + '"><span class="tile-name">' + label + '</span></li>';
 };
 
 /**
  * Render Tile.
+ *
+ * @param {Boolean} pinned Whether or not the site is pinned.
  */
-Tile.prototype.render = function() {
+Tile.prototype.render = function(pinned) {
   this.container.insertAdjacentHTML('beforeend', this.view());
   this.element = document.getElementById('tile-' + this.siteObject.id);
   this.element.addEventListener('click', this.open.bind(this));
+  if (pinned) {
+    this.element.classList.add('pinned');
+  }
 };
 
 /**
@@ -66,15 +73,15 @@ Tile.prototype._hexToRgb = function(hex) {
 };
 
 /**
- * Choose highest contrast text colour.
+ * Measure whether color is dark or light.
  *
  * @param {Object} RGB object with r, g, b properties.
- * @return {String} black or white hex colour code.
+ * @return {String} 'dark' or 'light'.
  */
-Tile.prototype._blackOrWhite = function(rgb) {
+Tile.prototype._darkOrLight = function(rgb) {
   if ((rgb.r*0.299 + rgb.g*0.587 + rgb.b*0.114) > 186) {
-    return '#000'; 
+    return 'light'; 
   } else {
-    return '#fff';
+    return 'dark';
   }
 };
