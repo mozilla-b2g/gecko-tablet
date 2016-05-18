@@ -30,9 +30,22 @@ var HomeScreen = {
    */
   showTopSites: function() {
     this.topSites.innerHTML = '';
+    var pinnedSiteIds = [];
+
+    // First get pinned sites
+    Places.getPinnedSites().then(function(pinnedSites) {
+      pinnedSites.forEach(function(siteObject) {
+        pinnedSiteIds.push(siteObject.id);
+        var tile = new Tile(siteObject, true);
+      }, this);
+    });
+    
+    // Then get all top sites and de-dupe
     Places.getTopSites().then((function(topSites) {
       topSites.forEach(function(siteObject) {
-        var tile = new Tile(siteObject);
+        if (pinnedSiteIds.indexOf(siteObject.id) == -1) {
+          var tile = new Tile(siteObject);
+        }
       }, this);
     }).bind(this));
   },

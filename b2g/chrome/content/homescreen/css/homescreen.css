@@ -27,9 +27,24 @@ html, body {
 }
 
 .tile .tile-name {
-  display: block;
+  display: inline-block;
   margin-top: 11rem;
   font-size: 1.1rem;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tile.dark .tile-name {
+  color: #fff;
+}
+
+.tile.pinned .tile-name {
+  padding-left: 1.1rem;
+  background-repeat: no-repeat;
+  background-position: left;
+  background-image: url('../images/pin-dark.png');
+}
+
+.tile.pinned.dark .tile-name {
+  background-image: url('../images/pin-light.png');
 }
