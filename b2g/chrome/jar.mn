@@ -82,6 +82,8 @@ chrome.jar:
   content/homescreen/js/HomeScreen.js         (content/homescreen/js/HomeScreen.js)
   content/homescreen/js/Tile.js               (content/homescreen/js/Tile.js)
   content/homescreen/css/homescreen.css       (content/homescreen/css/homescreen.css)
+  content/homescreen/images/pin-light.png     (content/homescreen/images/pin-light.png)
+  content/homescreen/images/pin-dark.png      (content/homescreen/images/pin-dark.png)
 
 # Shared
   content/shared/js/Places.js                 (content/shared/js/Places.js)
@@ -101,4 +103,3 @@ chrome.jar:
   content/shared/defaults/icons/twitter.png   (content/shared/defaults/icons/twitter.png)
   content/shared/defaults/icons/wikipedia.png (content/shared/defaults/icons/wikipedia.png)
   content/shared/defaults/icons/youtube.png   (content/shared/defaults/icons/youtube.png)
-  

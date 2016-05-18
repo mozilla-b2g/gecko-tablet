@@ -76,33 +76,73 @@ var Places = {
    */
   populate: function() {
     fetch('chrome://b2g/content/shared/defaults/sites.json').then((function(response) {
-      if(response.ok) {
-        response.json().then((function(manifests) {
-          manifests.forEach(function(manifestObject) {
-            var siteObject = new Site(manifestObject);
-            this.addSite(siteObject);
-          }, this);
-        }).bind(this));
-        this.broadcastChannel.postMessage('siteupdated');
-      } else {
+      if (!response.ok) {
         console.error('Bad network response while fetching default sites');
+        return;
       }
+      response.json().then((function(manifests) {
+        var pinnedSites = [];
+        
+        manifests.forEach(function(manifestObject) {
+          var siteObject = new Site(manifestObject);
+          pinnedSites.push(siteObject.id); // Default sites are pinned by default
+          this.addSite(siteObject);
+        }, this);
+        // Persist list of pinned sites in a special record
+        this.addSite({
+          'id': '{pinnedSites}',
+          'list': pinnedSites
+        }).then((function() {
+          this.broadcastChannel.postMessage('siteupdated');
+        }).bind(this));
+      }).bind(this));
     }).bind(this))
     .catch(function(error) {
       console.error('Failed to fetch default sites: ' + error.message);
     });    
   },
 
+  /*
+   * Add a site to the sites database.
+   *
+   * @param {Object} site A Site object.
+   * @return {Promise} A Promise which resolves once the write is complete.
+   */
   addSite: function(siteObject) {
-    var transaction = this.db.transaction(this.SITES_STORE, 'readwrite');
-    var objectStore = transaction.objectStore(this.SITES_STORE);
-    var request = objectStore.add(siteObject);
-    request.onsuccess = function() {
-      console.log('Successfully added site to Places database with id ' + siteObject.id);
-    }
-    request.onerror = function() {
-      console.error('Failed to add site to Places database with id ' + siteObject.id);
-    }
+    return new Promise((function(resolve, reject) {
+      var transaction = this.db.transaction(this.SITES_STORE, 'readwrite');
+      var objectStore = transaction.objectStore(this.SITES_STORE);
+      var request = objectStore.add(siteObject);
+      request.onsuccess = function() {
+        console.log('Successfully added site to Places database with id ' + siteObject.id);
+        resolve();
+      }
+      request.onerror = function() {
+        console.error('Failed to add site to Places database with id ' + siteObject.id);
+        reject();
+      }
+    }).bind(this));
+  },
+
+  /**
+   * Get a site by its ID.
+   *
+   * @param {String} id An id is usually a hostname or hostname + scope path.
+   * @return {Promise} A Promise which resolves with a Site object.
+   */
+  getSite: function(id) {
+    return new Promise((function(resolve, reject) {
+      var transaction = this.db.transaction(this.SITES_STORE);
+      var objectStore = transaction.objectStore(this.SITES_STORE);
+      var request = objectStore.get(id);
+      request.onsuccess = function() {
+        resolve(request.result);
+      }
+      request.onerror = function() {
+        console.error('Error getting site with id ' + id);
+        reject();
+      }
+    }).bind(this));
   },
 
   /**
@@ -148,7 +188,7 @@ var Places = {
   /**
    * Get top sites ordered by frecency.
    *
-   * @returns Promise which resolves to a list of site objects.
+   * @returns {Promise} which resolves to a list of site objects.
    */
   getTopSites: function() {
     return new Promise((function(resolve, reject) {
@@ -167,4 +207,38 @@ var Places = {
       }
     }).bind(this));
   },
+
+  /**
+   * Get a collection of Site objects for pinned sites.
+   *
+   * @return {Promise} A Promise which resolves with a list of Site objects.
+   */
+  getPinnedSites: function() {
+    return new Promise((function(resolve, reject) {
+      var transaction = this.db.transaction(this.SITES_STORE);
+      var objectStore = transaction.objectStore(this.SITES_STORE);
+      // Get the list of pinned site IDs
+      var request = objectStore.get('{pinnedSites}');
+      request.onsuccess = (function() {
+        if (!request.result || !request.result.list) {
+          console.log('List of pinned sites was empty.');
+          return;
+        }
+        var pinnedSiteIds = request.result.list;
+        var pinnedSites = [];
+        pinnedSiteIds.forEach(function(id, index, array) {
+          this.getSite(id).then((function(site) {
+            pinnedSites.push(site);
+            // If list is complete, resolve Promise.
+            if (index == (array.length - 1)) {
+              resolve(pinnedSites);
+            }
+          }).bind(this));
+        }, this);
+      }).bind(this);
+      request.onerror = function() {
+        console.error('Failed to fetch list of pinned sites.');
+      }
+    }).bind(this));
+  }
 };
