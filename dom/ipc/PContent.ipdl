@@ -40,6 +40,7 @@ include protocol PGMPService;
 include protocol PPluginModule;
 include protocol PGMP;
 include protocol PPrinting;
+include protocol PSendStream;
 include protocol POfflineCacheUpdate;
 include protocol PRenderFrame;
 include protocol PScreenManager;
@@ -91,6 +92,7 @@ using mozilla::hal::ProcessPriority from "mozilla/HalTypes.h";
 using mozilla::gfx::IntSize from "mozilla/gfx/2D.h";
 using mozilla::dom::TabId from "mozilla/dom/ipc/IdType.h";
 using mozilla::dom::ContentParentId from "mozilla/dom/ipc/IdType.h";
+using mozilla::LayoutDeviceIntPoint from "Units.h";
 using struct LookAndFeelInt from "mozilla/widget/WidgetMessageUtils.h";
 using class mozilla::dom::ipc::StructuredCloneData from "ipc/IPCMessageUtils.h";
 using mozilla::DataStorageType from "ipc/DataStorageIPCUtils.h";
@@ -289,14 +291,6 @@ struct DataStorageItem {
   DataStorageType type;
 };
 
-struct DataStoreSetting {
-  nsString name;
-  nsString originURL;
-  nsString manifestURL;
-  bool readOnly;
-  bool enabled;
-};
-
 // Note: Any changes to this structure should also be changed in
 // FileSystemUpdate below.
 struct VolumeInfo {
@@ -426,6 +420,7 @@ prio(normal upto urgent) sync protocol PContent
     manages PNecko;
     manages POfflineCacheUpdate;
     manages PPrinting;
+    manages PSendStream;
     manages PScreenManager;
     manages PSms;
     manages PSpeechSynthesis;
@@ -497,9 +492,6 @@ child:
      * BidiKeyboard hosted by the parent
      */
     async BidiKeyboardNotify(bool isLangRTL);
-
-    async DataStoreNotify(uint32_t aAppId, nsString aName,
-                          nsString aManifestURL);
 
     /**
      * Dump this process's GC and CC logs to the provided files.
@@ -620,7 +612,8 @@ child:
 
     async InvokeDragSession(IPCDataTransfer[] transfers, uint32_t action);
 
-    async EndDragSession(bool aDoneDrag, bool aUserCancelled);
+    async EndDragSession(bool aDoneDrag, bool aUserCancelled,
+                         LayoutDeviceIntPoint aDragEndPoint);
 
     async DomainSetChanged(uint32_t aSetType, uint32_t aChangeType, OptionalURIParams aDomain);
 
@@ -830,6 +823,8 @@ parent:
 
     async PPrinting();
 
+    async PSendStream();
+
     prio(high) sync PScreenManager()
         returns (uint32_t numberOfScreens,
                  float systemDefaultScale,
@@ -952,9 +947,6 @@ parent:
                                     bool aAnyActiveChannel);
 
     async AudioChannelChangeDefVolChannel(int32_t aChannel, bool aHidden);
-
-    sync DataStoreGetStores(nsString aName, nsString aOwner, Principal aPrincipal)
-        returns (DataStoreSetting[] dataStores);
 
     async FilePathUpdateNotify(nsString aType,
                                nsString aStorageName,
@@ -1148,7 +1140,6 @@ parent:
                       bool aCalledFromJS,
                       bool aPositionSpecified,
                       bool aSizeSpecified,
-                      nsCString aURI,
                       nsString aName,
                       nsCString aFeatures,
                       nsCString aBaseURI,
@@ -1185,6 +1176,30 @@ parent:
      * The result can then be stored in permanent storage.
      */
     async NotifyBenchmarkResult(nsString aCodecName, uint32_t aDecodeFPS);
+
+    /**
+     * Notify `push-message` observers without data in the parent.
+     */
+    async NotifyPushObservers(nsCString scope, Principal principal,
+                              nsString messageId);
+
+    /**
+     * Notify `push-message` observers with data in the parent.
+     */
+    async NotifyPushObserversWithData(nsCString scope, Principal principal,
+                                      nsString messageId, uint8_t[] data);
+
+    /**
+     * Notify `push-subscription-change` observers in the parent.
+     */
+    async NotifyPushSubscriptionChangeObservers(nsCString scope,
+                                                Principal principal);
+
+    /**
+     * Notify `push-subscription-modified` observers in the parent.
+     */
+    async NotifyPushSubscriptionModifiedObservers(nsCString scope,
+                                                  Principal principal);
 
 both:
      async AsyncMessage(nsString aMessage, CpowEntry[] aCpows,

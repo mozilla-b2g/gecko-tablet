@@ -201,6 +201,10 @@ public:
     int32_t numChannels;
     NS_ENSURE_SUCCESS(rv =
         aFormat->GetInteger(NS_LITERAL_STRING("channel-count"), &numChannels), rv);
+    AudioConfig::ChannelLayout layout(numChannels);
+    if (!layout.IsValid()) {
+      return NS_ERROR_FAILURE;
+    }
 
     int32_t sampleRate;
     NS_ENSURE_SUCCESS(rv =
@@ -385,9 +389,8 @@ MediaCodecDataDecoder::InitDecoder(Surface::Param aSurface)
   NS_ENSURE_SUCCESS(rv = ResetInputBuffers(), rv);
   NS_ENSURE_SUCCESS(rv = ResetOutputBuffers(), rv);
 
-  rv = NS_NewNamedThread(
-      "MC Decoder", getter_AddRefs(mThread),
-      NS_NewRunnableMethod(this, &MediaCodecDataDecoder::DecoderLoop));
+  nsCOMPtr<nsIRunnable> r = NewRunnableMethod(this, &MediaCodecDataDecoder::DecoderLoop);
+  rv = NS_NewNamedThread("MC Decoder", getter_AddRefs(mThread), r);
 
   return rv;
 }
@@ -546,11 +549,13 @@ MediaCodecDataDecoder::HandleEOS(int32_t aOutputStatus)
   mDecoder->ReleaseOutputBuffer(aOutputStatus, false);
 }
 
-TimeUnit
+Maybe<TimeUnit>
 MediaCodecDataDecoder::GetOutputDuration()
 {
-  MOZ_ASSERT(!mDurations.empty(), "Should have had a duration queued");
-  const TimeUnit duration = mDurations.front();
+  if (mDurations.empty()) {
+    return Nothing();
+  }
+  const Maybe<TimeUnit> duration = Some(mDurations.front());
   mDurations.pop_front();
   return duration;
 }
@@ -561,19 +566,26 @@ MediaCodecDataDecoder::ProcessOutput(
 {
   AutoLocalJNIFrame frame(jni::GetEnvForThread(), 1);
 
-  const TimeUnit duration = GetOutputDuration();
+  const Maybe<TimeUnit> duration = GetOutputDuration();
+  if (!duration) {
+    // Some devices report failure in QueueSample while actually succeeding at
+    // it, in which case we get an output buffer without having a cached duration
+    // (bug 1273523).
+    return NS_OK;
+  }
+
   const auto buffer = jni::Object::LocalRef::Adopt(
       frame.GetEnv()->GetObjectArrayElement(mOutputBuffers.Get(), aStatus));
 
   if (buffer) {
     // The buffer will be null on Android L if we are decoding to a Surface.
     void* directBuffer = frame.GetEnv()->GetDirectBufferAddress(buffer.Get());
-    Output(aInfo, directBuffer, aFormat, duration);
+    Output(aInfo, directBuffer, aFormat, duration.value());
   }
 
   // The Surface will be updated at this point (for video).
   mDecoder->ReleaseOutputBuffer(aStatus, true);
-  PostOutput(aInfo, aFormat, duration);
+  PostOutput(aInfo, aFormat, duration.value());
 
   return NS_OK;
 }

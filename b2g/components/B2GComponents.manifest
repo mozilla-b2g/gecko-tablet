@@ -23,10 +23,6 @@ contract @mozilla.org/b2g/directory-provider;1 {9181eb7c-6f87-11e1-90b1-4f59d80d
 category xpcom-directory-providers b2g-directory-provider @mozilla.org/b2g/directory-provider;1
 #endif
 
-# InterAppCommUIGlue.js
-component {879ee66c-e246-11e3-9910-74d02b97e723} InterAppCommUIGlue.js
-contract @mozilla.org/dom/apps/inter-app-comm-ui-glue;1 {879ee66c-e246-11e3-9910-74d02b97e723}
-
 # SystemMessageGlue.js
 component {2846f034-e614-11e3-93cd-74d02b97e723} SystemMessageGlue.js
 contract @mozilla.org/dom/messages/system-message-glue;1 {2846f034-e614-11e3-93cd-74d02b97e723}

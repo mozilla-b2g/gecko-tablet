@@ -372,8 +372,12 @@ nsTableCellFrame::PaintBackground(nsRenderingContext& aRenderingContext,
                                   uint32_t             aFlags)
 {
   nsRect rect(aPt, GetSize());
-  return nsCSSRendering::PaintBackground(PresContext(), aRenderingContext, this,
-                                         aDirtyRect, rect, aFlags);
+  nsCSSRendering::PaintBGParams params =
+    nsCSSRendering::PaintBGParams::ForAllLayers(*PresContext(),
+                                                aRenderingContext,
+                                                aDirtyRect, rect,
+                                                this, aFlags);
+  return nsCSSRendering::PaintBackground(params);
 }
 
 // Called by nsTablePainter
@@ -660,15 +664,13 @@ void nsTableCellFrame::BlockDirAlignChild(WritingMode aWM, nscoord aMaxAscent)
 }
 
 bool
-nsTableCellFrame::UpdateOverflow()
+nsTableCellFrame::ComputeCustomOverflow(nsOverflowAreas& aOverflowAreas)
 {
   nsRect bounds(nsPoint(0,0), GetSize());
   bounds.Inflate(GetBorderOverflow());
-  nsOverflowAreas overflowAreas(bounds, bounds);
 
-  nsLayoutUtils::UnionChildOverflow(this, overflowAreas);
-
-  return FinishAndStoreOverflow(overflowAreas, GetSize());
+  aOverflowAreas.UnionAllWith(bounds);
+  return nsContainerFrame::ComputeCustomOverflow(aOverflowAreas);
 }
 
 // Per CSS 2.1, we map 'sub', 'super', 'text-top', 'text-bottom',
@@ -1220,11 +1222,13 @@ nsBCTableCellFrame::PaintBackground(nsRenderingContext& aRenderingContext,
     myBorder.SetBorderWidth(side, borderWidth.Side(side));
   }
 
-  nsRect rect(aPt, GetSize());
   // bypassing nsCSSRendering::PaintBackground is safe because this kind
   // of frame cannot be used for the root element
-  return nsCSSRendering::PaintBackgroundWithSC(PresContext(), aRenderingContext,
-                                               this, aDirtyRect, rect,
-                                               StyleContext(), myBorder,
-                                               aFlags, nullptr);
+  nsRect rect(aPt, GetSize());
+  nsCSSRendering::PaintBGParams params =
+    nsCSSRendering::PaintBGParams::ForAllLayers(*PresContext(),
+                                                aRenderingContext, aDirtyRect,
+                                                rect, this,
+                                                aFlags);
+  return nsCSSRendering::PaintBackgroundWithSC(params, StyleContext(), myBorder);
 }

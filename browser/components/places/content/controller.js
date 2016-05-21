@@ -456,8 +456,6 @@ PlacesController.prototype = {
           uri = NetUtil.newURI(node.uri);
           if (PlacesUtils.nodeIsBookmark(node)) {
             nodeData["bookmark"] = true;
-            PlacesUtils.nodeIsTagQuery(node.parent)
-
             var parentNode = node.parent;
             if (parentNode) {
               if (PlacesUtils.nodeIsTagQuery(parentNode))
@@ -560,6 +558,8 @@ PlacesController.prototype = {
    * Detects information (meta-data rules) about the current selection in the
    * view (see _buildSelectionMetadata) and sets the visibility state for each
    * of the menu-items in the given popup with the following rules applied:
+   *  0) The "ignoreitem" attribute may be set to "true" for this code not to
+   *     handle that menuitem.
    *  1) The "selectiontype" attribute may be set on a menu-item to "single"
    *     if the menu-item should be visible only if there is a single node
    *     selected, or to "multiple" if the menu-item should be visible only if
@@ -601,6 +601,9 @@ PlacesController.prototype = {
     var usableItemCount = 0;
     for (var i = 0; i < aPopup.childNodes.length; ++i) {
       var item = aPopup.childNodes[i];
+      if (item.getAttribute("ignoreitem") == "true") {
+        continue;
+      }
       if (item.localName != "menuseparator") {
         // We allow pasting into tag containers, so special case that.
         var hideIfNoIP = item.getAttribute("hideifnoinsertionpoint") == "true" &&

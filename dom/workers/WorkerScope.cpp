@@ -582,7 +582,7 @@ public:
   }
 };
 
-class WorkerScopeSkipWaitingRunnable final : public nsRunnable
+class WorkerScopeSkipWaitingRunnable final : public Runnable
 {
   RefPtr<PromiseWorkerProxy> mPromiseProxy;
   nsCString mScope;

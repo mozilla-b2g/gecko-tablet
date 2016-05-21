@@ -158,6 +158,7 @@ EXPORTS.mozilla.layers += [
     'ipc/CompositorBridgeChild.h',
     'ipc/CompositorBridgeParent.h',
     'ipc/CompositorLRU.h',
+    'ipc/CompositorThread.h',
     'ipc/FenceUtils.h',
     'ipc/GonkNativeHandle.h',
     'ipc/GonkNativeHandleUtils.h',
@@ -254,6 +255,11 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
         'ipc/ShadowLayerUtilsGralloc.cpp',
     ]
 
+if CONFIG['MOZ_ANDROID_APZ']:
+    UNIFIED_SOURCES += [
+        'apz/src/FlingOverScrollerAnimation.cpp',
+    ]
+
 UNIFIED_SOURCES += [
     'apz/src/APZCTreeManager.cpp',
     'apz/src/AsyncPanZoomController.cpp',
@@ -338,6 +344,7 @@ UNIFIED_SOURCES += [
     'ipc/CompositorBridgeChild.cpp',
     'ipc/CompositorBridgeParent.cpp',
     'ipc/CompositorLRU.cpp',
+    'ipc/CompositorThread.cpp',
     'ipc/FenceUtils.cpp',
     'ipc/ImageBridgeChild.cpp',
     'ipc/ImageBridgeParent.cpp',
@@ -455,3 +462,6 @@ CXXFLAGS += CONFIG['MOZ_CAIRO_CFLAGS']
 CXXFLAGS += CONFIG['TK_CFLAGS']
 
 LOCAL_INCLUDES += CONFIG['SKIA_INCLUDES']
+
+if CONFIG['GNU_CXX']:
+    CXXFLAGS += ['-Wno-error=shadow']

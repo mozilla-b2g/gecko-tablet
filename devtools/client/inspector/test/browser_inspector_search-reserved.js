@@ -90,8 +90,7 @@ const TEST_DATA = [
   },
   {
     key: "#",
-    suggestions: [{label: "body #"},
-                  {label: "body #d1\\.d2"}]
+    suggestions: [{label: "body #d1\\.d2"}]
   }
 ];
 
@@ -115,7 +114,7 @@ add_task(function* () {
     info("Query completed. Performing checks for input '" + searchBox.value + "'");
     let actualSuggestions = popup.getItems().reverse();
 
-    is(popup.isOpen ? actualSuggestions.length: 0, suggestions.length,
+    is(popup.isOpen ? actualSuggestions.length : 0, suggestions.length,
        "There are expected number of suggestions.");
 
     for (let i = 0; i < suggestions.length; i++) {

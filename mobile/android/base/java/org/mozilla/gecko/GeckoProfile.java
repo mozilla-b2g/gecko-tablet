@@ -5,6 +5,30 @@
 
 package org.mozilla.gecko;
 
+import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.support.annotation.WorkerThread;
+import android.text.TextUtils;
+import android.util.Log;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.mozilla.gecko.GeckoProfileDirectories.NoMozillaDirectoryException;
+import org.mozilla.gecko.GeckoProfileDirectories.NoSuchProfileException;
+import org.mozilla.gecko.annotation.RobocopTarget;
+import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.db.LocalBrowserDB;
+import org.mozilla.gecko.db.StubBrowserDB;
+import org.mozilla.gecko.distribution.Distribution;
+import org.mozilla.gecko.firstrun.FirstrunAnimationContainer;
+import org.mozilla.gecko.mozglue.SafeIntentUtils;
+import org.mozilla.gecko.preferences.DistroSharedPrefsImport;
+import org.mozilla.gecko.util.INIParser;
+import org.mozilla.gecko.util.INISection;
+
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -19,31 +43,6 @@ import java.util.Hashtable;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import org.json.JSONException;
-import org.json.JSONArray;
-import org.json.JSONObject;
-import org.mozilla.gecko.annotation.RobocopTarget;
-import org.mozilla.gecko.GeckoProfileDirectories.NoMozillaDirectoryException;
-import org.mozilla.gecko.GeckoProfileDirectories.NoSuchProfileException;
-import org.mozilla.gecko.db.BrowserDB;
-import org.mozilla.gecko.db.LocalBrowserDB;
-import org.mozilla.gecko.db.StubBrowserDB;
-import org.mozilla.gecko.distribution.Distribution;
-import org.mozilla.gecko.mozglue.ContextUtils;
-import org.mozilla.gecko.firstrun.FirstrunAnimationContainer;
-import org.mozilla.gecko.preferences.DistroSharedPrefsImport;
-import org.mozilla.gecko.util.INIParser;
-import org.mozilla.gecko.util.INISection;
-
-import android.app.Activity;
-import android.content.ContentResolver;
-import android.content.Context;
-import android.content.pm.PackageManager;
-import android.content.SharedPreferences;
-import android.support.annotation.WorkerThread;
-import android.text.TextUtils;
-import android.util.Log;
 
 public final class GeckoProfile {
     private static final String LOGTAG = "GeckoProfile";
@@ -73,6 +72,11 @@ public final class GeckoProfile {
     // Profile is using a custom directory outside of the Mozilla directory.
     public static final String CUSTOM_PROFILE = "";
     public static final String GUEST_PROFILE = "guest";
+
+    // Session store
+    private static final String SESSION_FILE = "sessionstore.js";
+    private static final String SESSION_FILE_BACKUP = "sessionstore.bak";
+    private static final long MAX_BACKUP_FILE_AGE = 1000 * 3600 * 24; // 24 hours
 
     private static final HashMap<String, GeckoProfile> sProfileCache = new HashMap<String, GeckoProfile>();
     private static String sDefaultProfileName;
@@ -115,12 +119,12 @@ public final class GeckoProfile {
      * Can return null.
      */
     public static GeckoProfile getFromArgs(final Context context, final String args) {
-        if (args == null) {
-            return null;
-        }
-
         if (GuestSession.shouldUse(context, args)) {
             return GeckoProfile.getOrCreateGuestProfile(context);
+        }
+
+        if (args == null) {
+            return null;
         }
 
         String profileName = null;
@@ -229,7 +233,7 @@ public final class GeckoProfile {
 
             final String args;
             if (context instanceof Activity) {
-                args = ContextUtils.getStringExtra(((Activity) context).getIntent(), "args");
+                args = SafeIntentUtils.getStringExtra(((Activity) context).getIntent(), "args");
             } else {
                 args = null;
             }
@@ -719,7 +723,7 @@ public final class GeckoProfile {
             return getProfileCreationDateFromTimesFile();
         } catch (final IOException e) {
             Log.d(LOGTAG, "Unable to retrieve profile creation date from times.json. Getting from system...");
-            final long packageInstallMillis = org.mozilla.gecko.util.ContextUtils.getPackageInstallTime(context);
+            final long packageInstallMillis = org.mozilla.gecko.util.ContextUtils.getCurrentPackageInfo(context).firstInstallTime;
             try {
                 persistProfileCreationDateToTimesFile(packageInstallMillis);
             } catch (final IOException ioEx) {
@@ -758,20 +762,29 @@ public final class GeckoProfile {
     }
 
     /**
-     * Moves the session file to the backup session file.
+     * Updates the state of the old session data file.
      *
-     * sessionstore.js should hold the current session, and sessionstore.bak
-     * should hold the previous session (where it is used to read the "tabs
-     * from last time"). Normally, sessionstore.js is moved to sessionstore.bak
-     * on a clean quit, but this doesn't happen if Fennec crashed. Thus, this
-     * method should be called after a crash so sessionstore.bak correctly
-     * holds the previous session.
+     * sessionstore.js should hold the current session, and sessionstore.bak should
+     * hold the previous session (where it is used to read the "tabs from last time").
+     * If we're not restoring tabs automatically, sessionstore.js needs to be moved to
+     * sessionstore.bak, so we can display the correct "tabs from last time".
+     * If we *are* restoring tabs, we need to delete outdated copies of sessionstore.bak,
+     * so we don't continue showing stale "tabs from last time" indefinitely.
+     *
+     * @param shouldRestore Pass true if we are automatically restoring last session's tabs.
      */
-    public void moveSessionFile() {
-        File sessionFile = getFile("sessionstore.js");
-        if (sessionFile != null && sessionFile.exists()) {
-            File sessionFileBackup = getFile("sessionstore.bak");
-            sessionFile.renameTo(sessionFileBackup);
+    public void updateSessionFile(boolean shouldRestore) {
+        File sessionFileBackup = getFile(SESSION_FILE_BACKUP);
+        if (!shouldRestore) {
+            File sessionFile = getFile(SESSION_FILE);
+            if (sessionFile != null && sessionFile.exists()) {
+                sessionFile.renameTo(sessionFileBackup);
+            }
+        } else {
+            if (sessionFileBackup != null && sessionFileBackup.exists() &&
+                    System.currentTimeMillis() - sessionFileBackup.lastModified() > MAX_BACKUP_FILE_AGE) {
+                sessionFileBackup.delete();
+            }
         }
     }
 
@@ -788,7 +801,7 @@ public final class GeckoProfile {
      * @return the session string
      */
     public String readSessionFile(boolean readBackup) {
-        File sessionFile = getFile(readBackup ? "sessionstore.bak" : "sessionstore.js");
+        File sessionFile = getFile(readBackup ? SESSION_FILE_BACKUP : SESSION_FILE);
 
         try {
             if (sessionFile != null && sessionFile.exists()) {

@@ -12,6 +12,7 @@
 #include "SharedSSLState.h"
 #include "cert.h"
 #include "certdb.h"
+#include "mozilla/Casting.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PublicSSL.h"
 #include "mozilla/Services.h"
@@ -24,7 +25,6 @@
 #include "nsClientAuthRemember.h"
 #include "nsComponentManagerUtils.h"
 #include "nsDirectoryServiceDefs.h"
-#include "nsIBufEntropyCollector.h"
 #include "nsICertOverrideService.h"
 #include "nsIFile.h"
 #include "nsIObserverService.h"
@@ -441,7 +441,7 @@ GetUserSid(nsAString& sidString)
     return false;
   }
   char sid_buffer[SECURITY_MAX_SID_SIZE];
-  SID* sid = reinterpret_cast<SID*>(sid_buffer);
+  SID* sid = BitwiseCast<SID*, char*>(sid_buffer);
   DWORD cbSid = MOZ_ARRAY_LENGTH(sid_buffer);
   SID_NAME_USE eUse;
   // There doesn't appear to be a defined maximum length for the domain name
@@ -998,8 +998,8 @@ nsNSSComponent::ConfigureInternalPKCS11Token()
   nsAutoString privateTokenDescription;
   nsAutoString slotDescription;
   nsAutoString privateSlotDescription;
-  nsAutoString fips140TokenDescription;
   nsAutoString fips140SlotDescription;
+  nsAutoString fips140TokenDescription;
 
   nsresult rv;
   rv = GetPIPNSSBundleString("ManufacturerID", manufacturerID);
@@ -1020,10 +1020,10 @@ nsNSSComponent::ConfigureInternalPKCS11Token()
   rv = GetPIPNSSBundleString("PrivateSlotDescription", privateSlotDescription);
   if (NS_FAILED(rv)) return rv;
 
-  rv = GetPIPNSSBundleString("Fips140TokenDescription", fips140TokenDescription);
+  rv = GetPIPNSSBundleString("Fips140SlotDescription", fips140SlotDescription);
   if (NS_FAILED(rv)) return rv;
 
-  rv = GetPIPNSSBundleString("Fips140SlotDescription", fips140SlotDescription);
+  rv = GetPIPNSSBundleString("Fips140TokenDescription", fips140TokenDescription);
   if (NS_FAILED(rv)) return rv;
 
   PK11_ConfigurePKCS11(NS_ConvertUTF16toUTF8(manufacturerID).get(),
@@ -1032,8 +1032,8 @@ nsNSSComponent::ConfigureInternalPKCS11Token()
                        NS_ConvertUTF16toUTF8(privateTokenDescription).get(),
                        NS_ConvertUTF16toUTF8(slotDescription).get(),
                        NS_ConvertUTF16toUTF8(privateSlotDescription).get(),
-                       NS_ConvertUTF16toUTF8(fips140TokenDescription).get(),
                        NS_ConvertUTF16toUTF8(fips140SlotDescription).get(),
+                       NS_ConvertUTF16toUTF8(fips140TokenDescription).get(),
                        0, 0);
   return NS_OK;
 }
@@ -1095,6 +1095,9 @@ static const CipherPref sCipherPrefs[] = {
 
  { "security.ssl3.dhe_rsa_aes_256_sha",
    TLS_DHE_RSA_WITH_AES_256_CBC_SHA, true },
+
+ { "security.ssl3.ecdhe_psk_aes_128_gcm_sha256",
+   TLS_ECDHE_PSK_WITH_AES_128_GCM_SHA256, true },
 
  { "security.ssl3.ecdhe_rsa_rc4_128_sha",
    TLS_ECDHE_RSA_WITH_RC4_128_SHA, true, true }, // deprecated (RC4)
@@ -1340,11 +1343,27 @@ void nsNSSComponent::setValidationOptions(bool isInitialSetting,
                            static_cast<int32_t>(BRNameMatchingPolicy::Mode::DoNotEnforce)));
   switch (nameMatchingMode) {
     case BRNameMatchingPolicy::Mode::Enforce:
+    case BRNameMatchingPolicy::Mode::EnforceAfter23August2015:
     case BRNameMatchingPolicy::Mode::EnforceAfter23August2016:
     case BRNameMatchingPolicy::Mode::DoNotEnforce:
       break;
     default:
       nameMatchingMode = BRNameMatchingPolicy::Mode::DoNotEnforce;
+      break;
+  }
+
+  NetscapeStepUpPolicy netscapeStepUpPolicy =
+    static_cast<NetscapeStepUpPolicy>
+      (Preferences::GetUint("security.pki.netscape_step_up_policy",
+                            static_cast<uint32_t>(NetscapeStepUpPolicy::AlwaysMatch)));
+  switch (netscapeStepUpPolicy) {
+    case NetscapeStepUpPolicy::AlwaysMatch:
+    case NetscapeStepUpPolicy::MatchBefore23August2016:
+    case NetscapeStepUpPolicy::MatchBefore23August2015:
+    case NetscapeStepUpPolicy::NeverMatch:
+      break;
+    default:
+      netscapeStepUpPolicy = NetscapeStepUpPolicy::AlwaysMatch;
       break;
   }
 
@@ -1358,7 +1377,8 @@ void nsNSSComponent::setValidationOptions(bool isInitialSetting,
   mDefaultCertVerifier = new SharedCertVerifier(odc, osc, ogc,
                                                 certShortLifetimeInDays,
                                                 pinningMode, sha1Mode,
-                                                nameMatchingMode);
+                                                nameMatchingMode,
+                                                netscapeStepUpPolicy);
 }
 
 // Enable the TLS versions given in the prefs, defaulting to TLS 1.0 (min) and
@@ -1692,42 +1712,13 @@ nsNSSComponent::Init()
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  nsCOMPtr<nsIEntropyCollector> ec(
-    do_GetService(NS_ENTROPYCOLLECTOR_CONTRACTID));
-  if (!ec) {
-    return NS_ERROR_FAILURE;
-  }
-  nsCOMPtr<nsIBufEntropyCollector> bec(do_QueryInterface(ec));
-  if (!bec) {
-    return NS_ERROR_FAILURE;
-  }
-  bec->ForwardTo(this);
-
   return RegisterObservers();
 }
 
 // nsISupports Implementation for the class
 NS_IMPL_ISUPPORTS(nsNSSComponent,
-                  nsIEntropyCollector,
                   nsINSSComponent,
                   nsIObserver)
-
-NS_IMETHODIMP
-nsNSSComponent::RandomUpdate(void* entropy, int32_t bufLen)
-{
-  nsNSSShutDownPreventionLock locker;
-
-  // Asynchronous event happening often,
-  // must not interfere with initialization or profile switch.
-
-  MutexAutoLock lock(mutex);
-
-  if (!mNSSInitialized)
-      return NS_ERROR_NOT_INITIALIZED;
-
-  PK11_RandomUpdate(entropy, bufLen);
-  return NS_OK;
-}
 
 static const char* const PROFILE_BEFORE_CHANGE_TOPIC = "profile-before-change";
 
@@ -1743,18 +1734,6 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
     MOZ_LOG(gPIPNSSLog, LogLevel::Debug, ("nsNSSComponent: XPCom shutdown observed\n"));
 
     // Cleanup code that requires services, it's too late in destructor.
-
-    nsCOMPtr<nsIEntropyCollector> ec
-        = do_GetService(NS_ENTROPYCOLLECTOR_CONTRACTID);
-
-    if (ec) {
-      nsCOMPtr<nsIBufEntropyCollector> bec
-        = do_QueryInterface(ec);
-      if (bec) {
-        bec->DontForward();
-      }
-    }
-
     deleteBackgroundThreads();
   }
   else if (nsCRT::strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0) {
@@ -1792,7 +1771,8 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
                prefName.EqualsLiteral("security.ssl.enable_ocsp_must_staple") ||
                prefName.EqualsLiteral("security.cert_pinning.enforcement_level") ||
                prefName.EqualsLiteral("security.pki.sha1_enforcement_level") ||
-               prefName.EqualsLiteral("security.pki.name_matching_mode")) {
+               prefName.EqualsLiteral("security.pki.name_matching_mode") ||
+               prefName.EqualsLiteral("security.pki.netscape_step_up_policy")) {
       MutexAutoLock lock(mutex);
       setValidationOptions(false, lock);
 #ifdef DEBUG
@@ -2067,28 +2047,33 @@ nsresult
 setPassword(PK11SlotInfo* slot, nsIInterfaceRequestor* ctx,
             nsNSSShutDownPreventionLock& /*proofOfLock*/)
 {
-  nsresult rv = NS_OK;
+  MOZ_ASSERT(slot);
+  MOZ_ASSERT(ctx);
+  NS_ENSURE_ARG_POINTER(slot);
+  NS_ENSURE_ARG_POINTER(ctx);
 
   if (PK11_NeedUserInit(slot)) {
-    nsITokenPasswordDialogs* dialogs;
+    nsCOMPtr<nsITokenPasswordDialogs> dialogs;
+    nsresult rv = getNSSDialogs(getter_AddRefs(dialogs),
+                                NS_GET_IID(nsITokenPasswordDialogs),
+                                NS_TOKENPASSWORDSDIALOG_CONTRACTID);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
     bool canceled;
     NS_ConvertUTF8toUTF16 tokenName(PK11_GetTokenName(slot));
-
-    rv = getNSSDialogs((void**)&dialogs,
-                       NS_GET_IID(nsITokenPasswordDialogs),
-                       NS_TOKENPASSWORDSDIALOG_CONTRACTID);
-
-    if (NS_FAILED(rv)) goto loser;
-
     rv = dialogs->SetPassword(ctx, tokenName.get(), &canceled);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
 
-    NS_RELEASE(dialogs);
-    if (NS_FAILED(rv)) goto loser;
-
-    if (canceled) { rv = NS_ERROR_NOT_AVAILABLE; goto loser; }
+    if (canceled) {
+      return NS_ERROR_NOT_AVAILABLE;
+    }
   }
- loser:
-  return rv;
+
+  return NS_OK;
 }
 
 namespace mozilla {

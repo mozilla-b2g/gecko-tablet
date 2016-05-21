@@ -227,8 +227,8 @@ public:
                     const nsAString *aInsertString = nullptr);
 
   /**
-   * WillDispatchKeyboardEvent() computes aKeyEvent.alternativeCharCodes and
-   * recompute aKeyEvent.charCode if it's necessary.
+   * WillDispatchKeyboardEvent() computes aKeyEvent.mAlternativeCharCodes and
+   * recompute aKeyEvent.mCharCode if it's necessary.
    *
    * @param aNativeKeyEvent       A native key event for which you want to
    *                              dispatch a Gecko key event.
@@ -754,6 +754,11 @@ public:
   virtual void OnFocusChangeInGecko(bool aFocus);
 
   void OnSelectionChange(const IMENotification& aIMENotification);
+
+  /**
+   * Call [NSTextInputContext handleEvent] for mouse event support of IME
+   */
+  bool OnHandleEvent(NSEvent* aEvent);
 
   /**
    * SetMarkedText() is a handler of setMarkedText of NSTextInput.

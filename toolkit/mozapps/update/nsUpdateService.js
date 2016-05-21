@@ -10,7 +10,6 @@ const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm", this);
 Cu.import("resource://gre/modules/FileUtils.jsm", this);
-Cu.import("resource://gre/modules/AddonManager.jsm", this);
 Cu.import("resource://gre/modules/Services.jsm", this);
 Cu.import("resource://gre/modules/ctypes.jsm", this);
 Cu.import("resource://gre/modules/UpdateTelemetry.jsm", this);
@@ -32,10 +31,8 @@ const PREF_APP_UPDATE_CERT_MAXERRORS      = "app.update.cert.maxErrors";
 const PREF_APP_UPDATE_CERT_REQUIREBUILTIN = "app.update.cert.requireBuiltIn";
 const PREF_APP_UPDATE_ENABLED             = "app.update.enabled";
 const PREF_APP_UPDATE_IDLETIME            = "app.update.idletime";
-const PREF_APP_UPDATE_INCOMPATIBLE_MODE   = "app.update.incompatible.mode";
 const PREF_APP_UPDATE_INTERVAL            = "app.update.interval";
 const PREF_APP_UPDATE_LOG                 = "app.update.log";
-const PREF_APP_UPDATE_MODE                = "app.update.mode";
 const PREF_APP_UPDATE_NEVER_BRANCH        = "app.update.never.";
 const PREF_APP_UPDATE_NOTIFIEDUNSUPPORTED = "app.update.notifiedUnsupported";
 const PREF_APP_UPDATE_POSTUPDATE          = "app.update.postupdate";
@@ -51,8 +48,6 @@ const PREF_APP_UPDATE_SERVICE_ERRORS      = "app.update.service.errors";
 const PREF_APP_UPDATE_SERVICE_MAX_ERRORS  = "app.update.service.maxErrors";
 const PREF_APP_UPDATE_SOCKET_ERRORS       = "app.update.socket.maxErrors";
 const PREF_APP_UPDATE_RETRY_TIMEOUT       = "app.update.socket.retryTimeout";
-
-const PREF_EM_HOTFIX_ID                   = "extensions.hotfix.id";
 
 const URI_UPDATE_PROMPT_DIALOG  = "chrome://mozapps/content/update/updates.xul";
 const URI_UPDATE_HISTORY_DIALOG = "chrome://mozapps/content/update/history.xul";
@@ -187,6 +182,21 @@ const DEFAULT_SOCKET_MAX_ERRORS = 10;
 
 // The number of milliseconds to wait before retrying a connection error.
 const DEFAULT_UPDATE_RETRY_TIMEOUT = 2000;
+
+// This maps app IDs to their respective notification topic which signals when
+// the application's user interface has been displayed.
+const APPID_TO_TOPIC = {
+  // Firefox
+  "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}": "sessionstore-windows-restored",
+  // SeaMonkey
+  "{92650c4d-4b8e-4d2a-b7eb-24ecf4f6b63a}": "sessionstore-windows-restored",
+  // Fennec
+  "{aa3c5121-dab2-40e2-81ca-7ea25febc110}": "sessionstore-windows-restored",
+  // Thunderbird
+  "{3550f703-e582-4d05-9a08-453d09bdfdc6}": "mail-startup-done",
+  // Instantbird
+  "{33cb9019-c295-46dd-be21-8c4936574bee}": "xul-window-visible",
+};
 
 var gLocale = null;
 var gUpdateMutexHandle = null;
@@ -1591,7 +1601,6 @@ function Update(update) {
         case "buildID":
         case "channel":
         case "displayVersion":
-        case "licenseURL":
         case "name":
         case "platformVersion":
         case "previousAppVersion":
@@ -1726,9 +1735,6 @@ Update.prototype = {
     if (this.detailsURL) {
       update.setAttribute("detailsURL", this.detailsURL);
     }
-    if (this.licenseURL) {
-      update.setAttribute("licenseURL", this.licenseURL);
-    }
     if (this.platformVersion) {
       update.setAttribute("platformVersion", this.platformVersion);
     }
@@ -1841,11 +1847,6 @@ UpdateService.prototype = {
   _downloader: null,
 
   /**
-   * Incompatible add-on count.
-   */
-  _incompatAddonsCount: 0,
-
-  /**
    * Whether or not the service registered the "online" observer.
    */
   _registeredOnlineObserver: false,
@@ -1878,6 +1879,24 @@ UpdateService.prototype = {
   observe: function AUS_observe(subject, topic, data) {
     switch (topic) {
       case "post-update-processing":
+        if (Services.appinfo.ID in APPID_TO_TOPIC) {
+          // Delay post-update processing to ensure that possible update
+          // dialogs are shown in front of the app window, if possible.
+          // See bug 311614.
+          Services.obs.addObserver(this, APPID_TO_TOPIC[Services.appinfo.ID],
+                                   false);
+          break;
+        }
+        // intentional fallthrough
+      case "sessionstore-windows-restored":
+      case "mail-startup-done":
+      case "xul-window-visible":
+        if (Services.appinfo.ID in APPID_TO_TOPIC) {
+          Services.obs.removeObserver(this,
+                                      APPID_TO_TOPIC[Services.appinfo.ID]);
+        }
+        // intentional fallthrough
+      case "test-post-update-processing":
         // Clean up any extant updates
         this._postUpdateProcessing();
         break;
@@ -2460,12 +2479,6 @@ UpdateService.prototype = {
   },
 
   /**
-   * Reference to the currently selected update for when add-on compatibility
-   * is checked.
-   */
-  _update: null,
-
-  /**
    * Determine which of the specified updates should be installed and begin the
    * download/installation process or notify the user about the update.
    * @param   updates
@@ -2528,22 +2541,12 @@ UpdateService.prototype = {
      * a) if the app.update.auto preference is false then automatic download and
      *    install is disabled and the user will be notified.
      * b) if the update has a showPrompt attribute the user will be notified.
-     * c) Mode is determined by the value of the app.update.mode preference.
-     *
-     * If the update when it is first read has an appVersion attribute the
-     * following behavior implemented in bug 530872 will occur:
-     * Mode   Incompatible Add-ons   Outcome
-     * 0      N/A                    Auto Install
-     * 1      Yes                    Notify
-     * 1      No                     Auto Install
      *
      * If the update when it is first read does not have an appVersion attribute
      * the following deprecated behavior will occur:
-     * Update Type   Mode   Incompatible Add-ons   Outcome
-     * Major         all    N/A                    Notify
-     * Minor         0      N/A                    Auto Install
-     * Minor         1      Yes                    Notify
-     * Minor         1      No                     Auto Install
+     * Update Type   Outcome
+     * Major         Notify
+     * Minor         Auto Install
      */
     if (update.showPrompt) {
       LOG("UpdateService:_selectAndInstallUpdate - prompting because the " +
@@ -2561,186 +2564,18 @@ UpdateService.prototype = {
       return;
     }
 
-    if (getPref("getIntPref", PREF_APP_UPDATE_MODE, 1) == 0) {
-      // Do not prompt regardless of add-on incompatibilities
-      LOG("UpdateService:_selectAndInstallUpdate - add-on compatibility " +
-          "check disabled by preference, just download the update");
-      let status = this.downloadUpdate(update, true);
-      if (status == STATE_NONE) {
-        cleanupActiveUpdate();
-      }
-      AUSTLMY.pingCheckCode(this._pingSuffix, AUSTLMY.CHK_ADDON_PREF_DISABLED);
-      return;
+    LOG("UpdateService:_selectAndInstallUpdate - download the update");
+    let status = this.downloadUpdate(update, true);
+    if (status == STATE_NONE) {
+      cleanupActiveUpdate();
     }
-
-    // Only check add-on compatibility when the version changes.
-    if (update.appVersion &&
-        Services.vc.compare(update.appVersion, Services.appinfo.version) != 0) {
-      this._update = update;
-      this._checkAddonCompatibility();
-    }
-    else {
-      LOG("UpdateService:_selectAndInstallUpdate - add-on compatibility " +
-          "check not performed due to the update version being the same as " +
-          "the current application version, just download the update");
-      let status = this.downloadUpdate(update, true);
-      if (status == STATE_NONE) {
-        cleanupActiveUpdate();
-      }
-      AUSTLMY.pingCheckCode(this._pingSuffix,AUSTLMY.CHK_ADDON_SAME_APP_VER);
-    }
+    AUSTLMY.pingCheckCode(this._pingSuffix,AUSTLMY.CHK_DOWNLOAD_UPDATE);
   },
 
   _showPrompt: function AUS__showPrompt(update) {
     let prompter = Cc["@mozilla.org/updates/update-prompt;1"].
                    createInstance(Ci.nsIUpdatePrompt);
     prompter.showUpdateAvailable(update);
-  },
-
-  _checkAddonCompatibility: function AUS__checkAddonCompatibility() {
-    try {
-      var hotfixID = Services.prefs.getCharPref(PREF_EM_HOTFIX_ID);
-    }
-    catch (e) { }
-
-    // Get all the installed add-ons
-    var self = this;
-    AddonManager.getAllAddons(function(addons) {
-      self._incompatibleAddons = [];
-      addons.forEach(function(addon) {
-        // Protect against code that overrides the add-ons manager and doesn't
-        // implement the isCompatibleWith or the findUpdates method.
-        if (!("isCompatibleWith" in addon) || !("findUpdates" in addon)) {
-          let errMsg = "Add-on doesn't implement either the isCompatibleWith " +
-                       "or the findUpdates method!";
-          if (addon.id) {
-            errMsg += " Add-on ID: " + addon.id;
-          }
-          Cu.reportError(errMsg);
-          return;
-        }
-
-        // If an add-on isn't appDisabled and isn't userDisabled then it is
-        // either active now or the user expects it to be active after the
-        // restart. If that is the case and the add-on is not installed by the
-        // application and is not compatible with the new application version
-        // then the user should be warned that the add-on will become
-        // incompatible. If an addon's type equals plugin it is skipped since
-        // checking plugins compatibility information isn't supported and
-        // getting the scope property of a plugin breaks in some environments
-        // (see bug 566787). The hotfix add-on is also ignored as it shouldn't
-        // block the user from upgrading.
-        try {
-          if (addon.type != "plugin" && addon.id != hotfixID &&
-              !addon.appDisabled && !addon.userDisabled &&
-              addon.scope != AddonManager.SCOPE_APPLICATION &&
-              addon.isCompatible &&
-              !addon.isCompatibleWith(self._update.appVersion,
-                                      self._update.platformVersion)) {
-            self._incompatibleAddons.push(addon);
-          }
-        } catch (e) {
-          Cu.reportError(e);
-        }
-      });
-
-      if (self._incompatibleAddons.length > 0) {
-      /**
-       * PREF_APP_UPDATE_INCOMPATIBLE_MODE
-       * Controls the mode in which we check for updates as follows.
-       *
-       *   PREF_APP_UPDATE_INCOMPATIBLE_MODE != 1
-       *   We check for VersionInfo _and_ NewerVersion updates for the
-       *   incompatible add-ons - i.e. if Foo 1.2 is installed and it is
-       *   incompatible with the update, and we find Foo 2.0 which is but has
-       *   not been installed, then we do NOT prompt because the user can
-       *   download Foo 2.0 when they restart after the update during the add-on
-       *   mismatch checking UI. This is the default, since it suppresses most
-       *   prompt dialogs.
-       *
-       *   PREF_APP_UPDATE_INCOMPATIBLE_MODE == 1
-       *   We check for VersionInfo updates for the incompatible add-ons - i.e.
-       *   if the situation above with Foo 1.2 and available update to 2.0
-       *   applies, we DO show the prompt since a download operation will be
-       *   required after the update. This is not the default and is supplied
-       *   only as a hidden option for those that want it.
-       */
-        self._updateCheckCount = self._incompatibleAddons.length;
-        LOG("UpdateService:_checkAddonCompatibility - checking for " +
-            "incompatible add-ons");
-
-        self._incompatibleAddons.forEach(function(addon) {
-          addon.findUpdates(this, AddonManager.UPDATE_WHEN_NEW_APP_DETECTED,
-                            this._update.appVersion, this._update.platformVersion);
-        }, self);
-      }
-      else {
-        LOG("UpdateService:_checkAddonCompatibility - no incompatible " +
-            "add-ons found, just download the update");
-        var status = self.downloadUpdate(self._update, true);
-        if (status == STATE_NONE)
-          cleanupActiveUpdate();
-        self._update = null;
-        AUSTLMY.pingCheckCode(self._pingSuffix, AUSTLMY.CHK_ADDON_NO_INCOMPAT);
-      }
-    });
-  },
-
-  // AddonUpdateListener
-  onCompatibilityUpdateAvailable: function(addon) {
-    // Remove the add-on from the list of add-ons that will become incompatible
-    // with the new version of the application.
-    for (var i = 0; i < this._incompatibleAddons.length; ++i) {
-      if (this._incompatibleAddons[i].id == addon.id) {
-        LOG("UpdateService:onCompatibilityUpdateAvailable - found update for " +
-            "add-on ID: " + addon.id);
-        this._incompatibleAddons.splice(i, 1);
-      }
-    }
-  },
-
-  onUpdateAvailable: function(addon, install) {
-    if (getPref("getIntPref", PREF_APP_UPDATE_INCOMPATIBLE_MODE, 0) == 1) {
-      return;
-    }
-
-    // If the new version of this add-on is blocklisted for the new application
-    // then it isn't a valid update and the user should still be warned that
-    // the add-on will become incompatible.
-    if (Services.blocklist.isAddonBlocklisted(addon, this._update.appVersion,
-                                              this._update.platformVersion)) {
-      return;
-    }
-
-    // Compatibility or new version updates mean the same thing here.
-    this.onCompatibilityUpdateAvailable(addon);
-  },
-
-  onUpdateFinished: function(addon) {
-    if (--this._updateCheckCount > 0) {
-      return;
-    }
-
-    if (this._incompatibleAddons.length > 0 || !getCanApplyUpdates()) {
-      LOG("UpdateService:onUpdateEnded - prompting because there are " +
-          "incompatible add-ons");
-      if (this._incompatibleAddons.length > 0) {
-        AUSTLMY.pingCheckCode(this._pingSuffix,
-                              AUSTLMY.CHK_ADDON_HAVE_INCOMPAT);
-      } else {
-        AUSTLMY.pingCheckCode(this._pingSuffix, AUSTLMY.CHK_UNABLE_TO_APPLY);
-      }
-      this._showPrompt(this._update);
-    } else {
-      LOG("UpdateService:_selectAndInstallUpdate - updates for all " +
-          "incompatible add-ons found, just download the update");
-      var status = this.downloadUpdate(this._update, true);
-      if (status == STATE_NONE)
-        cleanupActiveUpdate();
-      AUSTLMY.pingCheckCode(this._pingSuffix,
-                            AUSTLMY.CHK_ADDON_UPDATES_FOR_INCOMPAT);
-    }
-    this._update = null;
   },
 
   /**
@@ -4395,14 +4230,8 @@ UpdatePrompt.prototype = {
         this._getUpdateWindow() || this._getAltUpdateWindow())
       return;
 
-    var stringsPrefix = "updateAvailable_" + update.type + ".";
-    var title = gUpdateBundle.formatStringFromName(stringsPrefix + "title",
-                                                   [update.name], 1);
-    var text = gUpdateBundle.GetStringFromName(stringsPrefix + "text");
-    var imageUrl = "";
     this._showUnobtrusiveUI(null, URI_UPDATE_PROMPT_DIALOG, null,
-                           UPDATE_WINDOW_NAME, "updatesavailable", update,
-                           title, text, imageUrl);
+                           UPDATE_WINDOW_NAME, "updatesavailable", update);
   },
 
   /**
@@ -4419,14 +4248,8 @@ UpdatePrompt.prototype = {
       return;
 
     if (background) {
-      var stringsPrefix = "updateDownloaded_" + update.type + ".";
-      var title = gUpdateBundle.formatStringFromName(stringsPrefix + "title",
-                                                     [update.name], 1);
-      var text = gUpdateBundle.GetStringFromName(stringsPrefix + "text");
-      var imageUrl = "";
       this._showUnobtrusiveUI(null, URI_UPDATE_PROMPT_DIALOG, null,
-                              UPDATE_WINDOW_NAME, "finishedBackground", update,
-                              title, text, imageUrl);
+                              UPDATE_WINDOW_NAME, "finishedBackground", update);
     } else {
       this._showUI(null, URI_UPDATE_PROMPT_DIALOG, null,
                    UPDATE_WINDOW_NAME, "finishedBackground", update);
@@ -4523,7 +4346,7 @@ UpdatePrompt.prototype = {
   },
 
   /**
-   * Initiate a less obtrusive UI, starting with a non-modal notification alert
+   * Display the update UI after the prompt wait time has elapsed.
    * @param   parent
    *          A parent window, can be null
    * @param   uri
@@ -4536,15 +4359,9 @@ UpdatePrompt.prototype = {
    * @param   update
    *          An update to pass to the UI in the window arguments.
    *          Can be null
-   * @param   title
-   *          The title for the notification alert.
-   * @param   text
-   *          The contents of the notification alert.
-   * @param   imageUrl
-   *          A URL identifying the image to put in the notification alert.
    */
   _showUnobtrusiveUI: function UP__showUnobUI(parent, uri, features, name, page,
-                                              update, title, text, imageUrl) {
+                                              update) {
     var observer = {
       updatePrompt: this,
       service: null,
@@ -4559,9 +4376,6 @@ UpdatePrompt.prototype = {
       },
       observe: function (aSubject, aTopic, aData) {
         switch (aTopic) {
-          case "alertclickcallback":
-            this.updatePrompt._showUI(parent, uri, features, name, page, update);
-            // fall thru
           case "quit-application":
             if (this.timer)
               this.timer.cancel();
@@ -4572,8 +4386,7 @@ UpdatePrompt.prototype = {
     };
 
     // bug 534090 - show the UI for update available notifications when the
-    // the system has been idle for at least IDLE_TIME without displaying an
-    // alert notification.
+    // the system has been idle for at least IDLE_TIME.
     if (page == "updatesavailable") {
       var idleService = Cc["@mozilla.org/widget/idleservice;1"].
                         getService(Ci.nsIIdleService);
@@ -4583,17 +4396,6 @@ UpdatePrompt.prototype = {
         this._showUI(parent, uri, features, name, page, update);
         return;
       }
-    }
-
-    try {
-      var notifier = Cc["@mozilla.org/alerts-service;1"].
-                     getService(Ci.nsIAlertsService);
-      notifier.showAlertNotification(imageUrl, title, text, true, "", observer);
-    }
-    catch (e) {
-      // Failed to retrieve alerts service, platform unsupported
-      this._showUIWhenIdle(parent, uri, features, name, page, update);
-      return;
     }
 
     observer.service = Services.obs;

@@ -27,8 +27,7 @@
 const {Cc, Cu, Ci} = require("chrome");
 const Services = require("Services");
 const Promise = require("promise");
-const DOMUtils = Cc["@mozilla.org/inspector/dom-utils;1"]
-                 .getService(Ci.inIDOMUtils);
+const {getCSSLexer} = require("devtools/shared/css-lexer");
 
 // Parameters for the XHR request
 // see https://developer.mozilla.org/en-US/docs/MDN/Kuma/API#Document_parameters
@@ -38,12 +37,12 @@ var XHR_CSS_URL = "https://developer.mozilla.org/en-US/docs/Web/CSS/";
 
 // Parameters for the link to MDN in the tooltip, so
 // so we know which MDN visits come from this feature
-const PAGE_LINK_PARAMS = "?utm_source=mozilla&utm_medium=firefox-inspector&utm_campaign=default"
+const PAGE_LINK_PARAMS = "?utm_source=mozilla&utm_medium=firefox-inspector&utm_campaign=default";
 // URL for the page link omits locale, so a locale-specific page will be loaded
 var PAGE_LINK_URL = "https://developer.mozilla.org/docs/Web/CSS/";
 exports.PAGE_LINK_URL = PAGE_LINK_URL;
 
-const BROWSER_WINDOW = 'navigator:browser';
+const BROWSER_WINDOW = "navigator:browser";
 
 const PROPERTY_NAME_COLOR = "theme-fg-color5";
 const PROPERTY_VALUE_COLOR = "theme-fg-color1";
@@ -83,7 +82,7 @@ const COMMENT_COLOR = "theme-comment";
 function appendSyntaxHighlightedCSS(cssText, parentElement) {
   let doc = parentElement.ownerDocument;
   let identClass = PROPERTY_NAME_COLOR;
-  let lexer = DOMUtils.getCSSLexer(cssText);
+  let lexer = getCSSLexer(cssText);
 
   /**
    * Create a SPAN node with the given text content and class.
@@ -161,7 +160,7 @@ exports.appendSyntaxHighlightedCSS = appendSyntaxHighlightedCSS;
 function getMdnPage(pageUrl) {
   let deferred = Promise.defer();
 
-  let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
+  let xhr = new XMLHttpRequest();
 
   xhr.addEventListener("load", onLoaded, false);
   xhr.addEventListener("error", onError, false);
@@ -265,7 +264,7 @@ function MdnDocsWidget(tooltipDocument) {
 
   // listen for clicks and open in the browser window instead
   let browserWindow = Services.wm.getMostRecentWindow(BROWSER_WINDOW);
-  this.elements.linkToMdn.addEventListener("click", function(e) {
+  this.elements.linkToMdn.addEventListener("click", function (e) {
     e.stopPropagation();
     e.preventDefault();
     let link = e.target.href;
@@ -296,7 +295,7 @@ MdnDocsWidget.prototype = {
    * @param {string} propertyName
    * The name of the CSS property for which we need to display help.
    */
-  loadCssDocs: function(propertyName) {
+  loadCssDocs: function (propertyName) {
 
     /**
      * Do all the setup we can do synchronously, and get the document in
@@ -367,11 +366,11 @@ MdnDocsWidget.prototype = {
     return deferred.promise;
   },
 
-  destroy: function() {
+  destroy: function () {
     this.elements = null;
     this.doc = null;
   }
-}
+};
 
 /**
  * L10N utility class

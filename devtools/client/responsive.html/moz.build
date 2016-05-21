@@ -7,6 +7,7 @@
 DIRS += [
     'actions',
     'audio',
+    'browser',
     'components',
     'images',
     'reducers',
@@ -17,6 +18,7 @@ DevToolsModules(
     'app.js',
     'constants.js',
     'devices.js',
+    'events.js',
     'index.css',
     'manager.js',
     'reducers.js',

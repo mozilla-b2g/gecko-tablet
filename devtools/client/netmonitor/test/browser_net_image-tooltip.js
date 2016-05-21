@@ -63,8 +63,9 @@ function test() {
      * @return a promise that resolves when the tooltip is shown
      */
     function showTooltipOn(tooltip, element) {
-      return Task.spawn(function*() {
-        let isTarget = yield tooltip.isValidHoverTarget(element);
+      return Task.spawn(function* () {
+        let isValidTarget = yield tooltip._toggle.isValidHoverTarget(element);
+        ok(isValidTarget, "Element is a valid tooltip target");
         let onShown = tooltip.once("shown");
         tooltip.show();
         yield onShown;

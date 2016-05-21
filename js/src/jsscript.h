@@ -26,6 +26,7 @@
 #include "js/UniquePtr.h"
 #include "vm/NativeObject.h"
 #include "vm/Shape.h"
+#include "vm/SharedImmutableStringsCache.h"
 
 namespace JS {
 struct ScriptSourceInfo;
@@ -576,7 +577,7 @@ class ScriptSource;
 class UncompressedSourceCache
 {
     typedef HashMap<ScriptSource*,
-                    const char16_t*,
+                    UniqueTwoByteChars,
                     DefaultHasher<ScriptSource*>,
                     SystemAllocPolicy> Map;
 
@@ -586,26 +587,26 @@ class UncompressedSourceCache
     {
         UncompressedSourceCache* cache_;
         ScriptSource* source_;
-        const char16_t* charsToFree_;
+        UniqueTwoByteChars charsToFree_;
       public:
         explicit AutoHoldEntry();
         ~AutoHoldEntry();
       private:
         void holdEntry(UncompressedSourceCache* cache, ScriptSource* source);
-        void deferDelete(const char16_t* chars);
+        void deferDelete(UniqueTwoByteChars chars);
         ScriptSource* source() const { return source_; }
         friend class UncompressedSourceCache;
     };
 
   private:
-    Map* map_;
+    UniquePtr<Map> map_;
     AutoHoldEntry* holder_;
 
   public:
-    UncompressedSourceCache() : map_(nullptr), holder_(nullptr) {}
+    UncompressedSourceCache() : holder_(nullptr) {}
 
     const char16_t* lookup(ScriptSource* ss, AutoHoldEntry& asp);
-    bool put(ScriptSource* ss, const char16_t* chars, AutoHoldEntry& asp);
+    bool put(ScriptSource* ss, UniqueTwoByteChars chars, AutoHoldEntry& asp);
 
     void purge();
 
@@ -632,41 +633,26 @@ class ScriptSource
 
     struct Uncompressed
     {
-        Uncompressed(const char16_t* chars, bool ownsChars)
-          : chars(chars)
-          , ownsChars(ownsChars)
-        { }
+        SharedImmutableTwoByteString string;
 
-        const char16_t* chars;
-        bool ownsChars;
+        explicit Uncompressed(SharedImmutableTwoByteString&& str)
+          : string(mozilla::Move(str))
+        { }
     };
 
     struct Compressed
     {
-        Compressed(void* raw, size_t nbytes, HashNumber hash)
-          : raw(raw)
-          , nbytes(nbytes)
-          , hash(hash)
-        { }
+        SharedImmutableString raw;
+        size_t uncompressedLength;
 
-        void* raw;
-        size_t nbytes;
-        HashNumber hash;
+        Compressed(SharedImmutableString&& raw, size_t uncompressedLength)
+          : raw(mozilla::Move(raw))
+          , uncompressedLength(uncompressedLength)
+        { }
     };
 
-    struct Parent
-    {
-        explicit Parent(ScriptSource* parent)
-          : parent(parent)
-        { }
-
-        ScriptSource* parent;
-    };
-
-    using SourceType = mozilla::Variant<Missing, Uncompressed, Compressed, Parent>;
+    using SourceType = mozilla::Variant<Missing, Uncompressed, Compressed>;
     SourceType data;
-
-    uint32_t length_;
 
     // The filename of this script.
     UniqueChars filename_;
@@ -712,14 +698,10 @@ class ScriptSource
     bool argumentsNotIncluded_:1;
     bool hasIntroductionOffset_:1;
 
-    // Whether this is in the runtime's set of compressed ScriptSources.
-    bool inCompressedSourceSet:1;
-
   public:
     explicit ScriptSource()
       : refs(0),
         data(SourceType(Missing())),
-        length_(0),
         filename_(nullptr),
         displayURL_(nullptr),
         sourceMapURL_(nullptr),
@@ -729,11 +711,14 @@ class ScriptSource
         introductionType_(nullptr),
         sourceRetrievable_(false),
         argumentsNotIncluded_(false),
-        hasIntroductionOffset_(false),
-        inCompressedSourceSet(false)
+        hasIntroductionOffset_(false)
     {
     }
-    ~ScriptSource();
+
+    ~ScriptSource() {
+        MOZ_ASSERT(refs == 0);
+    }
+
     void incref() { refs++; }
     void decref() {
         MOZ_ASSERT(refs != 0);
@@ -749,10 +734,30 @@ class ScriptSource
     bool sourceRetrievable() const { return sourceRetrievable_; }
     bool hasSourceData() const { return !data.is<Missing>(); }
     bool hasCompressedSource() const { return data.is<Compressed>(); }
+
     size_t length() const {
+        struct LengthMatcher
+        {
+            using ReturnType = size_t;
+
+            ReturnType match(const Uncompressed& u) {
+                return u.string.length();
+            }
+
+            ReturnType match(const Compressed& c) {
+                return c.uncompressedLength;
+            }
+
+            ReturnType match(const Missing& m) {
+                MOZ_CRASH("ScriptSource::length on a missing source");
+                return 0;
+            }
+        };
+
         MOZ_ASSERT(hasSourceData());
-        return length_;
+        return data.match(LengthMatcher());
     }
+
     bool argumentsNotIncluded() const {
         MOZ_ASSERT(hasSourceData());
         return argumentsNotIncluded_;
@@ -763,34 +768,17 @@ class ScriptSource
     void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                 JS::ScriptSourceInfo* info) const;
 
-    const char16_t* uncompressedChars() const {
-        return data.as<Uncompressed>().chars;
-    }
+    MOZ_MUST_USE bool setSource(ExclusiveContext* cx,
+                                mozilla::UniquePtr<char16_t[], JS::FreePolicy>&& source,
+                                size_t length);
+    void setSource(SharedImmutableTwoByteString&& string);
 
-    bool ownsUncompressedChars() const {
-        return data.as<Uncompressed>().ownsChars;
-    }
-
-    void* compressedData() const {
-        return data.as<Compressed>().raw;
-    }
-
-    size_t compressedBytes() const {
-        return data.as<Compressed>().nbytes;
-    }
-
-    HashNumber compressedHash() const {
-        return data.as<Compressed>().hash;
-    }
-
-    ScriptSource* parent() const {
-        return data.as<Parent>().parent;
-    }
-
-    void setSource(const char16_t* chars, size_t length, bool ownsChars = true);
-    void setCompressedSource(JSRuntime* maybert, void* raw, size_t nbytes, HashNumber hash);
-    void updateCompressedSourceSet(JSRuntime* rt);
-    bool ensureOwnsSource(ExclusiveContext* cx);
+    MOZ_MUST_USE bool setCompressedSource(
+        ExclusiveContext* cx,
+        mozilla::UniquePtr<char[], JS::FreePolicy>&& raw,
+        size_t rawLength,
+        size_t sourceLength);
+    void setCompressedSource(SharedImmutableString&& raw, size_t length);
 
     // XDR handling
     template <XDRMode mode>
@@ -840,9 +828,6 @@ class ScriptSource
         introductionOffset_ = offset;
         hasIntroductionOffset_ = true;
     }
-
-  private:
-    size_t computedSizeOfData() const;
 };
 
 class ScriptSourceHolder
@@ -872,27 +857,6 @@ class ScriptSourceHolder
         return ss;
     }
 };
-
-struct CompressedSourceHasher
-{
-    typedef ScriptSource* Lookup;
-
-    static HashNumber computeHash(const void* data, size_t nbytes) {
-        return mozilla::HashBytes(data, nbytes);
-    }
-
-    static HashNumber hash(const ScriptSource* ss) {
-        return ss->compressedHash();
-    }
-
-    static bool match(const ScriptSource* a, const ScriptSource* b) {
-        return a->compressedBytes() == b->compressedBytes() &&
-               a->compressedHash() == b->compressedHash() &&
-               !memcmp(a->compressedData(), b->compressedData(), a->compressedBytes());
-    }
-};
-
-typedef HashSet<ScriptSource*, CompressedSourceHasher, SystemAllocPolicy> CompressedSourceSet;
 
 class ScriptSourceObject : public NativeObject
 {
@@ -1269,6 +1233,15 @@ class JSScript : public js::gc::TenuredCell
     // Initialize a no-op script.
     static bool fullyInitTrivial(js::ExclusiveContext* cx, JS::Handle<JSScript*> script);
 
+#ifdef DEBUG
+  private:
+    // Assert that the properties set by linkToFunctionFromEmitter are correct.
+    void assertLinkedProperties(js::frontend::BytecodeEmitter* bce) const;
+    // Assert that jump targets are within the code array of the script.
+    void assertValidJumpTargets() const;
+#endif
+
+  public:
     inline JSPrincipals* principals();
 
     JSCompartment* compartment() const { return compartment_; }
@@ -1641,7 +1614,7 @@ class JSScript : public js::gc::TenuredCell
     bool isRelazifiable() const {
         return (selfHosted() || lazyScript) && !hasInnerFunctions_ && !types_ &&
                !isGenerator() && !hasBaselineScript() && !hasAnyIonScript() &&
-               !hasScriptCounts() && !doNotRelazify_;
+               !doNotRelazify_;
     }
     void setLazyScript(js::LazyScript* lazy) {
         lazyScript = lazy;
@@ -1768,7 +1741,7 @@ class JSScript : public js::gc::TenuredCell
     // The entry should be removed after using this function.
     void takeOverScriptCountsMapEntry(js::ScriptCounts* entryValue);
 
-    jsbytecode* main() {
+    jsbytecode* main() const {
         return code() + mainOffset();
     }
 
@@ -1786,25 +1759,25 @@ class JSScript : public js::gc::TenuredCell
     /* Script notes are allocated right after the code. */
     jssrcnote* notes() { return (jssrcnote*)(code() + length()); }
 
-    bool hasArray(ArrayKind kind) {
+    bool hasArray(ArrayKind kind) const {
         return hasArrayBits & (1 << kind);
     }
     void setHasArray(ArrayKind kind) { hasArrayBits |= (1 << kind); }
     void cloneHasArray(JSScript* script) { hasArrayBits = script->hasArrayBits; }
 
-    bool hasConsts()        { return hasArray(CONSTS);      }
-    bool hasObjects()       { return hasArray(OBJECTS);     }
-    bool hasTrynotes()      { return hasArray(TRYNOTES);    }
-    bool hasBlockScopes()   { return hasArray(BLOCK_SCOPES); }
-    bool hasYieldOffsets()  { return isGenerator(); }
+    bool hasConsts() const        { return hasArray(CONSTS);      }
+    bool hasObjects() const       { return hasArray(OBJECTS);     }
+    bool hasTrynotes() const      { return hasArray(TRYNOTES);    }
+    bool hasBlockScopes() const   { return hasArray(BLOCK_SCOPES); }
+    bool hasYieldOffsets() const  { return isGenerator(); }
 
     #define OFF(fooOff, hasFoo, t)   (fooOff() + (hasFoo() ? sizeof(t) : 0))
 
-    size_t constsOffset()       { return 0; }
-    size_t objectsOffset()      { return OFF(constsOffset,      hasConsts,      js::ConstArray);      }
-    size_t trynotesOffset()     { return OFF(objectsOffset,     hasObjects,     js::ObjectArray);     }
-    size_t blockScopesOffset()  { return OFF(trynotesOffset,    hasTrynotes,    js::TryNoteArray);    }
-    size_t yieldOffsetsOffset() { return OFF(blockScopesOffset, hasBlockScopes, js::BlockScopeArray); }
+    size_t constsOffset() const       { return 0; }
+    size_t objectsOffset() const      { return OFF(constsOffset,      hasConsts,      js::ConstArray);      }
+    size_t trynotesOffset() const     { return OFF(objectsOffset,     hasObjects,     js::ObjectArray);     }
+    size_t blockScopesOffset() const  { return OFF(trynotesOffset,    hasTrynotes,    js::TryNoteArray);    }
+    size_t yieldOffsetsOffset() const { return OFF(blockScopesOffset, hasBlockScopes, js::BlockScopeArray); }
 
     size_t dataSize() const { return dataSize_; }
 
@@ -1818,7 +1791,7 @@ class JSScript : public js::gc::TenuredCell
         return reinterpret_cast<js::ObjectArray*>(data + objectsOffset());
     }
 
-    js::TryNoteArray* trynotes() {
+    js::TryNoteArray* trynotes() const {
         MOZ_ASSERT(hasTrynotes());
         return reinterpret_cast<js::TryNoteArray*>(data + trynotesOffset());
     }
@@ -1969,7 +1942,6 @@ class JSScript : public js::gc::TenuredCell
 #endif
 
     void finalize(js::FreeOp* fop);
-    void fixupAfterMovingGC() {}
 
     static const JS::TraceKind TraceKind = JS::TraceKind::Script;
 
@@ -2424,7 +2396,6 @@ class LazyScript : public gc::TenuredCell
     friend class GCMarker;
     void traceChildren(JSTracer* trc);
     void finalize(js::FreeOp* fop);
-    void fixupAfterMovingGC() {}
 
     static const JS::TraceKind TraceKind = JS::TraceKind::LazyScript;
 

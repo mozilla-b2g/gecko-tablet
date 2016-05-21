@@ -29,6 +29,8 @@
 #include "mozilla/ipc/BackgroundUtils.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/ipc/PBackgroundTestParent.h"
+#include "mozilla/ipc/PSendStreamParent.h"
+#include "mozilla/ipc/SendStreamAlloc.h"
 #include "mozilla/layout/VsyncParent.h"
 #include "mozilla/dom/network/UDPSocketParent.h"
 #include "mozilla/Preferences.h"
@@ -305,6 +307,19 @@ BackgroundParentImpl::DeallocPNuwaParent(PNuwaParent *aActor)
   return mozilla::dom::NuwaParent::Dealloc(aActor);
 }
 
+PSendStreamParent*
+BackgroundParentImpl::AllocPSendStreamParent()
+{
+  return mozilla::ipc::AllocPSendStreamParent();
+}
+
+bool
+BackgroundParentImpl::DeallocPSendStreamParent(PSendStreamParent* aActor)
+{
+  delete aActor;
+  return true;
+}
+
 BackgroundParentImpl::PVsyncParent*
 BackgroundParentImpl::AllocPVsyncParent()
 {
@@ -362,7 +377,7 @@ BackgroundParentImpl::DeallocPCamerasParent(camera::PCamerasParent *aActor)
 
 namespace {
 
-class InitUDPSocketParentCallback final : public nsRunnable
+class InitUDPSocketParentCallback final : public Runnable
 {
 public:
   InitUDPSocketParentCallback(UDPSocketParent* aActor,
@@ -475,7 +490,7 @@ struct MOZ_STACK_CLASS NullifyContentParentRAII
   RefPtr<ContentParent>& mContentParent;
 };
 
-class CheckPrincipalRunnable final : public nsRunnable
+class CheckPrincipalRunnable final : public Runnable
 {
 public:
   CheckPrincipalRunnable(already_AddRefed<ContentParent> aParent,
@@ -528,7 +543,7 @@ private:
   nsCString mOrigin;
 };
 
-class CheckPermissionRunnable final : public nsRunnable
+class CheckPermissionRunnable final : public Runnable
 {
 public:
   CheckPermissionRunnable(already_AddRefed<ContentParent> aParent,

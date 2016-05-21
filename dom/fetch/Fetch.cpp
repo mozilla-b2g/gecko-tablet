@@ -106,7 +106,7 @@ private:
   ~MainThreadFetchResolver();
 };
 
-class MainThreadFetchRunnable : public nsRunnable
+class MainThreadFetchRunnable : public Runnable
 {
   RefPtr<WorkerFetchResolver> mResolver;
   RefPtr<InternalRequest> mRequest;
@@ -271,7 +271,7 @@ public:
   WorkerFetchResponseRunnable(WorkerPrivate* aWorkerPrivate,
                               WorkerFetchResolver* aResolver,
                               InternalResponse* aResponse)
-    : WorkerRunnable(aWorkerPrivate, WorkerThreadModifyBusyCount)
+    : WorkerRunnable(aWorkerPrivate, WorkerThreadUnchangedBusyCount)
     , mResolver(aResolver)
     , mInternalResponse(aResponse)
   {
@@ -296,28 +296,111 @@ public:
     }
     return true;
   }
+
+  bool
+  PreDispatch(WorkerPrivate* aWorkerPrivate) override
+  {
+    // Don't call default PreDispatch() since it incorrectly asserts we are
+    // dispatching from the parent worker thread.  We always dispatch from
+    // the main thread.
+    AssertIsOnMainThread();
+    return true;
+  }
+
+  void
+  PostDispatch(WorkerPrivate* aWorkerPrivate, bool aDispatchResult) override
+  {
+    // Don't call default PostDispatch() since it incorrectly asserts we are
+    // dispatching from the parent worker thread.  We always dispatch from
+    // the main thread.
+    AssertIsOnMainThread();
+  }
+};
+
+class WorkerFetchResponseEndBase
+{
+  RefPtr<PromiseWorkerProxy> mPromiseProxy;
+public:
+  explicit WorkerFetchResponseEndBase(PromiseWorkerProxy* aPromiseProxy)
+    : mPromiseProxy(aPromiseProxy)
+  {
+    MOZ_ASSERT(mPromiseProxy);
+  }
+
+  void
+  WorkerRunInternal(WorkerPrivate* aWorkerPrivate)
+  {
+    MOZ_ASSERT(aWorkerPrivate);
+    aWorkerPrivate->AssertIsOnWorkerThread();
+    mPromiseProxy->CleanUp();
+  }
 };
 
 class WorkerFetchResponseEndRunnable final : public WorkerRunnable
+                                           , public WorkerFetchResponseEndBase
 {
-  RefPtr<WorkerFetchResolver> mResolver;
 public:
-  WorkerFetchResponseEndRunnable(WorkerPrivate* aWorkerPrivate,
-                                 WorkerFetchResolver* aResolver)
-    : WorkerRunnable(aWorkerPrivate, WorkerThreadModifyBusyCount)
-    , mResolver(aResolver)
+  explicit WorkerFetchResponseEndRunnable(PromiseWorkerProxy* aPromiseProxy)
+    : WorkerRunnable(aPromiseProxy->GetWorkerPrivate(),
+                     WorkerThreadUnchangedBusyCount)
+    , WorkerFetchResponseEndBase(aPromiseProxy)
   {
   }
 
   bool
   WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
   {
-    MOZ_ASSERT(aWorkerPrivate);
-    aWorkerPrivate->AssertIsOnWorkerThread();
-
-    mResolver->mPromiseProxy->CleanUp();
+    WorkerRunInternal(aWorkerPrivate);
     return true;
   }
+
+  nsresult
+  Cancel() override
+  {
+    // Execute Run anyway to make sure we cleanup our promise proxy to avoid
+    // leaking the worker thread
+    Run();
+    return WorkerRunnable::Cancel();
+  }
+
+  bool
+  PreDispatch(WorkerPrivate* aWorkerPrivate) override
+  {
+    // Don't call default PreDispatch() since it incorrectly asserts we are
+    // dispatching from the parent worker thread.  We always dispatch from
+    // the main thread.
+    AssertIsOnMainThread();
+    return true;
+  }
+
+  void
+  PostDispatch(WorkerPrivate* aWorkerPrivate, bool aDispatchResult) override
+  {
+    // Don't call default PostDispatch() since it incorrectly asserts we are
+    // dispatching from the parent worker thread.  We always dispatch from
+    // the main thread.
+    AssertIsOnMainThread();
+  }
+};
+
+class WorkerFetchResponseEndControlRunnable final : public MainThreadWorkerControlRunnable
+                                                  , public WorkerFetchResponseEndBase
+{
+public:
+  explicit WorkerFetchResponseEndControlRunnable(PromiseWorkerProxy* aPromiseProxy)
+    : MainThreadWorkerControlRunnable(aPromiseProxy->GetWorkerPrivate())
+    , WorkerFetchResponseEndBase(aPromiseProxy)
+  {
+  }
+
+  bool
+  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override
+  {
+    WorkerRunInternal(aWorkerPrivate);
+    return true;
+  }
+
+  // Control runnable cancel already calls Run().
 };
 
 void
@@ -349,10 +432,17 @@ WorkerFetchResolver::OnResponseEnd()
   }
 
   RefPtr<WorkerFetchResponseEndRunnable> r =
-    new WorkerFetchResponseEndRunnable(mPromiseProxy->GetWorkerPrivate(), this);
+    new WorkerFetchResponseEndRunnable(mPromiseProxy);
 
   if (!r->Dispatch()) {
-    NS_WARNING("Could not dispatch fetch response end");
+    RefPtr<WorkerFetchResponseEndControlRunnable> cr =
+      new WorkerFetchResponseEndControlRunnable(mPromiseProxy);
+    // This can fail if the worker thread is canceled or killed causing
+    // the PromiseWorkerProxy to give up its WorkerFeature immediately,
+    // allowing the worker thread to become Dead.
+    if (!cr->Dispatch()) {
+      NS_WARNING("Failed to dispatch WorkerFetchResponseEndControlRunnable");
+    }
   }
 }
 
@@ -536,7 +626,7 @@ class ContinueConsumeBodyRunnable final : public WorkerRunnable
 public:
   ContinueConsumeBodyRunnable(FetchBody<Derived>* aFetchBody, nsresult aStatus,
                               uint32_t aLength, uint8_t* aResult)
-    : WorkerRunnable(aFetchBody->mWorkerPrivate, WorkerThreadModifyBusyCount)
+    : WorkerRunnable(aFetchBody->mWorkerPrivate, WorkerThreadUnchangedBusyCount)
     , mFetchBody(aFetchBody)
     , mStatus(aStatus)
     , mLength(aLength)
@@ -550,6 +640,25 @@ public:
   {
     mFetchBody->ContinueConsumeBody(mStatus, mLength, mResult);
     return true;
+  }
+
+  bool
+  PreDispatch(WorkerPrivate* aWorkerPrivate) override
+  {
+    // Don't call default PreDispatch() since it incorrectly asserts we are
+    // dispatching from the parent worker thread.  We always dispatch from
+    // the main thread.
+    AssertIsOnMainThread();
+    return true;
+  }
+
+  void
+  PostDispatch(WorkerPrivate* aWorkerPrivate, bool aDispatchResult) override
+  {
+    // Don't call default PostDispatch() since it incorrectly asserts we are
+    // dispatching from the parent worker thread.  We always dispatch from
+    // the main thread.
+    AssertIsOnMainThread();
   }
 };
 
@@ -696,7 +805,7 @@ NS_INTERFACE_MAP_BEGIN(ConsumeBodyDoneObserver<Derived>)
 NS_INTERFACE_MAP_END
 
 template <class Derived>
-class BeginConsumeBodyRunnable final : public nsRunnable
+class BeginConsumeBodyRunnable final : public Runnable
 {
   FetchBody<Derived>* mFetchBody;
 public:
@@ -718,7 +827,8 @@ class CancelPumpRunnable final : public WorkerMainThreadRunnable
   FetchBody<Derived>* mBody;
 public:
   explicit CancelPumpRunnable(FetchBody<Derived>* aBody)
-    : WorkerMainThreadRunnable(aBody->mWorkerPrivate)
+    : WorkerMainThreadRunnable(aBody->mWorkerPrivate,
+                               NS_LITERAL_CSTRING("Fetch :: Cancel Pump"))
     , mBody(aBody)
   { }
 

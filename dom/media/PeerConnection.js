@@ -215,8 +215,9 @@ GlobalPCList.prototype = {
         if (topic == "PeerConnection:response:allow") {
           pc._settlePermission.allow();
         } else {
-          let err = new pc._win.DOMException("The operation is insecure.",
-                                             "SecurityError");
+          let err = new pc._win.DOMException("The request is not allowed by " +
+              "the user agent or the platform in the current context.",
+              "NotAllowedError");
           pc._settlePermission.deny(err);
         }
       }
@@ -1172,7 +1173,6 @@ RTCPeerConnection.prototype = {
       return null;
     }
 
-    sdp = this._localIdp.addIdentityAttribute(sdp);
     return new this._win.RTCSessionDescription({ type: this._localType,
                                                     sdp: sdp });
   },

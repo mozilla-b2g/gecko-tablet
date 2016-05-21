@@ -39,9 +39,6 @@ const PREF_APP_PARTNER_BRANCH             = "app.partner.";
 const PREF_DISTRIBUTION_ID                = "distribution.id";
 const PREF_DISTRIBUTION_VERSION           = "distribution.version";
 
-const PREF_EXTENSIONS_UPDATE_URL          = "extensions.update.url";
-const PREF_EXTENSIONS_STRICT_COMPAT       = "extensions.strictCompatibility";
-
 const NS_APP_PROFILE_DIR_STARTUP   = "ProfDS";
 const NS_APP_USER_PROFILE_50_DIR   = "ProfD";
 const NS_GRE_DIR                   = "GreD";
@@ -139,6 +136,11 @@ XPCOMUtils.defineLazyGetter(this, "gZipW", function test_gZipW() {
   return Cc["@mozilla.org/zipwriter;1"].
          createInstance(Ci.nsIZipWriter);
 });
+
+/* Triggers post-update processing */
+function testPostUpdateProcessing() {
+  gAUS.observe(null, "test-post-update-processing", "");
+}
 
 /* Initializes the update service stub */
 function initUpdateServiceStub() {

@@ -59,6 +59,10 @@ public:
   virtual void SetPaintWillResample(bool aResample) { mPaintWillResample = aResample; }
   bool PaintWillResample() { return mPaintWillResample; }
 
+  // We use this to allow TiledContentHost to invalidate regions where
+  // tiles are fading in.
+  virtual void AddAnimationInvalidation(nsIntRegion& aRegion) { }
+
 protected:
   explicit ContentHost(const TextureInfo& aTextureInfo)
     : CompositableHost(aTextureInfo)
@@ -118,7 +122,7 @@ public:
                          float aOpacity,
                          const gfx::Matrix4x4& aTransform,
                          const gfx::Filter& aFilter,
-                         const gfx::Rect& aClipRect,
+                         const gfx::IntRect& aClipRect,
                          const nsIntRegion* aVisibleRegion = nullptr) override;
 
   virtual void SetCompositor(Compositor* aCompositor) override;

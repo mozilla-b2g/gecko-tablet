@@ -465,9 +465,15 @@ File::GetName(nsAString& aFileName) const
 }
 
 void
-File::GetPath(nsAString& aPath, ErrorResult& aRv)
+File::GetPath(nsAString& aPath) const
 {
-  mImpl->GetPath(aPath, aRv);
+  mImpl->GetPath(aPath);
+}
+
+void
+File::SetPath(const nsAString& aPath)
+{
+  mImpl->SetPath(aPath);
 }
 
 Date
@@ -685,10 +691,17 @@ BlobImplBase::GetName(nsAString& aName) const
 }
 
 void
-BlobImplBase::GetPath(nsAString& aPath, ErrorResult& aRv)
+BlobImplBase::GetPath(nsAString& aPath) const
 {
   NS_ASSERTION(mIsFile, "Should only be called on files");
   aPath = mPath;
+}
+
+void
+BlobImplBase::SetPath(const nsAString& aPath)
+{
+  NS_ASSERTION(mIsFile, "Should only be called on files");
+  mPath = aPath;
 }
 
 void
@@ -866,43 +879,33 @@ BlobImplFile::GetSize(ErrorResult& aRv)
 
 namespace {
 
-class GetTypeRunnable final : public nsRunnable
+class GetTypeRunnable final : public WorkerMainThreadRunnable
 {
 public:
   GetTypeRunnable(WorkerPrivate* aWorkerPrivate,
-                  nsIEventTarget* aSyncLoopTarget,
                   BlobImpl* aBlobImpl)
-    : mWorkerPrivate(aWorkerPrivate)
-    , mSyncLoopTarget(aSyncLoopTarget)
+    : WorkerMainThreadRunnable(aWorkerPrivate,
+                               NS_LITERAL_CSTRING("BlobImplFile :: GetType"))
     , mBlobImpl(aBlobImpl)
   {
-    MOZ_ASSERT(aWorkerPrivate);
-    MOZ_ASSERT(aSyncLoopTarget);
     MOZ_ASSERT(aBlobImpl);
     aWorkerPrivate->AssertIsOnWorkerThread();
   }
 
-  NS_IMETHOD
-  Run() override
+  bool
+  MainThreadRun() override
   {
     MOZ_ASSERT(NS_IsMainThread());
 
     nsAutoString type;
     mBlobImpl->GetType(type);
-
-    RefPtr<MainThreadStopSyncLoopRunnable> runnable =
-      new MainThreadStopSyncLoopRunnable(mWorkerPrivate,
-                                         mSyncLoopTarget.forget(), true);
-    NS_WARN_IF(!runnable->Dispatch());
-    return NS_OK;
+    return true;
   }
 
 private:
   ~GetTypeRunnable()
   {}
 
-  WorkerPrivate* mWorkerPrivate;
-  nsCOMPtr<nsIEventTarget> mSyncLoopTarget;
   RefPtr<BlobImpl> mBlobImpl;
 };
 
@@ -925,14 +928,12 @@ BlobImplFile::GetType(nsAString& aType)
         return;
       }
 
-      AutoSyncLoopHolder syncLoop(workerPrivate);
-
       RefPtr<GetTypeRunnable> runnable =
-        new GetTypeRunnable(workerPrivate, syncLoop.EventTarget(), this);
-      nsresult rv = NS_DispatchToMainThread(runnable);
-      NS_WARN_IF(NS_FAILED(rv));
+        new GetTypeRunnable(workerPrivate, this);
 
-      NS_WARN_IF(!syncLoop.Run());
+      ErrorResult rv;
+      runnable->Dispatch(rv);
+      NS_WARN_IF(rv.Failed());
       return;
     }
 
@@ -995,15 +996,6 @@ BlobImplFile::GetInternalStream(nsIInputStream** aStream, ErrorResult& aRv)
 
   aRv = NS_NewPartialLocalFileInputStream(aStream, mFile, mStart, mLength,
                                           -1, -1, sFileStreamFlags);
-}
-
-void
-BlobImplFile::SetPath(const nsAString& aPath)
-{
-  MOZ_ASSERT(aPath.IsEmpty() ||
-             aPath[aPath.Length() - 1] == char16_t('/'),
-             "Path must end with a path separator");
-  mPath = aPath;
 }
 
 ////////////////////////////////////////////////////////////////////////////

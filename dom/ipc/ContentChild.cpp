@@ -43,6 +43,7 @@
 #include "mozilla/ipc/FileDescriptorUtils.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/ipc/ProcessChild.h"
+#include "mozilla/ipc/PSendStreamChild.h"
 #include "mozilla/ipc/TestShellChild.h"
 #include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "mozilla/layers/APZChild.h"
@@ -54,6 +55,7 @@
 #include "mozilla/plugins/PluginInstanceParent.h"
 #include "mozilla/plugins/PluginModuleParent.h"
 #include "mozilla/widget/WidgetMessageUtils.h"
+#include "nsBaseDragService.h"
 #include "mozilla/media/MediaChild.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/WebBrowserPersistDocumentChild.h"
@@ -65,6 +67,9 @@
 #elif defined(XP_LINUX)
 #include "mozilla/Sandbox.h"
 #include "mozilla/SandboxInfo.h"
+
+// Remove this include with Bug 1104619
+#include "CubebUtils.h"
 #elif defined(XP_MACOSX)
 #include "mozilla/Sandbox.h"
 #endif
@@ -105,6 +110,7 @@
 #include "nsDirectoryServiceUtils.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsContentPermissionHelper.h"
+#include "nsPrintingProxy.h"
 
 #include "IHistory.h"
 #include "nsNetUtil.h"
@@ -167,7 +173,7 @@
 #endif
 
 #ifndef MOZ_SIMPLEPUSH
-#include "mozilla/dom/PushNotifier.h"
+#include "nsIPushNotifier.h"
 #endif
 
 #include "mozilla/dom/File.h"
@@ -192,7 +198,6 @@
 #include "nsIPrincipal.h"
 #include "nsDeviceStorage.h"
 #include "DomainPolicy.h"
-#include "mozilla/dom/DataStoreService.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
 #include "mozilla/dom/telephony/PTelephonyChild.h"
 #include "mozilla/dom/time/DateCacheCleaner.h"
@@ -673,6 +678,11 @@ ContentChild::Init(MessageLoop* aIOLoop,
     NuwaAddConstructor(ResetTransports, nullptr);
   }
 #endif
+#ifdef NS_PRINTING
+  // Force the creation of the nsPrintingProxy so that it's IPC counterpart,
+  // PrintingParent, is always available for printing initiated from the parent.
+  RefPtr<nsPrintingProxy> printingProxy = nsPrintingProxy::GetInstance();
+#endif
 
   return true;
 }
@@ -803,16 +813,6 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
     tabId, *ipcContext, aChromeFlags,
     GetID(), IsForApp(), IsForBrowser());
 
-  nsAutoCString url;
-  if (aURI) {
-    aURI->GetSpec(url);
-  } else {
-    // We can't actually send a nullptr up as the URI, since IPDL doesn't let us
-    // send nullptr's for primitives. We indicate that the nsString for the URI
-    // should be converted to a nullptr by voiding the string.
-    url.SetIsVoid(true);
-  }
-
   nsString name(aName);
   nsAutoCString features(aFeatures);
   nsTArray<FrameScriptInfo> frameScripts;
@@ -824,6 +824,16 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
 
   if (aIframeMoz) {
     MOZ_ASSERT(aTabOpener);
+    nsAutoCString url;
+    if (aURI) {
+      aURI->GetSpec(url);
+    } else {
+      // We can't actually send a nullptr up as the URI, since IPDL doesn't let us
+      // send nullptr's for primitives. We indicate that the nsString for the URI
+      // should be converted to a nullptr by voiding the string.
+      url.SetIsVoid(true);
+    }
+
     newChild->SendBrowserFrameOpenWindow(aTabOpener, renderFrame, NS_ConvertUTF8toUTF16(url),
                                          name, NS_ConvertUTF8toUTF16(features),
                                          aWindowIsNew, &textureFactoryIdentifier,
@@ -858,7 +868,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
     nsresult rv;
     if (!SendCreateWindow(aTabOpener, newChild, renderFrame,
                           aChromeFlags, aCalledFromJS, aPositionSpecified,
-                          aSizeSpecified, url,
+                          aSizeSpecified,
                           name, features,
                           baseURIString,
                           openerDocShell
@@ -1152,24 +1162,6 @@ NS_IMETHODIMP MemoryReportRequestChild::Run()
 }
 
 bool
-ContentChild::RecvDataStoreNotify(const uint32_t& aAppId,
-                                  const nsString& aName,
-                                  const nsString& aManifestURL)
-{
-  RefPtr<DataStoreService> service = DataStoreService::GetOrCreate();
-  if (NS_WARN_IF(!service)) {
-    return false;
-  }
-
-  nsresult rv = service->EnableDataStore(aAppId, aName, aManifestURL);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return false;
-  }
-
-  return true;
-}
-
-bool
 ContentChild::DeallocPMemoryReportRequestChild(PMemoryReportRequestChild* actor)
 {
   static_cast<MemoryReportRequestChild*>(actor)->Release();
@@ -1429,6 +1421,13 @@ ContentChild::RecvSetProcessSandbox(const MaybeFileDesc& aBroker)
   if (!SandboxInfo::Get().CanSandboxContent()) {
       return true;
   }
+
+  // This triggers the initialization of cubeb, which needs to happen
+  // before seccomp is enabled (Bug 1259508). It also increases the startup
+  // time of the content process, because cubeb is usually initialized
+  // when it is actually needed. This call here is no longer required
+  // once Bug 1104619 (remoting audio) is resolved.
+  Unused << CubebUtils::GetCubebContext();
 #endif
   int brokerFd = -1;
   if (aBroker.type() == MaybeFileDesc::TFileDescriptor) {
@@ -1475,7 +1474,7 @@ ContentChild::RecvBidiKeyboardNotify(const bool& aIsLangRTL)
   return true;
 }
 
-static CancelableTask* sFirstIdleTask;
+static CancelableRunnable* sFirstIdleTask;
 
 static void FirstIdle(void)
 {
@@ -1556,8 +1555,9 @@ ContentChild::RecvPBrowserConstructor(PBrowserChild* aActor,
       hasRunOnce = true;
 
     MOZ_ASSERT(!sFirstIdleTask);
-    sFirstIdleTask = NewRunnableFunction(FirstIdle);
-    MessageLoop::current()->PostIdleTask(FROM_HERE, sFirstIdleTask);
+    RefPtr<CancelableRunnable> firstIdleTask = NewCancelableRunnableFunction(FirstIdle);
+    sFirstIdleTask = firstIdleTask;
+    MessageLoop::current()->PostIdleTask(firstIdleTask.forget());
 
     // Redo InitProcessAttributes() when the app or browser is really
     // launching so the attributes will be correct.
@@ -1666,7 +1666,7 @@ ContentChild::RecvNotifyPresentationReceiverCleanUp(const nsString& aSessionId)
     do_GetService(PRESENTATION_SERVICE_CONTRACTID);
   NS_WARN_IF(!service);
 
-  NS_WARN_IF(NS_FAILED(service->UntrackSessionInfo(aSessionId)));
+  NS_WARN_IF(NS_FAILED(service->UntrackSessionInfo(aSessionId, nsIPresentationService::ROLE_RECEIVER)));
 
   return true;
 }
@@ -1853,6 +1853,19 @@ ContentChild::AllocPPrintingChild()
 bool
 ContentChild::DeallocPPrintingChild(PPrintingChild* printing)
 {
+  return true;
+}
+
+PSendStreamChild*
+ContentChild::AllocPSendStreamChild()
+{
+  MOZ_CRASH("PSendStreamChild actors should be manually constructed!");
+}
+
+bool
+ContentChild::DeallocPSendStreamChild(PSendStreamChild* aActor)
+{
+  delete aActor;
   return true;
 }
 
@@ -2583,8 +2596,7 @@ ContentChild::RecvAppInit()
 #ifdef MOZ_NUWA_PROCESS
   if (IsNuwaProcess()) {
     ContentChild::GetSingleton()->RecvGarbageCollect();
-    MessageLoop::current()->PostTask(
-      FROM_HERE, NewRunnableFunction(OnFinishNuwaPreparation));
+    MessageLoop::current()->PostTask(NewRunnableFunction(OnFinishNuwaPreparation));
   }
 #endif
 
@@ -3202,7 +3214,8 @@ ContentChild::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
 
 bool
 ContentChild::RecvEndDragSession(const bool& aDoneDrag,
-                                 const bool& aUserCancelled)
+                                 const bool& aUserCancelled,
+                                 const LayoutDeviceIntPoint& aDragEndPoint)
 {
   nsCOMPtr<nsIDragService> dragService =
     do_GetService("@mozilla.org/widget/dragservice;1");
@@ -3213,6 +3226,7 @@ ContentChild::RecvEndDragSession(const bool& aDoneDrag,
         dragSession->UserCancelled();
       }
     }
+    static_cast<nsBaseDragService*>(dragService.get())->SetDragEndPoint(aDragEndPoint);
     dragService->EndDragSession(aDoneDrag);
   }
   return true;
@@ -3224,15 +3238,18 @@ ContentChild::RecvPush(const nsCString& aScope,
                        const nsString& aMessageId)
 {
 #ifndef MOZ_SIMPLEPUSH
-  nsCOMPtr<nsIPushNotifier> pushNotifierIface =
+  nsCOMPtr<nsIPushNotifier> pushNotifier =
       do_GetService("@mozilla.org/push/Notifier;1");
-  if (NS_WARN_IF(!pushNotifierIface)) {
+  if (NS_WARN_IF(!pushNotifier)) {
       return true;
   }
-  PushNotifier* pushNotifier =
-    static_cast<PushNotifier*>(pushNotifierIface.get());
-  nsresult rv = pushNotifier->NotifyPushWorkers(aScope, aPrincipal,
-                                                aMessageId, Nothing());
+
+  nsresult rv = pushNotifier->NotifyPushObservers(aScope, aPrincipal,
+                                                  Nothing());
+  Unused << NS_WARN_IF(NS_FAILED(rv));
+
+  rv = pushNotifier->NotifyPushWorkers(aScope, aPrincipal,
+                                       aMessageId, Nothing());
   Unused << NS_WARN_IF(NS_FAILED(rv));
 #endif
   return true;
@@ -3245,15 +3262,18 @@ ContentChild::RecvPushWithData(const nsCString& aScope,
                                InfallibleTArray<uint8_t>&& aData)
 {
 #ifndef MOZ_SIMPLEPUSH
-  nsCOMPtr<nsIPushNotifier> pushNotifierIface =
+  nsCOMPtr<nsIPushNotifier> pushNotifier =
       do_GetService("@mozilla.org/push/Notifier;1");
-  if (NS_WARN_IF(!pushNotifierIface)) {
+  if (NS_WARN_IF(!pushNotifier)) {
       return true;
   }
-  PushNotifier* pushNotifier =
-    static_cast<PushNotifier*>(pushNotifierIface.get());
-  nsresult rv = pushNotifier->NotifyPushWorkers(aScope, aPrincipal,
-                                                aMessageId, Some(aData));
+
+  nsresult rv = pushNotifier->NotifyPushObservers(aScope, aPrincipal,
+                                                  Some(aData));
+  Unused << NS_WARN_IF(NS_FAILED(rv));
+
+  rv = pushNotifier->NotifyPushWorkers(aScope, aPrincipal,
+                                       aMessageId, Some(aData));
   Unused << NS_WARN_IF(NS_FAILED(rv));
 #endif
   return true;
@@ -3264,15 +3284,17 @@ ContentChild::RecvPushSubscriptionChange(const nsCString& aScope,
                                          const IPC::Principal& aPrincipal)
 {
 #ifndef MOZ_SIMPLEPUSH
-  nsCOMPtr<nsIPushNotifier> pushNotifierIface =
+  nsCOMPtr<nsIPushNotifier> pushNotifier =
       do_GetService("@mozilla.org/push/Notifier;1");
-  if (NS_WARN_IF(!pushNotifierIface)) {
+  if (NS_WARN_IF(!pushNotifier)) {
       return true;
   }
-  PushNotifier* pushNotifier =
-    static_cast<PushNotifier*>(pushNotifierIface.get());
-  nsresult rv = pushNotifier->NotifySubscriptionChangeWorkers(aScope,
-                                                              aPrincipal);
+
+  nsresult rv = pushNotifier->NotifySubscriptionChangeObservers(aScope,
+                                                                aPrincipal);
+  Unused << NS_WARN_IF(NS_FAILED(rv));
+
+  rv = pushNotifier->NotifySubscriptionChangeWorkers(aScope, aPrincipal);
   Unused << NS_WARN_IF(NS_FAILED(rv));
 #endif
   return true;
@@ -3283,13 +3305,11 @@ ContentChild::RecvPushError(const nsCString& aScope, const nsString& aMessage,
                             const uint32_t& aFlags)
 {
 #ifndef MOZ_SIMPLEPUSH
-  nsCOMPtr<nsIPushNotifier> pushNotifierIface =
+  nsCOMPtr<nsIPushNotifier> pushNotifier =
       do_GetService("@mozilla.org/push/Notifier;1");
-  if (NS_WARN_IF(!pushNotifierIface)) {
+  if (NS_WARN_IF(!pushNotifier)) {
       return true;
   }
-  PushNotifier* pushNotifier =
-    static_cast<PushNotifier*>(pushNotifierIface.get());
   pushNotifier->NotifyErrorWorkers(aScope, aMessage, aFlags);
 #endif
   return true;

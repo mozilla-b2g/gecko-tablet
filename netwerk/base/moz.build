@@ -94,11 +94,11 @@ XPIDL_SOURCES += [
     'nsIRedirectChannelRegistrar.idl',
     'nsIRedirectResultListener.idl',
     'nsIRequest.idl',
+    'nsIRequestContext.idl',
     'nsIRequestObserver.idl',
     'nsIRequestObserverProxy.idl',
     'nsIResponseHeadProvider.idl',
     'nsIResumableChannel.idl',
-    'nsISchedulingContext.idl',
     'nsISecCheckWrapChannel.idl',
     'nsISecretDecoderRing.idl',
     'nsISecureBrowserUI.idl',
@@ -155,7 +155,7 @@ EXPORTS += [
     'nsInputStreamPump.h',
     'nsMIMEInputStream.h',
     'nsNetUtil.h',
-    'nsNetUtil.inl',
+    'nsNetUtilInlines.h',
     'nsReadLine.h',
     'nsSerializationHelper.h',
     'nsSimpleNestedURI.h',
@@ -254,7 +254,7 @@ UNIFIED_SOURCES += [
     'Predictor.cpp',
     'ProxyAutoConfig.cpp',
     'RedirectChannelRegistrar.cpp',
-    'SchedulingContextService.cpp',
+    'RequestContextService.cpp',
     'SimpleBuffer.cpp',
     'StreamingProtocolService.cpp',
     'Tickler.cpp',
@@ -263,8 +263,6 @@ UNIFIED_SOURCES += [
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
     SOURCES += [
-        'nsAutodialWin.cpp',
-        'nsNativeConnectionHelper.cpp',
         'nsURLHelperWin.cpp',
         'ShutdownLayer.cpp',
     ]
@@ -279,7 +277,6 @@ else:
 
 if CONFIG['MOZ_ENABLE_QTNETWORK']:
     SOURCES += [
-        'nsAutodialQt.cpp',
     ]
 
 EXTRA_COMPONENTS += [
@@ -314,3 +311,6 @@ if CONFIG['MOZ_ENABLE_QTNETWORK']:
 
 if CONFIG['MOZ_ENABLE_QTNETWORK']:
     CXXFLAGS += CONFIG['MOZ_QT_CFLAGS']
+
+if CONFIG['GNU_CXX']:
+    CXXFLAGS += ['-Wno-error=shadow']

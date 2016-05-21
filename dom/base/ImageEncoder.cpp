@@ -17,6 +17,7 @@
 #include "nsNetUtil.h"
 #include "nsXPCOMCIDInternal.h"
 #include "WorkerPrivate.h"
+#include "YCbCrUtils.h"
 
 using namespace mozilla::gfx;
 
@@ -26,7 +27,7 @@ namespace dom {
 // This class should be placed inside GetBRGADataSourceSurfaceSync(). However,
 // due to B2G ICS uses old complier (C++98/03) which forbids local class as
 // template parameter, we need to move this class outside.
-class SurfaceHelper : public nsRunnable {
+class SurfaceHelper : public Runnable {
 public:
   explicit SurfaceHelper(already_AddRefed<layers::Image> aImage) : mImage(aImage) {}
 
@@ -135,7 +136,7 @@ private:
   bool mFailed;
 };
 
-class EncodingRunnable : public nsRunnable
+class EncodingRunnable : public Runnable
 {
   virtual ~EncodingRunnable() {}
 
@@ -236,7 +237,7 @@ private:
   bool mUsingCustomOptions;
 };
 
-NS_IMPL_ISUPPORTS_INHERITED0(EncodingRunnable, nsRunnable);
+NS_IMPL_ISUPPORTS_INHERITED0(EncodingRunnable, Runnable);
 
 StaticRefPtr<nsIThreadPool> ImageEncoder::sThreadPool;
 
@@ -399,11 +400,11 @@ ImageEncoder::ExtractDataInternal(const nsAString& aType,
       size_t length = BufferSizeFromStrideAndHeight(stride, aSize.height);
       data.SetCapacity(length);
 
-      gfxUtils::ConvertYCbCrToRGB(*ycbcrImage->GetData(),
-                                  format,
-                                  aSize,
-                                  data.Elements(),
-                                  stride);
+      ConvertYCbCrToRGB(*ycbcrImage->GetData(),
+                        format,
+                        aSize,
+                        data.Elements(),
+                        stride);
 
       rv = aEncoder->InitFromData(data.Elements(),
                                   aSize.width * aSize.height * 4,

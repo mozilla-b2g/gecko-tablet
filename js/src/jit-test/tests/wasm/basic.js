@@ -147,11 +147,10 @@ wasmEvalText('(module (import $foo "a" "" (result f64)))', {a: ()=> {}});
 wasmEvalText('(module (memory 0))');
 wasmEvalText('(module (memory 1))');
 assertErrorMessage(() => wasmEvalText('(module (memory 65536))'), TypeError, /initial memory size too big/);
-assertErrorMessage(() => wasmEvalText('(module (memory 32768))'), TypeError, /initial memory size too big/);
 
 // May OOM, but must not crash:
 try {
-    wasmEvalText('(module (memory 32767))');
+    wasmEvalText('(module (memory 65535))');
 } catch (e) {
     print(e);
     assertEq(String(e).indexOf("out of memory") != -1, true);
@@ -572,17 +571,8 @@ assertEq(numF, 6);
 
 function testSelect(type, trueVal, falseVal) {
 
-    function toJS(val) {
-        switch (val) {
-            case "infinity": return Infinity;
-            case "nan": return NaN;
-            case "-0": return -0;
-            default: return val;
-        }
-    }
-
-    var trueJS = toJS(trueVal);
-    var falseJS = toJS(falseVal);
+    var trueJS = jsify(trueVal);
+    var falseJS = jsify(falseVal);
 
     // Always true condition
     var alwaysTrue = wasmEvalText(`

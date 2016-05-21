@@ -29,7 +29,7 @@ HTTP(..) == lineheight-metrics-2a.html lineheight-metrics-2-ref.html
 HTTP(..) == lineheight-metrics-2b.html lineheight-metrics-2-ref.html
 == lineheight-percentage-1.html lineheight-percentage-1-ref.html
 skip-if(B2G||Mulet) == long-1.html long-ref.html # Initial mulet triage: parity with B2G/B2G Desktop
-fuzzy-if(Android,255,42) == pre-line-1.html pre-line-1-ref.html
+fuzzy-if(Android,255,147) == pre-line-1.html pre-line-1-ref.html
 == pre-line-2.html pre-line-2-ref.html
 == pre-line-3.html pre-line-3-ref.html
 == pre-line-4.html pre-line-4-ref.html
@@ -145,7 +145,7 @@ HTTP(..) == zwnj-02.xhtml zwnj-02-ref.xhtml # HTTP(..) for ../filters.svg
 == 449555-1.html 449555-1-ref.html
 == 467722.html 467722-ref.html
 skip-if(B2G||Mulet) fuzzy-if(skiaContent,1,600) HTTP(..) == 475092-sub.html 475092-ref.html # Initial mulet triage: parity with B2G/B2G Desktop
-fails-if(!winWidget&&!gtkWidget) skip-if(B2G||Mulet) fuzzy-if(skiaContent,64,3100) HTTP(..) == 475092-pos.html 475092-sub.html # bug 482596 # Initial mulet triage: parity with B2G/B2G Desktop
+fails-if(!winWidget&&!gtkWidget) skip-if(B2G||Mulet) fuzzy-if(skiaContent,89,3100) HTTP(..) == 475092-pos.html 475092-sub.html # bug 482596 # Initial mulet triage: parity with B2G/B2G Desktop
 == 476378-soft-hyphen-fallback.html 476378-soft-hyphen-fallback-ref.html
 # Test for bug 484954
 == rgba-text.html rgba-text-ref.html
@@ -227,6 +227,8 @@ pref(gfx.font_rendering.graphite.enabled,true) HTTP(..) == glyph-decomposition-g
 
 # test for bidi bug in graphite 1.3.2, fixed in 1.3.3 (bug 1207061)
 HTTP(..) == graphite-bidi-1.html graphite-bidi-1-ref.html
+
+HTTP(..) == graphite-surrogate-selection.html graphite-surrogate-selection-ref.html
 
 # Tests for hyphenation with hyphens property
 == auto-hyphenation-1.html auto-hyphenation-1-ref.html

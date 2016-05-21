@@ -32,10 +32,8 @@ interfaces = [
     'smil',
     'apps',
     'gamepad',
+    'push',
 ]
-
-if not CONFIG['MOZ_SIMPLEPUSH']:
-    interfaces += ['push']
 
 DIRS += ['interfaces/' + i for i in interfaces]
 
@@ -55,7 +53,6 @@ DIRS += [
     'crypto',
     'phonenumberutils',
     'alarm',
-    'datastore',
     'devicestorage',
     'encoding',
     'events',
@@ -150,8 +147,7 @@ if CONFIG['MOZ_B2G']:
     DIRS += [
         'downloads',
         'identity',
-        'mobileid',
-        'engineeringmode'
+        'mobileid'
     ]
 
 DIRS += ['presentation']

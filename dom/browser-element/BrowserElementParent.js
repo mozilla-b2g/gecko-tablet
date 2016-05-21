@@ -385,7 +385,6 @@ BrowserElementParent.prototype = {
       "got-audio-channel-muted": this._gotDOMRequestResult,
       "got-set-audio-channel-muted": this._gotDOMRequestResult,
       "got-is-audio-channel-active": this._gotDOMRequestResult,
-      "got-structured-data": this._gotDOMRequestResult,
       "got-web-manifest": this._gotDOMRequestResult,
     };
 
@@ -1183,8 +1182,6 @@ BrowserElementParent.prototype = {
     return this._sendDOMRequest('get-is-audio-channel-active',
                                 {audioChannel: aAudioChannel});
   },
-
-  getStructuredData: defineDOMRequestMethod('get-structured-data'),
 
   getWebManifest: defineDOMRequestMethod('get-web-manifest'),
   /**

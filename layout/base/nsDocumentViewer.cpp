@@ -86,6 +86,8 @@
 #include "nsIPrompt.h"
 #include "imgIContainer.h" // image animation mode constants
 
+#include "nsSandboxFlags.h"
+
 #include "mozilla/DocLoadingTimelineMarker.h"
 
 //--------------------------
@@ -99,14 +101,8 @@
 
 // Print Options
 #include "nsIPrintSettings.h"
-#include "nsIPrintOptions.h"
+#include "nsIPrintSettingsService.h"
 #include "nsISimpleEnumerator.h"
-
-#ifdef DEBUG
-// PrintOptions is now implemented by PrintSettingsService
-static const char sPrintOptionsContractID[] =
-  "@mozilla.org/gfx/printsettings-service;1";
-#endif // DEBUG
 
 #include "nsIPluginDocument.h"
 
@@ -429,7 +425,7 @@ public:
   nsCOMPtr<nsIDocument> mTop;
 };
 
-class nsDocumentShownDispatcher : public nsRunnable
+class nsDocumentShownDispatcher : public Runnable
 {
 public:
   explicit nsDocumentShownDispatcher(nsCOMPtr<nsIDocument> aDocument)
@@ -977,12 +973,14 @@ nsDocumentViewer::LoadComplete(nsresult aStatus)
 
       // Dispatch observer notification to notify observers document load is complete.
       nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
-      nsIPrincipal *principal = d->NodePrincipal();
-      os->NotifyObservers(d,
-                          nsContentUtils::IsSystemPrincipal(principal) ?
-                          "chrome-document-loaded" :
-                          "content-document-loaded",
-                          nullptr);
+      if (os) {
+        nsIPrincipal *principal = d->NodePrincipal();
+        os->NotifyObservers(d,
+                            nsContentUtils::IsSystemPrincipal(principal) ?
+                            "chrome-document-loaded" :
+                            "content-document-loaded",
+                            nullptr);
+      }
 
       // Notify any devtools about the load.
       RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
@@ -1048,6 +1046,13 @@ nsDocumentViewer::LoadComplete(nsresult aStatus)
 #endif
 
   return rv;
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::GetLoadCompleted(bool *aOutLoadCompleted)
+{
+  *aOutLoadCompleted = mLoaded;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -1121,18 +1126,14 @@ nsDocumentViewer::PermitUnloadInternal(bool *aShouldPrompt,
     nsAutoPopupStatePusher popupStatePusher(openAbused, true);
 
     // Never permit dialogs from the beforeunload handler
-    nsGlobalWindow *globalWindow =
-      static_cast<nsGlobalWindow*>(reinterpret_cast<nsPIDOMWindow<nsISupports>*>(window));
+    nsGlobalWindow* globalWindow = nsGlobalWindow::Cast(window);
     dialogsAreEnabled = globalWindow->AreDialogsEnabled();
-    globalWindow->DisableDialogs();
+    nsGlobalWindow::TemporarilyDisableDialogs disableDialogs(globalWindow);
 
     mInPermitUnload = true;
     EventDispatcher::DispatchDOMEvent(window, nullptr, event, mPresContext,
                                       nullptr);
     mInPermitUnload = false;
-    if (dialogsAreEnabled) {
-      globalWindow->EnableDialogs();
-    }
   }
 
   nsCOMPtr<nsIDocShell> docShell(mContainer);
@@ -1141,7 +1142,8 @@ nsDocumentViewer::PermitUnloadInternal(bool *aShouldPrompt,
 
   // NB: we nullcheck mDocument because it might now be dead as a result of
   // the event being dispatched.
-  if (!sIsBeforeUnloadDisabled && *aShouldPrompt && dialogsAreEnabled && mDocument &&
+  if (!sIsBeforeUnloadDisabled && *aShouldPrompt && dialogsAreEnabled &&
+      mDocument && !(mDocument->GetSandboxFlags() & SANDBOXED_MODALS) &&
       (!sBeforeUnloadRequiresInteraction || mDocument->UserHasInteracted()) &&
       (event->WidgetEventPtr()->DefaultPrevented() || !text.IsEmpty())) {
     // Ask the user if it's ok to unload the current page
@@ -1338,7 +1340,8 @@ AttachContainerRecurse(nsIDocShell* aShell)
     viewer->GetPresContext(getter_AddRefs(pc));
     if (pc) {
       pc->SetContainer(static_cast<nsDocShell*>(aShell));
-      pc->SetLinkHandler(nsCOMPtr<nsILinkHandler>(do_QueryInterface(aShell)));
+      nsCOMPtr<nsILinkHandler> handler = do_QueryInterface(aShell);
+      pc->SetLinkHandler(handler);
     }
     nsCOMPtr<nsIPresShell> presShell;
     viewer->GetPresShell(getter_AddRefs(presShell));
@@ -1353,7 +1356,8 @@ AttachContainerRecurse(nsIDocShell* aShell)
   for (int32_t i = 0; i < childCount; ++i) {
     nsCOMPtr<nsIDocShellTreeItem> childItem;
     aShell->GetChildAt(i, getter_AddRefs(childItem));
-    AttachContainerRecurse(nsCOMPtr<nsIDocShell>(do_QueryInterface(childItem)));
+    nsCOMPtr<nsIDocShell> shell = do_QueryInterface(childItem);
+    AttachContainerRecurse(shell);
   }
 }
 
@@ -1381,7 +1385,8 @@ nsDocumentViewer::Open(nsISupports *aState, nsISHEntry *aSHEntry)
     int32_t itemIndex = 0;
     while (NS_SUCCEEDED(aSHEntry->ChildShellAt(itemIndex++,
                                                getter_AddRefs(item))) && item) {
-      AttachContainerRecurse(nsCOMPtr<nsIDocShell>(do_QueryInterface(item)));
+      nsCOMPtr<nsIDocShell> shell = do_QueryInterface(item);
+      AttachContainerRecurse(shell);
     }
   }
   
@@ -1507,7 +1512,8 @@ DetachContainerRecurse(nsIDocShell *aShell)
   for (int32_t i = 0; i < childCount; ++i) {
     nsCOMPtr<nsIDocShellTreeItem> childItem;
     aShell->GetChildAt(i, getter_AddRefs(childItem));
-    DetachContainerRecurse(nsCOMPtr<nsIDocShell>(do_QueryInterface(childItem)));
+    nsCOMPtr<nsIDocShell> shell = do_QueryInterface(childItem);
+    DetachContainerRecurse(shell);
   }
 }
 
@@ -1626,7 +1632,8 @@ nsDocumentViewer::Destroy()
     int32_t itemIndex = 0;
     while (NS_SUCCEEDED(shEntry->ChildShellAt(itemIndex++,
                                               getter_AddRefs(item))) && item) {
-      DetachContainerRecurse(nsCOMPtr<nsIDocShell>(do_QueryInterface(item)));
+      nsCOMPtr<nsIDocShell> shell = do_QueryInterface(item);
+      DetachContainerRecurse(shell);
     }
 
     return NS_OK;
@@ -2712,11 +2719,12 @@ nsDocumentViewer::Print(bool              aSilent,
   // if they don't pass in a PrintSettings, then make one
   // it will have all the default values
   printSettings = aPrintSettings;
-  nsCOMPtr<nsIPrintOptions> printOptions = do_GetService(sPrintOptionsContractID, &rv);
+  nsCOMPtr<nsIPrintSettingsService> printSettingsSvc
+    = do_GetService("@mozilla.org/gfx/printsettings-service;1", &rv);
   if (NS_SUCCEEDED(rv)) {
     // if they don't pass in a PrintSettings, then make one
     if (printSettings == nullptr) {
-      printOptions->CreatePrintSettings(getter_AddRefs(printSettings));
+      printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
     }
     NS_ASSERTION(printSettings, "You can't PrintPreview without a PrintSettings!");
   }
