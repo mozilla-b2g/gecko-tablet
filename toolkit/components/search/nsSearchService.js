@@ -984,7 +984,7 @@ function notifyAction(aEngine, aVerb) {
   }
 }
 
-function  parseJsonFromStream(aInputStream) {
+function parseJsonFromStream(aInputStream) {
   const json = Cc["@mozilla.org/dom/json;1"].createInstance(Ci.nsIJSON);
   const data = json.decodeFromStream(aInputStream, aInputStream.available());
   return data;
@@ -1138,12 +1138,11 @@ EngineURL.prototype = {
 
   getSubmission: function SRCH_EURL_getSubmission(aSearchTerms, aEngine, aPurpose) {
     var url = ParamSubstitution(this.template, aSearchTerms, aEngine);
-    // Default to an empty string if the purpose is not provided so that default purpose params
-    // (purpose="") work consistently rather than having to define "null" and "" purposes.
-    var purpose = aPurpose || "";
+    // Default to searchbar if the purpose is not provided
+    var purpose = aPurpose || "searchbar";
 
-    // If the 'system' purpose isn't defined in the plugin, fallback to 'searchbar'.
-    if (purpose == "system" && !this.params.some(p => p.purpose == "system"))
+    // If a particular purpose isn't defined in the plugin, fallback to 'searchbar'.
+    if (!this.params.some(p => p.purpose !== undefined && p.purpose == purpose))
       purpose = "searchbar";
 
     // Create an application/x-www-form-urlencoded representation of our params
@@ -2136,7 +2135,8 @@ Engine.prototype = {
     return this.getAttr("alias");
   },
   set alias(val) {
-    this.setAttr("alias", val);
+    var value = val ? val.trim() : null;
+    this.setAttr("alias", value);
     notifyAction(this, SEARCH_ENGINE_CHANGED);
   },
 
@@ -2845,6 +2845,9 @@ SearchService.prototype = {
   },
 
   _buildCache: function SRCH_SVC__buildCache() {
+    if (this._batchTask)
+      this._batchTask.disarm();
+
     TelemetryStopwatch.start("SEARCH_SERVICE_BUILD_CACHE_MS");
     let cache = {};
     let locale = getLocale();
@@ -4352,6 +4355,54 @@ SearchService.prototype = {
       SearchStaticData.getAlternateDomains(urlParsingInfo.mainDomain)
                       .forEach(d => processDomain(d, true));
     }
+  },
+
+  /**
+   * Checks to see if any engine has an EngineURL of type URLTYPE_SEARCH_HTML
+   * for this request-method, template URL, and query params.
+   */
+  hasEngineWithURL: function(method, template, formData) {
+    this._ensureInitialized();
+
+    // Quick helper method to ensure formData filtered/sorted for compares.
+    let getSortedFormData = data => {
+      return data.filter(a => a.name && a.value).sort((a, b) => {
+        return (a.name > b.name) ? 1 : (b.name > a.name) ? -1 :
+               (a.value > b.value) ? 1 : (b.value > a.value) ? -1 : 0;
+      });
+    };
+
+    // Sanitize method, ensure formData is pre-sorted.
+    let methodUpper = method.toUpperCase();
+    let sortedFormData = getSortedFormData(formData);
+    let sortedFormLength = sortedFormData.length;
+
+    return this._getSortedEngines(false).some(engine => {
+      return engine._urls.some(url => {
+        // Not an engineURL match if type, method, url, #params don't match.
+        if (url.type != URLTYPE_SEARCH_HTML ||
+            url.method != methodUpper ||
+            url.template != template ||
+            url.params.length != sortedFormLength) {
+          return false;
+        };
+
+        // Ensure engineURL formData is pre-sorted. Then, we're
+        // not an engineURL match if any queryParam doesn't compare.
+        let sortedParams = getSortedFormData(url.params);
+        for (let i = 0; i < sortedFormLength; i++) {
+          let formData = sortedFormData[i];
+          let param = sortedParams[i];
+          if (param.name != formData.name ||
+              param.value != formData.value ||
+              param.purpose != formData.purpose) {
+            return false;
+          };
+        };
+        // Else we're a match.
+        return true;
+      });
+    });
   },
 
   parseSubmissionURL: function SRCH_SVC_parseSubmissionURL(aURL) {

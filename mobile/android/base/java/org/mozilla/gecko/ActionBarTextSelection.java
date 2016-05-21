@@ -153,6 +153,9 @@ class ActionBarTextSelection extends Layer implements TextSelection, GeckoEventL
             public void run() {
                 try {
                     if (event.equals("TextSelection:ShowHandles")) {
+                        Telemetry.sendUIEvent(TelemetryContract.Event.SHOW,
+                            TelemetryContract.Method.CONTENT, "text_selection");
+
                         selectionID = message.getString("selectionID");
                         final JSONArray handles = message.getJSONArray("handles");
                         for (int i = 0; i < handles.length(); i++) {
@@ -220,6 +223,11 @@ class ActionBarTextSelection extends Layer implements TextSelection, GeckoEventL
                         }
 
                     } else if (event.equals("TextSelection:ActionbarStatus")) {
+                        // Ensure async updates from SearchService for example are valid.
+                        if (selectionID != message.optString("selectionID")) {
+                            return;
+                        }
+
                         // Update the actionBar actions as provided by Gecko.
                         showActionMode(message.getJSONArray("actions"));
 

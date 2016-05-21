@@ -3,10 +3,10 @@
 
 /* eslint-env browser */
 /* eslint-disable mozilla/no-cpows-in-tests */
-/* exported openAboutDebugging, closeAboutDebugging, installAddon,
-   uninstallAddon, waitForMutation, assertHasTarget, getServiceWorkerList,
-   waitForInitialAddonList, waitForServiceWorkerRegistered,
-   unregisterServiceWorker */
+/* exported openAboutDebugging, changeAboutDebuggingHash, closeAboutDebugging,
+   installAddon, uninstallAddon, waitForMutation, assertHasTarget,
+   getServiceWorkerList, getTabList, openPanel, waitForInitialAddonList,
+   waitForServiceWorkerRegistered, unregisterServiceWorker */
 /* global sendAsyncMessage */
 
 "use strict";
@@ -43,12 +43,33 @@ function* openAboutDebugging(page) {
   return { tab, document };
 }
 
+/**
+ * Change url hash for current about:debugging tab, return a promise after
+ * new content is loaded.
+ * @param  {DOMDocument}  document   container document from current tab
+ * @param  {String}       hash       hash for about:debugging
+ * @return {Promise}
+ */
+function changeAboutDebuggingHash(document, hash) {
+  info(`Opening about:debugging#${hash}`);
+  window.openUILinkIn(`about:debugging#${hash}`, "current");
+  return waitForMutation(
+    document.querySelector(".main-content"), {childList: true});
+}
+
+function openPanel(document, panelId) {
+  info(`Opening ${panelId} panel`);
+  document.querySelector(`[aria-controls="${panelId}"]`).click();
+  return waitForMutation(
+    document.querySelector(".main-content"), {childList: true});
+}
+
 function closeAboutDebugging(tab) {
   info("Closing about:debugging");
   return removeTab(tab);
 }
 
-function addTab(url, win) {
+function addTab(url, win, backgroundTab = false) {
   info("Adding tab: " + url);
 
   return new Promise(done => {
@@ -56,7 +77,10 @@ function addTab(url, win) {
     let targetBrowser = targetWindow.gBrowser;
 
     targetWindow.focus();
-    let tab = targetBrowser.selectedTab = targetBrowser.addTab(url);
+    let tab = targetBrowser.addTab(url);
+    if (!backgroundTab) {
+      targetBrowser.selectedTab = tab;
+    }
     let linkedBrowser = tab.linkedBrowser;
 
     linkedBrowser.addEventListener("load", function onLoad() {
@@ -115,6 +139,17 @@ function getServiceWorkerList(document) {
     document.querySelector("#service-workers.targets");
 }
 
+/**
+ * Depending on whether there are tabs opened, return either a
+ * target list element or its container.
+ * @param  {DOMDocument}  document   #tabs section container document
+ * @return {DOMNode}                 target list or container element
+ */
+function getTabList(document) {
+  return document.querySelector("#tabs .target-list") ||
+    document.querySelector("#tabs.targets");
+}
+
 function* installAddon(document, path, name, evt) {
   // Mock the file picker to select a test addon
   let MockFilePicker = SpecialPowers.MockFilePicker;
@@ -155,7 +190,7 @@ function* uninstallAddon(document, addonId, addonName) {
   yield new Promise(done => {
     AddonManager.getAddonByID(addonId, addon => {
       let listener = {
-        onUninstalled: function(uninstalledAddon) {
+        onUninstalled: function (uninstalledAddon) {
           if (uninstalledAddon != addon) {
             return;
           }
@@ -241,10 +276,10 @@ function assertHasTarget(expected, document, type, name) {
  */
 function waitForServiceWorkerRegistered(tab) {
   // Make the test page notify us when the service worker is registered.
-  let frameScript = function() {
+  let frameScript = function () {
     // Retrieve the `sw` promise created in the html page.
     let { sw } = content.wrappedJSObject;
-    sw.then(function(registration) {
+    sw.then(function (registration) {
       sendAsyncMessage("sw-registered");
     });
   };
@@ -266,14 +301,14 @@ function waitForServiceWorkerRegistered(tab) {
  */
 function unregisterServiceWorker(tab) {
   // Use message manager to work with e10s.
-  let frameScript = function() {
+  let frameScript = function () {
     // Retrieve the `sw` promise created in the html page.
     let { sw } = content.wrappedJSObject;
-    sw.then(function(registration) {
-      registration.unregister().then(function() {
+    sw.then(function (registration) {
+      registration.unregister().then(function () {
         sendAsyncMessage("sw-unregistered");
       },
-      function(e) {
+      function (e) {
         dump("SW not unregistered; " + e + "\n");
       });
     });

@@ -318,6 +318,7 @@ pref("media.wmf.decoder.thread-count", -1);
 pref("media.wmf.low-latency.enabled", false);
 pref("media.wmf.skip-blacklist", false);
 pref("media.windows-media-foundation.allow-d3d11-dxva", true);
+pref("media.wmf.disable-d3d11-for-dlls", "igd10iumd32.dll: 20.19.15.4444, 20.19.15.4424, 20.19.15.4409, 20.19.15.4380, 20.19.15.4360, 20.19.15.4390, 20.19.15.4331, 10.18.15.4281, 10.18.15.4279, 10.18.15.4256, 10.18.10.4358, 10.18.10.4276, 10.18.10.4252, 10.18.14.4112, 10.18.10.3496, 10.18.10.3308; igd10umd32.dll: 9.17.10.4229, 9.17.10.2857; igd10umd64.dll: 9.17.10.4229; isonyvideoprocessor.dll: 4.1.2247.8090, 4.1.2153.6200; tosqep.dll: 1.2.15.526, 1.1.12.201, 1.0.11.318, 1.0.11.215, 1.0.10.1224; tosqep64.dll: 1.1.12.201, 1.0.11.215");
 #endif
 #if defined(MOZ_FFMPEG)
 #if defined(XP_MACOSX)
@@ -352,11 +353,21 @@ pref("media.apple.mp3.enabled", true);
 pref("media.apple.mp4.enabled", true);
 #endif
 
+// GMP storage version number. At startup we check the version against
+// media.gmp.storage.version.observed, and if the versions don't match,
+// we clear storage and set media.gmp.storage.version.observed=expected.
+// This provides a mechanism to clear GMP storage when non-compatible
+// changes are made.
+pref("media.gmp.storage.version.expected", 1);
+
 // Filter what triggers user notifications.
 // See DecoderDoctorDocumentWatcher::ReportAnalysis for details.
-pref("media.decoder-doctor.notifications-allowed", "MediaWidevineNoWMFNoSilverlight");
+pref("media.decoder-doctor.notifications-allowed", "MediaWMFNeeded,MediaWidevineNoWMFNoSilverlight");
 // Whether we report partial failures.
 pref("media.decoder-doctor.verbose", false);
+
+// Whether to suspend decoding of videos in background tabs.
+pref("media.suspend-bkgnd-video.enabled", true);
 
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", true);
@@ -453,7 +464,7 @@ pref("media.navigator.audio.full_duplex", true);
 #elif defined(XP_WIN)
 pref("media.peerconnection.capture_delay", 50);
 pref("media.getusermedia.playout_delay", 40);
-pref("media.navigator.audio.full_duplex", false);
+pref("media.navigator.audio.full_duplex", true);
 #elif defined(ANDROID)
 pref("media.peerconnection.capture_delay", 100);
 pref("media.getusermedia.playout_delay", 100);
@@ -696,11 +707,7 @@ pref("gfx.font_rendering.wordcache.charlimit", 32);
 // cache shaped word results
 pref("gfx.font_rendering.wordcache.maxentries", 10000);
 
-#ifdef RELEASE_BUILD
-pref("gfx.font_rendering.graphite.enabled", false);
-#else
 pref("gfx.font_rendering.graphite.enabled", true);
-#endif
 
 #ifdef XP_WIN
 pref("gfx.font_rendering.directwrite.force-enabled", false);
@@ -881,7 +888,7 @@ pref("devtools.debugger.prompt-connection", true);
 // Block tools from seeing / interacting with certified apps
 pref("devtools.debugger.forbid-certified-apps", true);
 // List of permissions that a sideloaded app can't ask for
-pref("devtools.apps.forbidden-permissions", "embed-apps,engineering-mode,embed-widgets");
+pref("devtools.apps.forbidden-permissions", "embed-apps,embed-widgets");
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "authored");
@@ -1508,6 +1515,12 @@ pref("network.http.enable-packaged-apps", false);
 // Set to false if you don't need the signed packaged web app support (i.e. NSec).
 pref("network.http.signed-packages.enabled", false);
 
+// If it is set to false, headers with empty value will not appear in the header
+// array - behavior as it used to be. If it is true: empty headers coming from
+// the network will exits in header array as empty string. Call SetHeader with
+// an empty value will still delete the header.(Bug 6699259)
+pref("network.http.keep_empty_response_headers_as_empty_string", false);
+
 // default values for FTP
 // in a DSCP environment this should be 40 (0x28, or AF11), per RFC-4594,
 // Section 4.8 "High-Throughput Data Service Class", and 80 (0x50, or AF22)
@@ -1565,8 +1578,6 @@ pref("network.websocket.delay-failed-reconnects", true);
 // </ws>
 
 // Server-Sent Events
-
-pref("dom.server-events.enabled", true);
 // Equal to the DEFAULT_RECONNECTION_TIME_VALUE value in nsEventSource.cpp
 pref("dom.server-events.default-reconnection-time", 5000); // in milliseconds
 
@@ -2040,6 +2051,9 @@ pref("security.csp.experimentalEnabled", false);
 // Default Content Security Policy to apply to privileged apps.
 pref("security.apps.privileged.CSP.default", "default-src * data: blob:; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
 
+// Default Content Security Policy to apply to signed contents.
+pref("security.signed_content.CSP.default", "script-src 'self'; style-src 'self'");
+
 // Mixed content blocking
 pref("security.mixed_content.block_active_content", false);
 pref("security.mixed_content.block_display_content", false);
@@ -2400,11 +2414,7 @@ pref("layout.css.prefixes.font-features", true);
 pref("layout.css.prefixes.gradients", true);
 
 // Are webkit-prefixed properties & property-values supported?
-#ifdef RELEASE_BUILD
-pref("layout.css.prefixes.webkit", false);
-#else
 pref("layout.css.prefixes.webkit", true);
-#endif
 
 // Are "-webkit-{min|max}-device-pixel-ratio" media queries supported?
 // (Note: this pref has no effect if the master 'layout.css.prefixes.webkit'
@@ -2427,12 +2437,8 @@ pref("layout.css.scope-pseudo.enabled", true);
 // Is support for background-blend-mode enabled?
 pref("layout.css.background-blend-mode.enabled", true);
 
-// Is support for background-clip:text enabled? (bug 1264905)
-#ifdef RELEASE_BUILD
-pref("layout.css.background-clip-text.enabled", false);
-#else
+// Is support for background-clip:text enabled?
 pref("layout.css.background-clip-text.enabled", true);
-#endif
 
 // Is support for CSS vertical text enabled?
 pref("layout.css.vertical-text.enabled", true);
@@ -3280,20 +3286,12 @@ pref("plugin.scan.plid.all", true);
 // Whether sending WM_MOUSEWHEEL and WM_MOUSEHWHEEL to plugins on Windows.
 pref("plugin.mousewheel.enabled", true);
 
-// Help Windows NT, 2000, and XP dialup a RAS connection
-// when a network address is unreachable.
-pref("network.autodial-helper.enabled", false);
-
 // Switch the keyboard layout per window
 pref("intl.keyboard.per_window_layout", false);
 
 #ifdef NS_ENABLE_TSF
 // Enable/Disable TSF support on Vista or later.
 pref("intl.tsf.enable", true);
-
-// Force enable TSF even on WinXP or WinServer 2003.
-// Be aware, TSF framework on prior to Vista is not enough stable.
-pref("intl.tsf.force_enable", false);
 
 // Support IMEs implemented with IMM in TSF mode.
 pref("intl.tsf.support_imm", true);
@@ -4364,10 +4362,11 @@ pref("gfx.gralloc.fence-with-readpixels", false);
 pref("stagefright.force-enabled", false);
 pref("stagefright.disabled", false);
 
-#ifdef XP_WIN
-// The default TCP send window on Windows is too small, and autotuning only occurs on receive
-pref("network.tcp.sendbuffer", 131072);
-#endif
+// sendbuffer of 0 means use OS default, sendbuffer unset means use
+// gecko default which varies depending on windows version and is OS
+// default on non windows
+// pref("network.tcp.sendbuffer", 0);
+
 // TCP Keepalive
 pref("network.tcp.keepalive.enabled", true);
 // Default idle time before first TCP keepalive probe; same time for interval
@@ -4502,6 +4501,7 @@ pref("gfx.direct2d.force-enabled", false);
 
 pref("layers.prefer-opengl", false);
 pref("layers.prefer-d3d9", false);
+pref("layers.allow-d3d9-fallback", true);
 pref("layers.d3d11.force-warp", false);
 pref("layers.d3d11.disable-warp", true);
 
@@ -4571,6 +4571,11 @@ pref("alerts.showFavicons", false);
 
 // DOM full-screen API.
 pref("full-screen-api.enabled", false);
+#ifdef RELEASE_BUILD
+pref("full-screen-api.unprefix.enabled", false);
+#else
+pref("full-screen-api.unprefix.enabled", true);
+#endif
 pref("full-screen-api.allow-trusted-requests-only", true);
 pref("full-screen-api.pointer-lock.enabled", true);
 // transition duration of fade-to-black and fade-from-black, unit: ms
@@ -4657,22 +4662,6 @@ pref("dom.push.pingInterval", 1800000); // 30 minutes
 
 // How long before we timeout
 pref("dom.push.requestTimeout", 10000);
-pref("dom.push.pingInterval.default", 180000);// 3 min
-pref("dom.push.pingInterval.mobile", 180000); // 3 min
-pref("dom.push.pingInterval.wifi", 180000);  // 3 min
-
-// Adaptive ping
-pref("dom.push.adaptive.enabled", false);
-pref("dom.push.adaptive.lastGoodPingInterval", 180000);// 3 min
-pref("dom.push.adaptive.lastGoodPingInterval.mobile", 180000);// 3 min
-pref("dom.push.adaptive.lastGoodPingInterval.wifi", 180000);// 3 min
-// Valid gap between the biggest good ping and the bad ping
-pref("dom.push.adaptive.gap", 60000); // 1 minute
-// We limit the ping to this maximum value
-pref("dom.push.adaptive.upperLimit", 1740000); // 29 min
-
-// enable udp wakeup support
-pref("dom.push.udp.wakeupEnabled", false);
 
 // WebPush prefs:
 pref("dom.push.http2.reset_retry_count_after_ms", 60000);
@@ -4914,9 +4903,6 @@ pref("dom.forms.inputmode", true);
 // InputMethods for soft keyboards in B2G
 pref("dom.mozInputMethod.enabled", false);
 
-// DataStore is disabled by default
-pref("dom.datastore.enabled", false);
-
 // Telephony API
 #ifdef MOZ_B2G_RIL
 pref("dom.telephony.enabled", true);
@@ -4958,23 +4944,71 @@ pref("dom.voicemail.enabled", false);
 // parameter omitted.
 pref("dom.voicemail.defaultServiceId", 0);
 
-// DOM Inter-App Communication API.
-pref("dom.inter-app-communication-api.enabled", false);
-
 // Disable mapped array buffer by default.
 pref("dom.mapped_arraybuffer.enabled", false);
 
 // The tables used for Safebrowsing phishing and malware checks.
 pref("urlclassifier.malwareTable", "goog-malware-shavar,goog-unwanted-shavar,test-malware-simple,test-unwanted-simple");
 pref("urlclassifier.phishTable", "goog-phish-shavar,test-phish-simple");
-pref("urlclassifier.downloadBlockTable", "");
+
+// Tables for application reputation.
+pref("urlclassifier.downloadBlockTable", "goog-badbinurl-shavar");
+
+#ifdef XP_WIN
+ // Only download the whitelist on Windows, since the whitelist is
+ // only useful for suppressing remote lookups for signed binaries which we can
+ // only verify on Windows (Bug 974579). Other platforms always do remote lookups.
+pref("urlclassifier.downloadAllowTable", "goog-downloadwhite-digest256");
+#else
 pref("urlclassifier.downloadAllowTable", "");
+#endif
+
 pref("urlclassifier.disallow_completions", "test-malware-simple,test-phish-simple,test-unwanted-simple,test-track-simple,test-trackwhite-simple,test-forbid-simple,goog-downloadwhite-digest256,mozstd-track-digest256,mozstd-trackwhite-digest256,mozfull-track-digest256,test-block-simple,mozplugin-block-digest256,mozplugin2-block-digest256");
 
 // The table and update/gethash URLs for Safebrowsing phishing and malware
 // checks.
 pref("urlclassifier.trackingTable", "test-track-simple,mozstd-track-digest256");
 pref("urlclassifier.trackingWhitelistTable", "test-trackwhite-simple,mozstd-trackwhite-digest256");
+
+// The number of random entries to send with a gethash request.
+pref("urlclassifier.gethashnoise", 4);
+
+// Gethash timeout for Safebrowsing.
+pref("urlclassifier.gethash.timeout_ms", 5000);
+
+// If an urlclassifier table has not been updated in this number of seconds,
+// a gethash request will be forced to check that the result is still in
+// the database.
+pref("urlclassifier.max-complete-age", 2700);
+
+// Name of the about: page contributed by safebrowsing to handle display of error
+// pages on phishing/malware hits.  (bug 399233)
+pref("urlclassifier.alternate_error_page", "blocked");
+
+// Enable phishing protection
+pref("browser.safebrowsing.enabled", true);
+
+// Enable malware protection
+pref("browser.safebrowsing.malware.enabled", true);
+
+pref("browser.safebrowsing.downloads.enabled", true);
+pref("browser.safebrowsing.downloads.remote.enabled", true);
+pref("browser.safebrowsing.downloads.remote.timeout_ms", 10000);
+pref("browser.safebrowsing.downloads.remote.url", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.downloads.remote.block_dangerous",            true);
+pref("browser.safebrowsing.downloads.remote.block_dangerous_host",       true);
+pref("browser.safebrowsing.downloads.remote.block_potentially_unwanted", true);
+pref("browser.safebrowsing.downloads.remote.block_uncommon",             true);
+pref("browser.safebrowsing.debug", false);
+
+pref("browser.safebrowsing.provider.google.lists", "goog-badbinurl-shavar,goog-downloadwhite-digest256,goog-phish-shavar,goog-malware-shavar,goog-unwanted-shavar");
+pref("browser.safebrowsing.provider.google.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.provider.google.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2");
+pref("browser.safebrowsing.provider.google.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
+
+pref("browser.safebrowsing.reportPhishMistakeURL", "https://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%&url=");
+pref("browser.safebrowsing.reportPhishURL", "https://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%&url=");
+pref("browser.safebrowsing.reportMalwareMistakeURL", "https://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%&url=");
 
 // The table and global pref for blocking access to sites forbidden by policy
 pref("browser.safebrowsing.forbiddenURIs.enabled", false);
@@ -4985,8 +5019,8 @@ pref("browser.safebrowsing.blockedURIs.enabled", false);
 pref("urlclassifier.blockedTable", "test-block-simple,mozplugin-block-digest256");
 
 pref("browser.safebrowsing.provider.mozilla.lists", "mozstd-track-digest256,mozstd-trackwhite-digest256,mozfull-track-digest256,mozplugin-block-digest256,mozplugin2-block-digest256");
-pref("browser.safebrowsing.provider.mozilla.updateURL", "https://shavar.services.mozilla.com/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.provider.mozilla.gethashURL", "https://shavar.services.mozilla.com/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
+pref("browser.safebrowsing.provider.mozilla.updateURL", "https://shavar.services.mozilla.com/downloads?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2");
+pref("browser.safebrowsing.provider.mozilla.gethashURL", "https://shavar.services.mozilla.com/gethash?client=SAFEBROWSING_ID&appver=%MAJOR_VERSION%&pver=2.2");
 // Set to a date in the past to force immediate download in new profiles.
 pref("browser.safebrowsing.provider.mozilla.nextupdatetime", "1");
 // Block lists for tracking protection. The name values will be used as the keys
@@ -4998,6 +5032,14 @@ pref("browser.safebrowsing.provider.mozilla.lists.mozfull.description", "mozfull
 
 // Allow users to ignore Safe Browsing warnings.
 pref("browser.safebrowsing.allowOverride", true);
+
+#ifdef MOZILLA_OFFICIAL
+// Normally the "client ID" sent in updates is appinfo.name, but for
+// official Firefox releases from Mozilla we use a special identifier.
+pref("browser.safebrowsing.id", "navclient-auto-ffox");
+#else
+pref("browser.safebrowsing.id", "Firefox");
+#endif
 
 // Turn off Spatial navigation by default.
 pref("snav.enabled", false);
@@ -5019,7 +5061,7 @@ pref("layout.accessiblecaret.caret_shown_when_long_tapping_on_empty_content", fa
 
 // Timeout in milliseconds to hide the accessiblecaret under cursor mode while
 // no one touches it. Set the value to 0 to disable this feature.
-pref("layout.accessiblecaret.timeout_ms", 3000);
+pref("layout.accessiblecaret.timeout_ms", 0);
 
 // Simulate long tap to select words on the platforms where APZ is not enabled
 // or long tap events does not fired by APZ.
@@ -5042,6 +5084,9 @@ pref("layout.accessiblecaret.allow_dragging_across_other_caret", true);
 
 // Optionally provide haptic feedback on longPress selection events.
 pref("layout.accessiblecaret.hapticfeedback", false);
+
+// Smart phone-number selection on long-press is not enabled by default.
+pref("layout.accessiblecaret.extend_selection_for_phone_number", false);
 
 // Wakelock is disabled by default.
 pref("dom.wakelock.enabled", false);
@@ -5201,6 +5246,12 @@ pref("reader.errors.includeURLs", false);
 // The default relative font size in reader mode (1-9)
 pref("reader.font_size", 5);
 
+// The default relative content width in reader mode (1-9)
+pref("reader.content_width", 3);
+
+// The default relative line height in reader mode (1-9)
+pref("reader.line_height", 4);
+
 // The default color scheme in reader mode (light, dark, sepia, auto)
 // auto = color automatically adjusts according to ambient light level
 // (auto only works on platforms where the 'devicelight' event is enabled)
@@ -5239,13 +5290,7 @@ pref("media.gmp.insecure.allow", false);
 pref("dom.audiochannel.mutedByDefault", false);
 
 // Enable <details> and <summary> tags.
-#ifdef RELEASE_BUILD
-// Bug 1226455: Need to modify dom/tests/mochitest/general/test_interfaces.html
-// when shipping.
-pref("dom.details_element.enabled", false);
-#else
 pref("dom.details_element.enabled", true);
-#endif
 
 // Secure Element API
 #ifdef MOZ_SECUREELEMENT
@@ -5292,3 +5337,10 @@ pref("dom.mozBrowserFramesEnabled", false);
 
 // Is support for 'color-adjust' CSS property enabled?
 pref("layout.css.color-adjust.enabled", true);
+
+// Disable Node.rootNode in release builds.
+#ifdef RELEASE_BUILD
+pref("dom.node.rootNode.enabled", false);
+#else
+pref("dom.node.rootNode.enabled", true);
+#endif

@@ -403,19 +403,22 @@ CreateGlobalObject(JSContext* cx, const JSClass* clasp, nsIPrincipal* principal,
     // of |global|.
     (void) new XPCWrappedNativeScope(cx, global);
 
+    if (clasp->flags & JSCLASS_DOM_GLOBAL) {
 #ifdef DEBUG
-    // Verify that the right trace hook is called. Note that this doesn't
-    // work right for wrapped globals, since the tracing situation there is
-    // more complicated. Manual inspection shows that they do the right thing.
-    if (!((const js::Class*)clasp)->isWrappedNative())
-    {
-        VerifyTraceProtoAndIfaceCacheCalledTracer trc(JS_GetRuntime(cx));
-        TraceChildren(&trc, GCCellPtr(global.get()));
-        MOZ_ASSERT(trc.ok, "Trace hook on global needs to call TraceXPCGlobal for XPConnect compartments.");
-    }
+        // Verify that the right trace hook is called. Note that this doesn't
+        // work right for wrapped globals, since the tracing situation there is
+        // more complicated. Manual inspection shows that they do the right
+        // thing.  Also note that we only check this for JSCLASS_DOM_GLOBAL
+        // classes because xpc::TraceXPCGlobal won't call
+        // TraceProtoAndIfaceCache unless that flag is set.
+        if (!((const js::Class*)clasp)->isWrappedNative())
+        {
+            VerifyTraceProtoAndIfaceCacheCalledTracer trc(JS_GetRuntime(cx));
+            TraceChildren(&trc, GCCellPtr(global.get()));
+            MOZ_ASSERT(trc.ok, "Trace hook on global needs to call TraceXPCGlobal for XPConnect compartments.");
+        }
 #endif
 
-    if (clasp->flags & JSCLASS_DOM_GLOBAL) {
         const char* className = clasp->name;
         AllocateProtoAndIfaceCache(global,
                                    (strcmp(className, "Window") == 0 ||
@@ -434,9 +437,12 @@ InitGlobalObjectOptions(JS::CompartmentOptions& aOptions,
     bool shouldDiscardSystemSource = ShouldDiscardSystemSource();
     bool extraWarningsForSystemJS = ExtraWarningsForSystemJS();
 
-    bool isSystem = false;
-    if (shouldDiscardSystemSource || extraWarningsForSystemJS)
-        isSystem = nsContentUtils::IsSystemPrincipal(aPrincipal);
+    bool isSystem = nsContentUtils::IsSystemPrincipal(aPrincipal);
+
+    if (isSystem) {
+        // Make sure [SecureContext] APIs are visible:
+        aOptions.creationOptions().setSecureContext(true);
+    }
 
     short status = aPrincipal->GetAppStatus();
 

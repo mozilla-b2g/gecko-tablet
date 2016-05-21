@@ -7,8 +7,10 @@ package org.mozilla.gecko.util;
 import android.content.Context;
 
 import android.util.Log;
-import org.mozilla.gecko.mozglue.ContextUtils.SafeIntent;
+import org.mozilla.gecko.mozglue.SafeIntentUtils.SafeIntent;
 import android.text.TextUtils;
+
+import com.keepsafe.switchboard.Preferences;
 import com.keepsafe.switchboard.SwitchBoard;
 import org.mozilla.gecko.GeckoSharedPrefs;
 
@@ -35,9 +37,9 @@ public class Experiments {
 
     // Onboarding: "Features and Story". These experiments are determined
     // on the client, they are not part of the server config.
-    public static final String ONBOARDING2_A = "onboarding2-a"; // Control: Single (blue) welcome screen
-    public static final String ONBOARDING2_B = "onboarding2-b"; // 4 static Feature slides
-    public static final String ONBOARDING2_C = "onboarding2-c"; // 4 static + 1 clickable (Data saving) Feature slides
+    public static final String ONBOARDING3_A = "onboarding3-a"; // Control: No first run
+    public static final String ONBOARDING3_B = "onboarding3-b"; // 4 static Feature + 1 dynamic slides
+    public static final String ONBOARDING3_C = "onboarding3-c"; // Differentiating features slides
 
     // Synchronizing the catalog of downloadable content from Kinto
     public static final String DOWNLOAD_CONTENT_CATALOG_SYNC = "download-content-catalog-sync";
@@ -46,6 +48,15 @@ public class Experiments {
     public static final String PROMOTE_ADD_TO_HOMESCREEN = "promote-add-to-homescreen";
 
     public static final String PREF_ONBOARDING_VERSION = "onboarding_version";
+
+    // Promotion to bookmark reader-view items after entering reader view three times (Bug 1247689)
+    public static final String TRIPLE_READERVIEW_BOOKMARK_PROMPT = "triple-readerview-bookmark-prompt";
+
+    // Only show origin in URL bar instead of full URL (Bug 1236431)
+    public static final String URLBAR_SHOW_ORIGIN_ONLY = "urlbar-show-origin-only";
+
+    // Show name of organization (EV cert) instead of full URL in URL bar (Bug 1249594).
+    public static final String URLBAR_SHOW_EV_CERT_OWNER = "urlbar-show-ev-cert-owner";
 
     private static volatile Boolean disabled = null;
 
@@ -84,12 +95,12 @@ public class Experiments {
      * @return returns value for experiment or false if experiment does not exist.
      */
     public static boolean isInExperimentLocal(Context context, String experiment) {
-        if (SwitchBoard.isInBucket(context, 0, 33)) {
-            return Experiments.ONBOARDING2_A.equals(experiment);
-        } else if (SwitchBoard.isInBucket(context, 33, 66)) {
-            return Experiments.ONBOARDING2_B.equals(experiment);
-        } else if (SwitchBoard.isInBucket(context, 66, 100)) {
-            return Experiments.ONBOARDING2_C.equals(experiment);
+        if (SwitchBoard.isInBucket(context, 0, 20)) {
+            return Experiments.ONBOARDING3_A.equals(experiment);
+        } else if (SwitchBoard.isInBucket(context, 20, 60)) {
+            return Experiments.ONBOARDING3_B.equals(experiment);
+        } else if (SwitchBoard.isInBucket(context, 60, 100)) {
+            return Experiments.ONBOARDING3_C.equals(experiment);
         } else {
             return false;
         }
@@ -110,5 +121,29 @@ public class Experiments {
         }
 
         return experiments;
+    }
+
+    /**
+     * Sets an override to force an experiment to be enabled or disabled. This value
+     * will be read and used before reading the switchboard server configuration.
+     *
+     * @param c Context
+     * @param experimentName Experiment name
+     * @param isEnabled Whether or not the experiment should be enabled
+     */
+    public static void setOverride(Context c, String experimentName, boolean isEnabled) {
+        Log.d(LOGTAG, "setOverride: " + experimentName + " = " + isEnabled);
+        Preferences.setOverrideValue(c, experimentName, isEnabled);
+    }
+
+    /**
+     * Clears the override value for an experiment.
+     *
+     * @param c Context
+     * @param experimentName Experiment name
+     */
+    public static void clearOverride(Context c, String experimentName) {
+        Log.d(LOGTAG, "clearOverride: " + experimentName);
+        Preferences.clearOverrideValue(c, experimentName);
     }
 }

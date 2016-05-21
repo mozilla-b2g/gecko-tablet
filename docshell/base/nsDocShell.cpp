@@ -134,6 +134,7 @@
 #include "nsIStructuredCloneContainer.h"
 #ifdef MOZ_PLACES
 #include "nsIFaviconService.h"
+#include "mozIPlacesPendingOperation.h"
 #include "mozIAsyncFavicons.h"
 #endif
 #include "nsINetworkPredictor.h"
@@ -1475,8 +1476,8 @@ nsDocShell::LoadURI(nsIURI* aURI,
   //       for in InternalLoad is data:, javascript:, and about:blank
   //       URIs.  For other URIs this would all be dead wrong!
 
+  nsCOMPtr<nsIPrincipal> ownerPrincipal = do_QueryInterface(owner);
   if (owner && mItemType != typeChrome) {
-    nsCOMPtr<nsIPrincipal> ownerPrincipal = do_QueryInterface(owner);
     if (nsContentUtils::IsSystemPrincipal(ownerPrincipal)) {
       if (ownerIsExplicit) {
         return NS_ERROR_DOM_SECURITY_ERR;
@@ -1489,7 +1490,10 @@ nsDocShell::LoadURI(nsIURI* aURI,
       }
       // Don't inherit from the current page.  Just do the safe thing
       // and pretend that we were loaded by a nullprincipal.
-      owner = nsNullPrincipal::Create();
+      //
+      // We didn't inherit OriginAttributes here as ExpandedPrincipal doesn't
+      // have origin attributes.
+      owner = nsNullPrincipal::CreateWithInheritedAttributes(this);
       inheritOwner = false;
     }
   }
@@ -1500,7 +1504,9 @@ nsDocShell::LoadURI(nsIURI* aURI,
 
   if (aLoadFlags & LOAD_FLAGS_DISALLOW_INHERIT_OWNER) {
     inheritOwner = false;
-    owner = nsNullPrincipal::Create();
+    owner = ownerPrincipal ?
+              nsNullPrincipal::CreateWithInheritedAttributes(ownerPrincipal) :
+              nsNullPrincipal::CreateWithInheritedAttributes(this);
   }
 
   uint32_t flags = 0;
@@ -2496,6 +2502,10 @@ nsDocShell::GetFullscreenAllowed(bool* aFullscreenAllowed)
   // Assume false until we determine otherwise...
   *aFullscreenAllowed = false;
 
+  // If it is sandboxed, fullscreen is not allowed.
+  if (mSandboxFlags & SANDBOXED_FULLSCREEN) {
+    return NS_OK;
+  }
   nsCOMPtr<nsPIDOMWindowOuter> win = GetWindow();
   if (!win) {
     return NS_OK;
@@ -2513,6 +2523,10 @@ nsDocShell::GetFullscreenAllowed(bool* aFullscreenAllowed)
                                nsGkAtoms::allowfullscreen) &&
         !frameElement->HasAttr(kNameSpaceID_None,
                                nsGkAtoms::mozallowfullscreen)) {
+      return NS_OK;
+    }
+    nsIDocument* doc = frameElement->GetUncomposedDoc();
+    if (!doc || !doc->FullscreenEnabledInternal()) {
       return NS_OK;
     }
   }
@@ -2950,7 +2964,7 @@ nsDocShell::GetSessionStorageForPrincipal(nsIPrincipal* aPrincipal,
     return NS_ERROR_UNEXPECTED;
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> domWin = do_GetInterface(GetAsSupports(this));
+  nsCOMPtr<nsPIDOMWindowOuter> domWin = GetWindow();
 
   if (aCreate) {
     return manager->CreateStorage(domWin->GetCurrentInnerWindow(), aPrincipal,
@@ -5216,24 +5230,21 @@ nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
   // Create a URL to pass all the error information through to the page.
 
 #undef SAFE_ESCAPE
-#define SAFE_ESCAPE(cstring, escArg1, escArg2)                                 \
-  {                                                                            \
-    char* s = nsEscape(escArg1, escArg2);                                      \
-    if (!s)                                                                    \
-      return NS_ERROR_OUT_OF_MEMORY;                                           \
-    cstring.Adopt(s);                                                          \
+#define SAFE_ESCAPE(output, input, params)                                     \
+  if (NS_WARN_IF(!NS_Escape(input, output, params))) {                         \
+    return NS_ERROR_OUT_OF_MEMORY;                                             \
   }
 
   nsCString escapedUrl, escapedCharset, escapedError, escapedDescription,
     escapedCSSClass;
-  SAFE_ESCAPE(escapedUrl, url.get(), url_Path);
-  SAFE_ESCAPE(escapedCharset, charset.get(), url_Path);
-  SAFE_ESCAPE(escapedError,
-              NS_ConvertUTF16toUTF8(aErrorType).get(), url_Path);
+  SAFE_ESCAPE(escapedUrl, url, url_Path);
+  SAFE_ESCAPE(escapedCharset, charset, url_Path);
+  SAFE_ESCAPE(escapedError, NS_ConvertUTF16toUTF8(aErrorType), url_Path);
   SAFE_ESCAPE(escapedDescription,
-              NS_ConvertUTF16toUTF8(aDescription).get(), url_Path);
+              NS_ConvertUTF16toUTF8(aDescription), url_Path);
   if (aCSSClass) {
-    SAFE_ESCAPE(escapedCSSClass, aCSSClass, url_Path);
+    nsCString cssClass(aCSSClass);
+    SAFE_ESCAPE(escapedCSSClass, cssClass, url_Path);
   }
   nsCString errorPageUrl("about:");
   errorPageUrl.AppendASCII(aErrorPage);
@@ -5262,9 +5273,7 @@ nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
   nsresult rv = GetAppManifestURL(manifestURL);
   if (manifestURL.Length() > 0) {
     nsCString manifestParam;
-    SAFE_ESCAPE(manifestParam,
-                NS_ConvertUTF16toUTF8(manifestURL).get(),
-                url_Path);
+    SAFE_ESCAPE(manifestParam, NS_ConvertUTF16toUTF8(manifestURL), url_Path);
     errorPageUrl.AppendLiteral("&m=");
     errorPageUrl.AppendASCII(manifestParam.get());
   }
@@ -7347,6 +7356,19 @@ nsDocShell::OnRedirectStateChange(nsIChannel* aOldChannel,
 {
   NS_ASSERTION(aStateFlags & STATE_REDIRECTING,
                "Calling OnRedirectStateChange when there is no redirect");
+
+  // If mixed content is allowed for the old channel, we forward
+  // the permission to the new channel if it has the same origin
+  // as the old one.
+  if (mMixedContentChannel && mMixedContentChannel == aOldChannel) {
+    nsresult rv = nsContentUtils::CheckSameOrigin(mMixedContentChannel, aNewChannel);
+    if (NS_SUCCEEDED(rv)) {
+      SetMixedContentChannel(aNewChannel); // Same origin: forward permission.
+    } else {
+      SetMixedContentChannel(nullptr); // Different origin: clear mMixedContentChannel.
+    }
+  }
+
   if (!(aStateFlags & STATE_IS_DOCUMENT)) {
     return;  // not a toplevel document
   }
@@ -7948,7 +7970,6 @@ nsDocShell::CreateAboutBlankContentViewer(nsIPrincipal* aPrincipal,
     nsCOMPtr<nsIPrincipal> principal;
     if (mSandboxFlags & SANDBOXED_ORIGIN) {
       principal = nsNullPrincipal::CreateWithInheritedAttributes(aPrincipal);
-      NS_ENSURE_TRUE(principal, NS_ERROR_FAILURE);
     } else {
       principal = aPrincipal;
     }
@@ -9408,11 +9429,12 @@ public:
     MOZ_ASSERT(aDataLen == 0,
                "We weren't expecting the callback to deliver data.");
 
+    nsCOMPtr<mozIPlacesPendingOperation> po;
     return mSvc->SetAndFetchFaviconForPage(
       mNewURI, aFaviconURI, false,
       mInPrivateBrowsing ? nsIFaviconService::FAVICON_LOAD_PRIVATE :
                            nsIFaviconService::FAVICON_LOAD_NON_PRIVATE,
-      nullptr, mLoadingPrincipal);
+      nullptr, mLoadingPrincipal, getter_AddRefs(po));
   }
 
 private:
@@ -9461,7 +9483,7 @@ nsDocShell::CopyFavicon(nsIURI* aOldURI,
 #endif
 }
 
-class InternalLoadEvent : public nsRunnable
+class InternalLoadEvent : public Runnable
 {
 public:
   InternalLoadEvent(nsDocShell* aDocShell, nsIURI* aURI,
@@ -9954,7 +9976,7 @@ nsDocShell::InternalLoad(nsIURI* aURI,
   // possible frameloader initialization before loading a new page.
   nsCOMPtr<nsIDocShellTreeItem> parent = GetParentDocshell();
   if (parent) {
-    nsCOMPtr<nsIDocument> doc = do_GetInterface(parent);
+    nsCOMPtr<nsIDocument> doc = parent->GetDocument();
     if (doc) {
       doc->TryCancelFrameLoaderInitialization(this);
     }
@@ -12070,7 +12092,6 @@ nsDocShell::AddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel,
           if (loadInfo->LoadingPrincipal()) {
             owner = nsNullPrincipal::CreateWithInheritedAttributes(
               loadInfo->LoadingPrincipal());
-            NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
           } else {
             // get the OriginAttributes
             NeckoOriginAttributes nAttrs;
@@ -12079,7 +12100,6 @@ nsDocShell::AddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel,
             pAttrs.InheritFromNecko(nAttrs);
 
             owner = nsNullPrincipal::Create(pAttrs);
-            NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
           }
         } else if (loadInfo->GetForceInheritPrincipal()) {
           owner = loadInfo->TriggeringPrincipal();
@@ -12252,8 +12272,7 @@ nsDocShell::LoadHistoryEntry(nsISHEntry* aEntry, uint32_t aLoadType)
       // Ensure that we have an owner.  Otherwise javascript: URIs will
       // pick it up from the about:blank page we just loaded, and we
       // don't really want even that in this case.
-      owner = nsNullPrincipal::Create();
-      NS_ENSURE_TRUE(owner, NS_ERROR_OUT_OF_MEMORY);
+      owner = nsNullPrincipal::CreateWithInheritedAttributes(this);
     }
   }
 
@@ -13232,7 +13251,7 @@ nsDocShell::SetBaseUrlForWyciwyg(nsIContentViewer* aContentViewer)
   if (baseURI) {
     nsIDocument* document = aContentViewer->GetDocument();
     if (document) {
-      rv = document->SetBaseURI(baseURI);
+      document->SetBaseURI(baseURI);
     }
   }
   return rv;
@@ -13524,7 +13543,7 @@ nsDocShell::SelectNone(void)
 
 // link handling
 
-class OnLinkClickEvent : public nsRunnable
+class OnLinkClickEvent : public Runnable
 {
 public:
   OnLinkClickEvent(nsDocShell* aHandler, nsIContent* aContent,
@@ -13934,8 +13953,7 @@ nsDocShell::GetPrintPreview(nsIWebBrowserPrint** aPrintPreview)
   nsCOMPtr<nsIDocumentViewerPrint> print = do_QueryInterface(mContentViewer);
   if (!print || !print->IsInitializedForPrintPreview()) {
     Stop(nsIWebNavigation::STOP_ALL);
-    nsCOMPtr<nsIPrincipal> principal = nsNullPrincipal::Create();
-    NS_ENSURE_STATE(principal);
+    nsCOMPtr<nsIPrincipal> principal = nsNullPrincipal::CreateWithInheritedAttributes(this);
     nsresult rv = CreateAboutBlankContentViewer(principal, nullptr);
     NS_ENSURE_SUCCESS(rv, rv);
     print = do_QueryInterface(mContentViewer);
@@ -14077,6 +14095,23 @@ nsDocShell::GetOriginAttributes(JSContext* aCx,
 void
 nsDocShell::SetOriginAttributes(const DocShellOriginAttributes& aAttrs)
 {
+  MOZ_ASSERT(mChildList.Length() == 0);
+
+  // TODO: Bug 1273058 - mContentViewer should be null when setting origin
+  // attributes.
+  if (mContentViewer) {
+    nsIDocument* doc = mContentViewer->GetDocument();
+    if (doc) {
+      nsIURI* uri = doc->GetDocumentURI();
+      MOZ_ASSERT(uri);
+      if (uri) {
+        nsAutoCString uriSpec;
+        uri->GetSpec(uriSpec);
+        MOZ_ASSERT(uriSpec.EqualsLiteral("about:blank"));
+      }
+    }
+  }
+
   mOriginAttributes = aAttrs;
 }
 
@@ -14432,4 +14467,11 @@ nsDocShell::GetTabChild()
   nsCOMPtr<nsIDocShellTreeOwner> owner(mTreeOwner);
   nsCOMPtr<nsITabChild> tc = do_GetInterface(owner);
   return tc.forget();
+}
+
+nsICommandManager*
+nsDocShell::GetCommandManager()
+{
+  NS_ENSURE_SUCCESS(EnsureCommandHandler(), nullptr);
+  return mCommandManager;
 }

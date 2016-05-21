@@ -125,7 +125,7 @@ PaintedLayerComposite::RenderLayer(const gfx::IntRect& aClipRect)
 
 
   RenderWithAllMasks(this, compositor, aClipRect,
-                     [&](EffectChain& effectChain, const gfx::Rect& clipRect) {
+                     [&](EffectChain& effectChain, const gfx::IntRect& clipRect) {
     mBuffer->SetPaintWillResample(MayResample());
 
     mBuffer->Composite(this, effectChain,
@@ -178,6 +178,17 @@ PaintedLayerComposite::PrintInfo(std::stringstream& aStream, const char* aPrefix
     mBuffer->PrintInfo(aStream, pfx.get());
   }
 }
+
+const gfx::TiledIntRegion&
+PaintedLayerComposite::GetInvalidRegion()
+{
+  if (mBuffer) {
+    nsIntRegion region = mInvalidRegion.GetRegion();
+    mBuffer->AddAnimationInvalidation(region);
+  }
+  return mInvalidRegion;
+}
+
 
 } // namespace layers
 } // namespace mozilla

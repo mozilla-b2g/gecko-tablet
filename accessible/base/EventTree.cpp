@@ -152,7 +152,7 @@ TreeMutation::Done()
 #endif
 
   for (uint32_t idx = mStartIdx; idx < length; idx++) {
-    mParent->mChildren[idx]->mIndexInParent = idx;
+    mParent->mChildren[idx]->mInt.mIndexOfEmbeddedChild = -1;
     mParent->mChildren[idx]->mStateFlags |= Accessible::eGroupInfoDirty;
   }
 
@@ -181,21 +181,24 @@ TreeMutation::Done()
 // EventTree
 
 void
-EventTree::Process()
+EventTree::Process(const RefPtr<DocAccessible>& aDeathGrip)
 {
-  EventTree* node = mFirst;
-  while (node) {
+  while (mFirst) {
     // Skip a node and its subtree if its container is not in the document.
-    if (node->mContainer->IsInDocument()) {
-      node->Process();
+    if (mFirst->mContainer->IsInDocument()) {
+      mFirst->Process(aDeathGrip);
+      if (aDeathGrip->IsDefunct()) {
+        return;
+      }
     }
-    node = node->mNext;
+    mFirst = mFirst->mNext.forget();
   }
 
   MOZ_ASSERT(mContainer || mDependentEvents.IsEmpty(),
              "No container, no events");
   MOZ_ASSERT(!mContainer || !mContainer->IsDefunct(),
              "Processing events for defunct container");
+  MOZ_ASSERT(!mFireReorder || mContainer, "No target for reorder event");
 
   // Fire mutation events.
   uint32_t eventsCount = mDependentEvents.Length();
@@ -203,10 +206,18 @@ EventTree::Process()
     AccMutationEvent* mtEvent = mDependentEvents[jdx];
     MOZ_ASSERT(mtEvent->mEventRule != AccEvent::eDoNotEmit,
                "The event shouldn't be presented in the tree");
+    MOZ_ASSERT(mtEvent->Document(), "No document for event target");
 
     nsEventShell::FireEvent(mtEvent);
+    if (aDeathGrip->IsDefunct()) {
+      return;
+    }
+
     if (mtEvent->mTextChangeEvent) {
       nsEventShell::FireEvent(mtEvent->mTextChangeEvent);
+      if (aDeathGrip->IsDefunct()) {
+        return;
+      }
     }
 
     if (mtEvent->IsHide()) {
@@ -222,18 +233,20 @@ EventTree::Process()
       if (mtEvent->mAccessible->ARIARole() == roles::MENUPOPUP) {
         nsEventShell::FireEvent(nsIAccessibleEvent::EVENT_MENUPOPUP_END,
                                 mtEvent->mAccessible);
+        if (aDeathGrip->IsDefunct()) {
+          return;
+        }
       }
 
       AccHideEvent* hideEvent = downcast_accEvent(mtEvent);
       if (hideEvent->NeedsShutdown()) {
-        mtEvent->GetDocAccessible()->ShutdownChildrenInSubtree(mtEvent->mAccessible);
+        aDeathGrip->ShutdownChildrenInSubtree(mtEvent->mAccessible);
       }
     }
   }
 
   // Fire reorder event at last.
   if (mFireReorder) {
-    MOZ_ASSERT(mContainer);
     nsEventShell::FireEvent(nsIAccessibleEvent::EVENT_REORDER, mContainer);
     mContainer->Document()->MaybeNotifyOfValueChange(mContainer);
   }
@@ -357,7 +370,7 @@ EventTree::Clear()
   for (uint32_t jdx = 0; jdx < eventsCount; jdx++) {
     AccHideEvent* ev = downcast_accEvent(mDependentEvents[jdx]);
     if (ev && ev->NeedsShutdown()) {
-      ev->GetDocAccessible()->ShutdownChildrenInSubtree(ev->mAccessible);
+      ev->Document()->ShutdownChildrenInSubtree(ev->mAccessible);
     }
   }
   mDependentEvents.Clear();

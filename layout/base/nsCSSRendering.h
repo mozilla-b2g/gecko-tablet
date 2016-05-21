@@ -528,7 +528,8 @@ struct nsCSSRendering {
                                    nsIFrame* aForFrame,
                                    const nsRect& aBorderArea,
                                    const nsStyleImageLayers::Layer& aLayer,
-                                   nsIFrame** aAttachedToFrame);
+                                   nsIFrame** aAttachedToFrame,
+                                   bool* aOutTransformedFixed);
 
   static nsBackgroundLayerState
   PrepareImageLayer(nsPresContext* aPresContext,
@@ -537,6 +538,7 @@ struct nsCSSRendering {
                     const nsRect& aBorderArea,
                     const nsRect& aBGClipRect,
                     const nsStyleImageLayers::Layer& aLayer,
+                    bool* aOutIsTransformedFixed = nullptr,
                     CompositionOp aCompositionOp = CompositionOp::OP_OVER);
 
   struct ImageLayerClipState {
@@ -587,15 +589,47 @@ struct nsCSSRendering {
      */
     PAINTBG_MASK_IMAGE = 0x08
   };
-  static DrawResult PaintBackground(nsPresContext* aPresContext,
-                                    nsRenderingContext& aRenderingContext,
-                                    nsIFrame* aForFrame,
-                                    const nsRect& aDirtyRect,
-                                    const nsRect& aBorderArea,
-                                    uint32_t aFlags,
-                                    nsRect* aBGClipRect = nullptr,
-                                    int32_t aLayer = -1,
-                                    CompositionOp aCompositionOp = CompositionOp::OP_OVER);
+
+  struct PaintBGParams {
+    nsPresContext& presCtx;
+    nsRenderingContext& renderingCtx;
+    nsRect dirtyRect;
+    nsRect borderArea;
+    nsIFrame* frame;
+    uint32_t paintFlags = 0;
+    nsRect* bgClipRect = nullptr;
+    int32_t layer;                  // -1 means painting all layers; other
+                                    // value means painting one specific
+                                    // layer only.
+    CompositionOp compositionOp = CompositionOp::OP_OVER;
+
+    static PaintBGParams ForAllLayers(nsPresContext& aPresCtx,
+                                      nsRenderingContext& aRenderingCtx,
+                                      const nsRect& aDirtyRect,
+                                      const nsRect& aBorderArea,
+                                      nsIFrame *aFrame,
+                                      uint32_t aPaintFlags);
+    static PaintBGParams ForSingleLayer(nsPresContext& aPresCtx,
+                                        nsRenderingContext& aRenderingCtx,
+                                        const nsRect& aDirtyRect,
+                                        const nsRect& aBorderArea,
+                                        nsIFrame *aFrame,
+                                        uint32_t aPaintFlags,
+                                        int32_t aLayer,
+                                        CompositionOp aCompositionOp  = CompositionOp::OP_OVER);
+
+  private:
+    PaintBGParams(nsPresContext& aPresCtx,
+                  nsRenderingContext& aRenderingCtx,
+                  const nsRect& aDirtyRect,
+                  const nsRect& aBorderArea)
+     : presCtx(aPresCtx),
+       renderingCtx(aRenderingCtx),
+       dirtyRect(aDirtyRect),
+       borderArea(aBorderArea) { }
+  };
+
+  static DrawResult PaintBackground(const PaintBGParams& aParams);
 
 
   /**
@@ -610,17 +644,9 @@ struct nsCSSRendering {
    * If all layers are painted, the image layer's blend mode (or the mask
    * layer's composition mode) will be used.
    */
-  static DrawResult PaintBackgroundWithSC(nsPresContext* aPresContext,
-                                          nsRenderingContext& aRenderingContext,
-                                          nsIFrame* aForFrame,
-                                          const nsRect& aDirtyRect,
-                                          const nsRect& aBorderArea,
-                                          nsStyleContext *aStyleContext,
-                                          const nsStyleBorder& aBorder,
-                                          uint32_t aFlags,
-                                          nsRect* aBGClipRect = nullptr,
-                                          int32_t aLayer = -1,
-                                          CompositionOp aCompositionOp = CompositionOp::OP_OVER);
+  static DrawResult PaintBackgroundWithSC(const PaintBGParams& aParams,
+                                          nsStyleContext *mBackgroundSC,
+                                          const nsStyleBorder& aBorder);
 
   /**
    * Returns the rectangle covered by the given background layer image, taking

@@ -39,7 +39,6 @@
 
 #if defined(XP_WIN)
 #include "mozilla/WindowsVersion.h"
-#include "nsNativeConnectionHelper.h"
 #include "ShutdownLayer.h"
 #endif
 
@@ -69,7 +68,7 @@ static NS_DEFINE_CID(kDNSServiceCID, NS_DNSSERVICE_CID);
 
 //-----------------------------------------------------------------------------
 
-class nsSocketEvent : public nsRunnable
+class nsSocketEvent : public Runnable
 {
 public:
     nsSocketEvent(nsSocketTransport *transport, uint32_t type,
@@ -1611,19 +1610,6 @@ nsSocketTransport::RecoverFromError()
         }
     }
 
-#if defined(XP_WIN)
-    // If not trying next address, try to make a connection using dialup. 
-    // Retry if that connection is made.
-    if (!tryAgain) {
-        bool autodialEnabled;
-        mSocketTransportService->GetAutodialEnabled(&autodialEnabled);
-        if (autodialEnabled) {
-          tryAgain = nsNativeConnectionHelper::OnConnectionFailed(
-                       NS_ConvertUTF8toUTF16(SocketHost()).get());
-	    }
-    }
-#endif
-
     // prepare to try again.
     if (tryAgain) {
         uint32_t msg;
@@ -1770,7 +1756,7 @@ nsSocketTransport::GetFD_Locked()
     return mFD;
 }
 
-class ThunkPRClose : public nsRunnable
+class ThunkPRClose : public Runnable
 {
 public:
   explicit ThunkPRClose(PRFileDesc *fd) : mFD(fd) {}

@@ -17,7 +17,7 @@ button {
   min-width: 100px;
 }
 
-/* Category tabs */
+/* Category panels */
 
 .category {
   display: flex;
@@ -40,7 +40,7 @@ button {
   flex: 1;
 }
 
-.tab {
+.panel {
   max-width: 800px;
 }
 
@@ -134,4 +134,12 @@ button {
 .addons-debugging-label {
   display: inline-block;
   margin: 0 5px 5px 0;
+}
+
+.page-not-found {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
 }

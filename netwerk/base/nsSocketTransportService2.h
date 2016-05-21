@@ -25,6 +25,7 @@
 
 class nsASocketHandler;
 struct PRPollDesc;
+class nsIPrefBranch;
 
 //-----------------------------------------------------------------------------
 
@@ -120,8 +121,6 @@ private:
 
     nsCOMPtr<nsIThread> mThread;    // protected by mLock
     mozilla::UniquePtr<mozilla::net::PollableEvent> mPollableEvent;
-    bool        mAutodialEnabled;
-                            // pref to control autodial code
 
     // Returns mThread, protecting the get-and-addref with mLock
     already_AddRefed<nsIThread> GetThreadSafely();
@@ -212,6 +211,7 @@ private:
 
     // Preference Monitor for SendBufferSize and Keepalive prefs.
     nsresult    UpdatePrefs();
+    void        UpdateSendBufferPref(nsIPrefBranch *);
     int32_t     mSendBufferSize;
     // Number of seconds of connection is idle before first keepalive ping.
     int32_t     mKeepaliveIdleTimeS;

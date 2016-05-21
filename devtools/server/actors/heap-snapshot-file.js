@@ -4,14 +4,14 @@
 
 "use strict";
 
-const protocol = require("devtools/server/protocol");
+const protocol = require("devtools/shared/protocol");
 const { method, Arg } = protocol;
 const Services = require("Services");
+const { Task } = require("devtools/shared/task");
 
 loader.lazyRequireGetter(this, "DevToolsUtils",
                          "devtools/shared/DevToolsUtils");
 loader.lazyRequireGetter(this, "OS", "resource://gre/modules/osfile.jsm", true);
-loader.lazyRequireGetter(this, "Task", "resource://gre/modules/Task.jsm", true);
 loader.lazyRequireGetter(this, "HeapSnapshotFileUtils",
                          "devtools/shared/heapsnapshot/HeapSnapshotFileUtils");
 

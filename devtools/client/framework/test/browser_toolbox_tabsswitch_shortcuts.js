@@ -7,7 +7,7 @@ requestLongerTimeout(2);
 
 var {Toolbox} = require("devtools/client/framework/toolbox");
 
-add_task(function*() {
+add_task(function* () {
   let tab = yield addTab("about:blank");
   let target = TargetFactory.forTab(tab);
   yield target.makeRemote();
@@ -56,7 +56,7 @@ function* testShortcuts(toolbox, index, key, toolIDs) {
        " using key " + key);
 
   let onToolSelected = toolbox.once("select");
-  EventUtils.synthesizeKey(key, {accelKey: true}, toolbox.doc.defaultView);
+  EventUtils.synthesizeKey(key, {accelKey: true}, toolbox.win);
   let id = yield onToolSelected;
 
   info("toolbox-select event from " + id);

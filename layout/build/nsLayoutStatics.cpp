@@ -70,7 +70,6 @@
 #include "LayerAnimationInfo.h"
 
 #include "AudioChannelService.h"
-#include "mozilla/dom/DataStoreService.h"
 #include "mozilla/dom/PromiseDebugging.h"
 #include "mozilla/dom/WebCryptoThreadPool.h"
 
@@ -128,9 +127,12 @@ using namespace mozilla::system;
 #include "CameraPreferences.h"
 #include "TouchManager.h"
 #include "MediaDecoder.h"
+#include "MediaPrefs.h"
 #include "mozilla/layers/CompositorLRU.h"
 #include "mozilla/dom/devicestorage/DeviceStorageStatics.h"
+#include "mozilla/ServoBindings.h"
 #include "mozilla/StaticPresData.h"
+#include "mozilla/dom/WebIDLGlobalNameHash.h"
 
 #ifdef MOZ_B2G_BT
 #include "mozilla/dom/BluetoothUUID.h"
@@ -309,6 +311,7 @@ nsLayoutStatics::Initialize()
 #endif
 
   MediaDecoder::InitStatics();
+  MediaPrefs::GetSingleton();
 
   PromiseDebugging::Init();
 
@@ -317,6 +320,10 @@ nsLayoutStatics::Initialize()
   mozilla::dom::devicestorage::DeviceStorageStatics::Initialize();
 
   mozilla::dom::WebCryptoThreadPool::Initialize();
+
+#ifdef MOZ_STYLO
+  Servo_Initialize();
+#endif
 
   return NS_OK;
 }
@@ -380,6 +387,7 @@ nsLayoutStatics::Shutdown()
   ShutdownJSEnvironment();
   nsGlobalWindow::ShutDown();
   nsDOMClassInfo::ShutDown();
+  WebIDLGlobalNameHash::Shutdown();
   nsListControlFrame::Shutdown();
   nsXBLService::Shutdown();
   nsAutoCopyListener::Shutdown();
@@ -423,8 +431,6 @@ nsLayoutStatics::Shutdown()
 
   nsHyphenationManager::Shutdown();
   nsDOMMutationObserver::Shutdown();
-
-  DataStoreService::Shutdown();
 
   ContentParent::ShutDown();
 

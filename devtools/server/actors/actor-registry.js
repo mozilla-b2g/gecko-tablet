@@ -4,7 +4,7 @@
 
 "use strict";
 
-const protocol = require("devtools/server/protocol");
+const protocol = require("devtools/shared/protocol");
 const { method, custom, Arg, Option, RetVal } = protocol;
 
 const { Cu, CC, components } = require("chrome");
@@ -90,7 +90,7 @@ function request(uri) {
     NetUtil.asyncFetch({
       uri,
       loadUsingSystemPrincipal: true,
-     }, (stream, status, req) => {
+    }, (stream, status, req) => {
       if (!components.isSuccessCode(status)) {
         reject(new Error("Request failed with status code = "
                          + status

@@ -25,9 +25,6 @@
         <!-- Style for MenuItemActionBar when shown in SecondaryActionBar -->
         <attr name="menuItemSecondaryActionBarStyle" format="reference"/>
 
-        <!-- Style for MenuItemSwitcherLayout's ShareActionButton -->
-        <attr name="menuItemShareActionButtonStyle" format="reference"/>
-
         <!-- Default style for the BookmarksListView -->
         <attr name="bookmarksListViewStyle" format="reference" />
 
@@ -134,11 +131,6 @@
         <!-- The background color we should be fading over. Useful because the
              background is full alpha and we need to copy the background underneath. -->
         <attr name="fadeBackgroundColor" format="dimension"/>
-    </declare-styleable>
-
-    <declare-styleable name="BookmarkFolderView">
-        <attr name="parent" format="boolean"/>
-        <attr name="reading_list" format="boolean"/>
     </declare-styleable>
 
     <declare-styleable name="IconTabWidget">

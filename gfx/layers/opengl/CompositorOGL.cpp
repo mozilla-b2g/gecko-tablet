@@ -84,10 +84,10 @@ CompositorOGL::BindBackdrop(ShaderProgramOGL* aProgram, GLuint aBackdrop, GLenum
 }
 
 CompositorOGL::CompositorOGL(CompositorBridgeParent* aParent,
-                             nsIWidget *aWidget, int aSurfaceWidth,
-                             int aSurfaceHeight, bool aUseExternalSurfaceSize)
-  : Compositor(aParent)
-  , mWidget(aWidget)
+                             widget::CompositorWidgetProxy* aWidget,
+                             int aSurfaceWidth, int aSurfaceHeight,
+                             bool aUseExternalSurfaceSize)
+  : Compositor(aWidget, aParent)
   , mWidgetSize(-1, -1)
   , mSurfaceSize(aSurfaceWidth, aSurfaceHeight)
   , mHasBGRA(0)
@@ -112,7 +112,7 @@ CompositorOGL::CreateContext()
   RefPtr<GLContext> context;
 
   // Used by mock widget to create an offscreen context
-  void* widgetOpenGLContext = mWidget->GetNativeData(NS_NATIVE_OPENGL_CONTEXT);
+  void* widgetOpenGLContext = mWidget->RealWidget()->GetNativeData(NS_NATIVE_OPENGL_CONTEXT);
   if (widgetOpenGLContext) {
     GLContext* alreadyRefed = reinterpret_cast<GLContext*>(widgetOpenGLContext);
     return already_AddRefed<GLContext>(alreadyRefed);
@@ -121,7 +121,7 @@ CompositorOGL::CreateContext()
 #ifdef XP_WIN
   if (gfxEnv::LayersPreferEGL()) {
     printf_stderr("Trying GL layers...\n");
-    context = gl::GLContextProviderEGL::CreateForWindow(mWidget, false);
+    context = gl::GLContextProviderEGL::CreateForWindow(mWidget->RealWidget(), false);
   }
 #endif
 
@@ -136,7 +136,7 @@ CompositorOGL::CreateContext()
   }
 
   if (!context) {
-    context = gl::GLContextProvider::CreateForWindow(mWidget,
+    context = gl::GLContextProvider::CreateForWindow(mWidget->RealWidget(),
                 gfxPlatform::GetPlatform()->RequiresAcceleratedGLContextForCompositorOGL());
   }
 
@@ -145,8 +145,8 @@ CompositorOGL::CreateContext()
   }
 
 #ifdef MOZ_WIDGET_GONK
-  mWidget->SetNativeData(NS_NATIVE_OPENGL_CONTEXT,
-                         reinterpret_cast<uintptr_t>(context.get()));
+  mWidget->RealWidget()->SetNativeData(
+    NS_NATIVE_OPENGL_CONTEXT, reinterpret_cast<uintptr_t>(context.get()));
 #endif
 
   return context.forget();
@@ -173,8 +173,8 @@ CompositorOGL::CleanupResources()
     return;
 
 #ifdef MOZ_WIDGET_GONK
-  mWidget->SetNativeData(NS_NATIVE_OPENGL_CONTEXT,
-                         reinterpret_cast<uintptr_t>(nullptr));
+  mWidget->RealWidget()->SetNativeData(
+    NS_NATIVE_OPENGL_CONTEXT, reinterpret_cast<uintptr_t>(nullptr));
 #endif
 
   RefPtr<GLContext> ctx = mGLContext->GetSharedContext();
@@ -225,9 +225,7 @@ CompositorOGL::CleanupResources()
 bool
 CompositorOGL::Initialize()
 {
-  bool force = gfxPrefs::LayersAccelerationForceEnabled();
-
-  ScopedGfxFeatureReporter reporter("GL Layers", force);
+  ScopedGfxFeatureReporter reporter("GL Layers");
 
   // Do not allow double initialization
   MOZ_ASSERT(mGLContext == nullptr, "Don't reinitialize CompositorOGL");
@@ -607,7 +605,7 @@ CompositorOGL::GetCurrentRenderTarget() const
 static GLenum
 GetFrameBufferInternalFormat(GLContext* gl,
                              GLuint aFrameBuffer,
-                             nsIWidget* aWidget)
+                             mozilla::widget::CompositorWidgetProxy* aWidget)
 {
   if (aFrameBuffer == 0) { // default framebuffer
     return aWidget->GetGLFrameBufferFormat();
@@ -629,22 +627,22 @@ CompositorOGL::ClearRect(const gfx::Rect& aRect)
 
 void
 CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
-                          const Rect *aClipRectIn,
-                          const Rect& aRenderBounds,
+                          const IntRect *aClipRectIn,
+                          const IntRect& aRenderBounds,
                           const nsIntRegion& aOpaqueRegion,
-                          Rect *aClipRectOut,
-                          Rect *aRenderBoundsOut)
+                          IntRect *aClipRectOut,
+                          IntRect *aRenderBoundsOut)
 {
   PROFILER_LABEL("CompositorOGL", "BeginFrame",
     js::ProfileEntry::Category::GRAPHICS);
 
   MOZ_ASSERT(!mFrameInProgress, "frame still in progress (should have called EndFrame");
 
-  gfx::Rect rect;
+  gfx::IntRect rect;
   if (mUseExternalSurfaceSize) {
-    rect = gfx::Rect(0, 0, mSurfaceSize.width, mSurfaceSize.height);
+    rect = gfx::IntRect(0, 0, mSurfaceSize.width, mSurfaceSize.height);
   } else {
-    rect = gfx::Rect(aRenderBounds.x, aRenderBounds.y, aRenderBounds.width, aRenderBounds.height);
+    rect = gfx::IntRect(aRenderBounds.x, aRenderBounds.y, aRenderBounds.width, aRenderBounds.height);
   }
 
   if (aRenderBoundsOut) {
@@ -990,7 +988,7 @@ CompositorOGL::GetLineCoefficients(const gfx::Point& aPoint1,
 
 void
 CompositorOGL::DrawQuad(const Rect& aRect,
-                        const Rect& aClipRect,
+                        const IntRect& aClipRect,
                         const EffectChain &aEffectChain,
                         Float aOpacity,
                         const gfx::Matrix4x4& aTransform,
@@ -1011,7 +1009,7 @@ CompositorOGL::DrawQuad(const Rect& aRect,
   IntSize size = mCurrentRenderTarget->GetSize();
 
   Rect renderBound(0, 0, size.width, size.height);
-  renderBound.IntersectRect(renderBound, aClipRect);
+  renderBound.IntersectRect(renderBound, Rect(aClipRect));
   renderBound.MoveBy(offset);
 
   Rect destRect = aTransform.TransformAndClipBounds(aRect, renderBound);
@@ -1031,7 +1029,7 @@ CompositorOGL::DrawQuad(const Rect& aRect,
 
   LayerScope::DrawBegin();
 
-  Rect clipRect = aClipRect;
+  IntRect clipRect = aClipRect;
   // aClipRect is in destination coordinate space (after all
   // transforms and offsets have been applied) so if our
   // drawing is going to be shifted by mRenderOffset then we need
@@ -1039,11 +1037,9 @@ CompositorOGL::DrawQuad(const Rect& aRect,
   if (!mTarget && mCurrentRenderTarget->IsWindow()) {
     clipRect.MoveBy(mRenderOffset.x, mRenderOffset.y);
   }
-  IntRect intClipRect;
-  clipRect.ToIntRect(&intClipRect);
 
-  gl()->fScissor(intClipRect.x, FlipY(intClipRect.y + intClipRect.height),
-                 intClipRect.width, intClipRect.height);
+  gl()->fScissor(clipRect.x, FlipY(clipRect.y + clipRect.height),
+                 clipRect.width, clipRect.height);
 
   MaskType maskType;
   EffectMask* effectMask;
@@ -1094,6 +1090,7 @@ CompositorOGL::DrawQuad(const Rect& aRect,
     aOpacity = 1.f;
   }
 
+  bool createdMixBlendBackdropTexture = false;
   GLuint mixBlendBackdrop = 0;
   gfx::CompositionOp blendMode = gfx::CompositionOp::OP_OVER;
 
@@ -1126,9 +1123,19 @@ CompositorOGL::DrawQuad(const Rect& aRect,
 
   if (BlendOpIsMixBlendMode(blendMode)) {
     gfx::Matrix4x4 backdropTransform;
-    gfx::IntRect rect = ComputeBackdropCopyRect(aRect, aClipRect, aTransform, &backdropTransform);
 
-    mixBlendBackdrop = CreateTexture(rect, true, mCurrentRenderTarget->GetFBO());
+    if (gl()->IsExtensionSupported(GLContext::NV_texture_barrier)) {
+      // The NV_texture_barrier extension lets us read directly from the
+      // backbuffer. Let's do that.
+      // We need to tell OpenGL about this, so that it can make sure everything
+      // on the GPU is happening in the right order.
+      gl()->fTextureBarrier();
+      mixBlendBackdrop = mCurrentRenderTarget->GetTextureHandle();
+    } else {
+      gfx::IntRect rect = ComputeBackdropCopyRect(aRect, aClipRect, aTransform, &backdropTransform);
+      mixBlendBackdrop = CreateTexture(rect, true, mCurrentRenderTarget->GetFBO());
+      createdMixBlendBackdropTexture = true;
+    }
     program->SetBackdropTransform(backdropTransform);
   }
 
@@ -1240,23 +1247,12 @@ CompositorOGL::DrawQuad(const Rect& aRect,
       didSetBlendMode = SetBlendMode(gl(), blendMode, texturedEffect->mPremultiplied);
 
       gfx::Filter filter = texturedEffect->mFilter;
-      Matrix4x4 textureTransform = source->AsSourceOGL()->GetTextureTransform();
 
-#ifdef MOZ_WIDGET_ANDROID
-      gfx::Matrix textureTransform2D;
-      if (filter != gfx::Filter::POINT &&
-          aTransform.Is2DIntegerTranslation() &&
-          textureTransform.Is2D(&textureTransform2D) &&
-          textureTransform2D.HasOnlyIntegerTranslation()) {
-        // On Android we encounter small resampling errors in what should be
-        // pixel-aligned compositing operations. This works around them. This
-        // code should not be needed!
-        filter = gfx::Filter::POINT;
-      }
-#endif
       source->AsSourceOGL()->BindTexture(LOCAL_GL_TEXTURE0, filter);
 
       program->SetTextureUnit(0);
+
+      Matrix4x4 textureTransform = source->AsSourceOGL()->GetTextureTransform();
       program->SetTextureTransform(textureTransform);
 
       if (maskType != MaskType::MaskNone) {
@@ -1445,7 +1441,7 @@ CompositorOGL::DrawQuad(const Rect& aRect,
     gl()->fBlendFuncSeparate(LOCAL_GL_ONE, LOCAL_GL_ONE_MINUS_SRC_ALPHA,
                              LOCAL_GL_ONE, LOCAL_GL_ONE_MINUS_SRC_ALPHA);
   }
-  if (mixBlendBackdrop) {
+  if (createdMixBlendBackdropTexture) {
     gl()->fDeleteTextures(1, &mixBlendBackdrop);
   }
 
@@ -1464,13 +1460,13 @@ CompositorOGL::EndFrame()
 
 #ifdef MOZ_DUMP_PAINTING
   if (gfxEnv::DumpCompositorTextures()) {
-    LayoutDeviceIntRect rect;
+    LayoutDeviceIntSize size;
     if (mUseExternalSurfaceSize) {
-      rect = LayoutDeviceIntRect(0, 0, mSurfaceSize.width, mSurfaceSize.height);
+      size = LayoutDeviceIntSize(mSurfaceSize.width, mSurfaceSize.height);
     } else {
-      mWidget->GetBounds(rect);
+      size = mWidget->GetClientSize();
     }
-    RefPtr<DrawTarget> target = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(IntSize(rect.width, rect.height), SurfaceFormat::B8G8R8A8);
+    RefPtr<DrawTarget> target = gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(IntSize(size.width, size.height), SurfaceFormat::B8G8R8A8);
     if (target) {
       CopyToTarget(target, nsIntPoint(), Matrix());
       WriteSnapshotToDumpFile(this, target);
@@ -1602,7 +1598,7 @@ CompositorOGL::Resume()
     return false;
 
   // RenewSurface internally calls MakeCurrent.
-  return gl()->RenewSurface(GetWidget());
+  return gl()->RenewSurface(GetWidget()->RealWidget());
 #endif
   return true;
 }

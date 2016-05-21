@@ -160,7 +160,7 @@ BrowserElementAudioChannel::Name() const
 
 namespace {
 
-class BaseRunnable : public nsRunnable
+class BaseRunnable : public Runnable
 {
 protected:
   nsCOMPtr<nsPIDOMWindowInner> mParentWindow;

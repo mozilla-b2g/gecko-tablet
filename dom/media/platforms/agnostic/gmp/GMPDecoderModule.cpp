@@ -9,10 +9,11 @@
 #include "GMPAudioDecoder.h"
 #include "GMPVideoDecoder.h"
 #include "MediaDataDecoderProxy.h"
+#include "MediaPrefs.h"
 #include "mozIGeckoMediaPluginService.h"
 #include "nsServiceManagerUtils.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/StaticMutex.h"
+#include "mozilla/SyncRunnable.h"
 #include "gmp-audio-decode.h"
 #include "gmp-video-decode.h"
 #ifdef XP_WIN
@@ -112,7 +113,6 @@ HasGMPFor(const nsACString& aAPI,
           const nsACString& aCodec,
           const nsACString& aGMP)
 {
-  MOZ_ASSERT(NS_IsMainThread());
 #ifdef XP_WIN
   // gmp-clearkey uses WMF for decoding, so if we're using clearkey we must
   // verify that WMF works before continuing.
@@ -130,6 +130,8 @@ HasGMPFor(const nsACString& aAPI,
     }
   }
 #endif
+  MOZ_ASSERT(NS_IsMainThread(),
+             "HasPluginForAPI must be called on the main thread");
   nsTArray<nsCString> tags;
   tags.AppendElement(aCodec);
   tags.AppendElement(aGMP);
@@ -156,6 +158,7 @@ struct GMPCodecs {
 static GMPCodecs sGMPCodecs[] = {
   { "org.w3.clearkey", false, false },
   { "com.adobe.primetime", false, false },
+  { "com.widevine.alpha", false, false },
 };
 
 void
@@ -174,24 +177,21 @@ GMPDecoderModule::UpdateUsableCodecs()
   }
 }
 
-static uint32_t sPreferredAacGmp = 0;
-static uint32_t sPreferredH264Gmp = 0;
-
 /* static */
 void
 GMPDecoderModule::Init()
 {
-  MOZ_ASSERT(NS_IsMainThread());
-
+  if (!NS_IsMainThread()) {
+    nsCOMPtr<nsIThread> mainThread = do_GetMainThread();
+    nsCOMPtr<nsIRunnable> runnable =
+      NS_NewRunnableFunction([]() { Init(); });
+    SyncRunnable::DispatchToThread(mainThread, runnable);
+    return;
+  }
   // GMPService::HasPluginForAPI is main thread only, so to implement
   // SupportsMimeType() we build a table of the codecs which each whitelisted
   // GMP has and update it when any GMPs are removed or added at runtime.
   UpdateUsableCodecs();
-
-  Preferences::AddUintVarCache(&sPreferredAacGmp,
-                               "media.gmp.decoder.aac", 0);
-  Preferences::AddUintVarCache(&sPreferredH264Gmp,
-                               "media.gmp.decoder.h264", 0);
 }
 
 /* static */
@@ -200,7 +200,7 @@ GMPDecoderModule::PreferredGMP(const nsACString& aMimeType)
 {
   Maybe<nsCString> rv;
   if (aMimeType.EqualsLiteral("audio/mp4a-latm")) {
-    switch (sPreferredAacGmp) {
+    switch (MediaPrefs::GMPAACPreferred()) {
       case 1: rv.emplace(NS_LITERAL_CSTRING("org.w3.clearkey")); break;
       case 2: rv.emplace(NS_LITERAL_CSTRING("com.adobe.primetime")); break;
       default: break;
@@ -209,7 +209,7 @@ GMPDecoderModule::PreferredGMP(const nsACString& aMimeType)
 
   if (aMimeType.EqualsLiteral("video/avc") ||
       aMimeType.EqualsLiteral("video/mp4")) {
-    switch (sPreferredH264Gmp) {
+    switch (MediaPrefs::GMPH264Preferred()) {
       case 1: rv.emplace(NS_LITERAL_CSTRING("org.w3.clearkey")); break;
       case 2: rv.emplace(NS_LITERAL_CSTRING("com.adobe.primetime")); break;
       default: break;

@@ -415,7 +415,8 @@ public:
   virtual bool RecvAppOfflineStatus(const uint32_t& aId,
                                     const bool& aOffline) override;
 
-  virtual bool RecvSwappedWithOtherRemoteLoader() override;
+  virtual bool
+  RecvSwappedWithOtherRemoteLoader(const IPCTabContext& aContext) override;
 
   virtual PDocAccessibleChild*
   AllocPDocAccessibleChild(PDocAccessibleChild*, const uint64_t&) override;
@@ -565,8 +566,8 @@ public:
   virtual bool
   RecvThemeChanged(nsTArray<LookAndFeelInt>&& aLookAndFeelIntCache) override;
 
-  virtual bool RecvHandleAccessKey(nsTArray<uint32_t>&& aCharCodes,
-                                   const bool& aIsTrusted,
+  virtual bool RecvHandleAccessKey(const WidgetKeyboardEvent& aEvent,
+                                   nsTArray<uint32_t>&& aCharCodes,
                                    const int32_t& aModifierMask) override;
 
   virtual bool RecvAudioChannelChangeNotification(const uint32_t& aAudioChannel,
@@ -578,6 +579,8 @@ public:
   virtual bool RecvHandledWindowedPluginKeyEvent(
                  const mozilla::NativeEventData& aKeyEventData,
                  const bool& aIsConsumed) override;
+
+  virtual bool RecvPrint(const PrintData& aPrintData) override;
 
   /**
    * Native widget remoting protocol for use with windowed plugins with e10s.
@@ -676,11 +679,14 @@ protected:
 
 private:
   // Notify others that our TabContext has been updated.  (At the moment, this
-  // sets the appropriate app-id and is-browser flags on our docshell.)
+  // sets the appropriate origin attributes on our docshell.)
   //
   // You should call this after calling TabContext::SetTabContext().  We also
   // call this during Init().
   void NotifyTabContextUpdated();
+
+  // Update the frameType on our docshell.
+  void UpdateFrameType();
 
   void ActorDestroy(ActorDestroyReason why) override;
 

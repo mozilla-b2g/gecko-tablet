@@ -14,6 +14,11 @@
 #include "mozilla/net/DNS.h"
 #include "TimingStruct.h"
 
+#ifdef MOZ_CRASHREPORTER
+#include "nsExceptionHandler.h"
+#include "nsPrintfCString.h"
+#endif
+
 namespace IPC {
 
 // nsIPermissionManager utilities
@@ -96,10 +101,15 @@ struct ParamTraits<mozilla::net::NetAddr>
                       "https://bugzilla.mozilla.org/show_bug.cgi?id=661158");
       aMsg->WriteBytes(aParam.local.path, sizeof(aParam.local.path));
 #endif
+    } else {
+#ifdef MOZ_CRASHREPORTER
+      if (XRE_IsParentProcess()) {
+        nsPrintfCString msg("%d", aParam.raw.family);
+        CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("Unknown NetAddr socket family"), msg);
+      }
+#endif
+      NS_RUNTIMEABORT("Unknown socket family");
     }
-
-    /* If we get here without hitting any of the cases above, there's not much
-     * we can do but let the deserializer fail when it gets this message */
   }
 
   static bool Read(const Message* aMsg, void** aIter, mozilla::net::NetAddr* aResult)

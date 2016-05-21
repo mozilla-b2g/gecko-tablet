@@ -192,7 +192,7 @@ public:
     ++mLength; // Atomic
 
     nsCOMPtr<nsIRunnable> runnable =
-      NS_NewRunnableMethodWithArgs<StorensRefPtrPassByPtr<Image>, bool>(
+      NewRunnableMethod<StorensRefPtrPassByPtr<Image>, bool>(
         this, &VideoFrameConverter::ProcessVideoFrame,
         aChunk.mFrame.GetImage(), forceBlack);
     mTaskQueue->Dispatch(runnable.forget());
@@ -213,13 +213,16 @@ public:
     return mListeners.RemoveElement(aListener);
   }
 
+  void Shutdown()
+  {
+    mTaskQueue->BeginShutdown();
+    mTaskQueue->AwaitShutdownAndIdle();
+  }
+
 protected:
   virtual ~VideoFrameConverter()
   {
     MOZ_COUNT_DTOR(VideoFrameConverter);
-
-    mTaskQueue->BeginShutdown();
-    mTaskQueue->AwaitShutdownAndIdle();
   }
 
   void VideoFrameConverted(unsigned char* aVideoFrame,
@@ -349,44 +352,23 @@ protected:
         uint8_t *y = data->mYChannel;
         uint8_t *cb = data->mCbChannel;
         uint8_t *cr = data->mCrChannel;
+        int32_t yStride = data->mYStride;
+        int32_t cbCrStride = data->mCbCrStride;
         uint32_t width = yuv->GetSize().width;
         uint32_t height = yuv->GetSize().height;
-        uint32_t length = yuv->GetDataSize();
-        // NOTE: length may be rounded up or include 'other' data (see
-        // YCbCrImageDataDeserializerBase::ComputeMinBufferSize())
 
-        // XXX Consider modifying these checks if we ever implement
-        // any subclasses of PlanarYCbCrImage that allow disjoint buffers such
-        // that y+3(width*height)/2 might go outside the allocation or there are
-        // pads between y, cr and cb.
-        // GrallocImage can have wider strides, and so in some cases
-        // would encode as garbage.  If we need to encode it we'll either want to
-        // modify SendVideoFrame or copy/move the data in the buffer.
-        if (cb == (y + YSIZE(width, height)) &&
-            cr == (cb + CRSIZE(width, height)) &&
-            length >= I420SIZE(width, height)) {
-          MOZ_MTLOG(ML_DEBUG, "Sending an I420 video frame");
-          VideoFrameConverted(y, I420SIZE(width, height), width, height, mozilla::kVideoI420, 0);
+        webrtc::I420VideoFrame i420_frame;
+        int rv = i420_frame.CreateFrame(y, cb, cr, width, height,
+                                        yStride, cbCrStride, cbCrStride,
+                                        webrtc::kVideoRotation_0);
+        if (rv != 0) {
+          NS_ERROR("Creating an I420 frame failed");
           return;
-        } else {
-          MOZ_MTLOG(ML_ERROR, "Unsupported PlanarYCbCrImage format: "
-                              "width=" << width << ", height=" << height << ", y=" << y
-                              << "\n  Expected: cb=y+" << YSIZE(width, height)
-                                          << ", cr=y+" << YSIZE(width, height)
-                                                        + CRSIZE(width, height)
-                              << "\n  Observed: cb=y+" << cb - y
-                                          << ", cr=y+" << cr - y
-                              << "\n            ystride=" << data->mYStride
-                                          << ", yskip=" << data->mYSkip
-                              << "\n            cbcrstride=" << data->mCbCrStride
-                                          << ", cbskip=" << data->mCbSkip
-                                          << ", crskip=" << data->mCrSkip
-                              << "\n            ywidth=" << data->mYSize.width
-                                          << ", yheight=" << data->mYSize.height
-                              << "\n            cbcrwidth=" << data->mCbCrSize.width
-                                          << ", cbcrheight=" << data->mCbCrSize.height);
-          NS_ASSERTION(false, "Unsupported PlanarYCbCrImage format");
         }
+
+        MOZ_MTLOG(ML_DEBUG, "Sending an I420 video frame");
+        VideoFrameConverted(i420_frame);
+        return;
       }
     }
 
@@ -1117,6 +1099,11 @@ public:
     } else {
       conduit_ = nullptr;
     }
+#if !defined(MOZILLA_EXTERNAL_LINKAGE)
+    if (converter_) {
+      converter_->Shutdown();
+    }
+#endif
   }
 
   // Dispatches setting the internal TrackID to TRACK_INVALID to the media
@@ -1783,7 +1770,7 @@ static void AddTrackAndListener(MediaStream* source,
         completed_(completed) {}
 
     virtual void Run() override {
-      StreamTime current_end = mStream->GetBufferEnd();
+      StreamTime current_end = mStream->GetTracksEnd();
       TrackTicks current_ticks =
         mStream->TimeToTicksRoundUp(track_rate_, current_end);
 
@@ -2134,7 +2121,8 @@ public:
       monitor_("Video PipelineListener")
   {
 #if !defined(MOZILLA_EXTERNAL_LINKAGE)
-    image_container_ = LayerManager::CreateImageContainer();
+    image_container_ =
+      LayerManager::CreateImageContainer(ImageContainer::ASYNCHRONOUS);
 #endif
   }
 

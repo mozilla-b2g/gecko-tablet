@@ -35,6 +35,10 @@ public:
   SourceBufferTaskQueue()
   : mMonitor("SourceBufferTaskQueue")
   {}
+  ~SourceBufferTaskQueue()
+  {
+    MOZ_ASSERT(mQueue.IsEmpty(), "All tasks must have been processed");
+  }
 
   void Push(SourceBufferTask* aTask)
   {
@@ -145,7 +149,8 @@ public:
   already_AddRefed<MediaRawData> GetSample(TrackInfo::TrackType aTrack,
                                            const media::TimeUnit& aFuzz,
                                            bool& aError);
-  media::TimeUnit GetNextRandomAccessPoint(TrackInfo::TrackType aTrack);
+  media::TimeUnit GetNextRandomAccessPoint(TrackInfo::TrackType aTrack,
+                                           const media::TimeUnit& aFuzz);
 
   void AddSizeOfResources(MediaSourceDecoder::ResourceSizes* aSizes);
 
@@ -268,8 +273,10 @@ private:
     // The variable is initially unset to indicate that no coded frames have
     // been appended yet.
     Maybe<media::TimeUnit> mHighestEndTimestamp;
-    // Longest frame duration seen in a coded frame group.
-    Maybe<media::TimeUnit> mLongestFrameDuration;
+    // Longest frame duration seen since last random access point.
+    // Only ever accessed when mLastDecodeTimestamp and mLastFrameDuration are
+    // set.
+    media::TimeUnit mLongestFrameDuration;
     // Need random access point flag variable that keeps track of whether the
     // track buffer is waiting for a random access point coded frame.
     // The variable is initially set to true to indicate that random access
@@ -318,7 +325,6 @@ private:
       mHighestEndTimestamp.reset();
       mNeedRandomAccessPoint = true;
 
-      mLongestFrameDuration.reset();
       mNextInsertionIndex.reset();
     }
 
@@ -338,6 +344,11 @@ private:
   // Find index of sample. Return a negative value if not found.
   uint32_t FindSampleIndex(const TrackBuffer& aTrackBuffer,
                            const media::TimeInterval& aInterval);
+  const MediaRawData* GetSample(TrackInfo::TrackType aTrack,
+                                size_t aIndex,
+                                const media::TimeUnit& aExpectedDts,
+                                const media::TimeUnit& aExpectedPts,
+                                const media::TimeUnit& aFuzz);
   void UpdateBufferedRanges();
   void RejectProcessing(nsresult aRejectValue, const char* aName);
   void ResolveProcessing(bool aResolveValue, const char* aName);
@@ -371,8 +382,8 @@ private:
 
   // SourceBuffer Queues and running context.
   SourceBufferTaskQueue mQueue;
+  void QueueTask(SourceBufferTask* aTask);
   void ProcessTasks();
-  void CancelAllTasks();
   // Set if the TrackBuffersManager is currently processing a task.
   // At this stage, this task is always a AppendBufferTask.
   RefPtr<SourceBufferTask> mCurrentTask;
@@ -389,9 +400,6 @@ private:
 
   // Set to true if mediasource state changed to ended.
   Atomic<bool> mEnded;
-  // Set to true if the parent SourceBuffer has shutdown.
-  // We will not reschedule or process new task once mDetached is set.
-  Atomic<bool> mDetached;
 
   // Global size of this source buffer content.
   Atomic<int64_t> mSizeSourceBuffer;

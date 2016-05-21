@@ -109,6 +109,7 @@ class HTMLInputElement final : public nsGenericHTMLFormElementWithState,
 public:
   using nsIConstraintValidation::GetValidationMessage;
   using nsIConstraintValidation::CheckValidity;
+  using nsIConstraintValidation::ReportValidity;
   using nsIConstraintValidation::WillValidate;
   using nsIConstraintValidation::Validity;
   using nsGenericHTMLFormElementWithState::GetForm;
@@ -484,7 +485,7 @@ public:
 
   void SetHeight(uint32_t aValue, ErrorResult& aRv)
   {
-    SetUnsignedIntAttr(nsGkAtoms::height, aValue, aRv);
+    SetUnsignedIntAttr(nsGkAtoms::height, aValue, 0, aRv);
   }
 
   bool Indeterminate() const
@@ -588,7 +589,7 @@ public:
       return;
     }
 
-    SetUnsignedIntAttr(nsGkAtoms::size, aValue, aRv);
+    SetUnsignedIntAttr(nsGkAtoms::size, aValue, DEFAULT_COLS, aRv);
   }
 
   // XPCOM GetSrc() is OK
@@ -641,7 +642,7 @@ public:
 
   void SetWidth(uint32_t aValue, ErrorResult& aRv)
   {
-    SetUnsignedIntAttr(nsGkAtoms::width, aValue, aRv);
+    SetUnsignedIntAttr(nsGkAtoms::width, aValue, 0, aRv);
   }
 
   void StepUp(int32_t aN, ErrorResult& aRv)
@@ -729,7 +730,12 @@ public:
   HTMLInputElement* GetOwnerNumberControl();
 
   void StartNumberControlSpinnerSpin();
-  void StopNumberControlSpinnerSpin();
+  enum SpinnerStopState {
+    eAllowDispatchingEvents,
+    eDisallowDispatchingEvents
+  };
+  void StopNumberControlSpinnerSpin(SpinnerStopState aState =
+                                      eAllowDispatchingEvents);
   void StepNumberControlForUserEvent(int32_t aDirection);
 
   /**
@@ -1286,7 +1292,6 @@ protected:
   nsString mFirstFilePath;
 
   RefPtr<FileList>  mFileList;
-  RefPtr<Promise> mFilesAndDirectoriesPromise;
 
   nsString mStaticDocFileList;
 

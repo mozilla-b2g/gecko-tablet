@@ -1171,7 +1171,8 @@ nsresult nsChildView::SynthesizeNativeMouseEvent(LayoutDeviceIntPoint aPoint,
   // aPoint is given with the origin on the top left, but convertScreenToBase
   // expects a point in a coordinate system that has its origin on the bottom left.
   NSPoint screenPoint = NSMakePoint(pt.x, nsCocoaUtils::FlippedScreenY(pt.y));
-  NSPoint windowPoint = [[mView window] convertScreenToBase:screenPoint];
+  NSPoint windowPoint =
+    nsCocoaUtils::ConvertPointFromScreen([mView window], screenPoint);
 
   NSEvent* event = [NSEvent mouseEventWithType:(NSEventType)aNativeMessage
                                       location:windowPoint
@@ -1571,7 +1572,7 @@ LayoutDeviceIntPoint nsChildView::WidgetToScreenOffset()
   origin = [mView convertPoint:origin toView:nil];
 
   // 2. We turn the window-coord rect's origin into screen (still bottom-left) coords.
-  origin = [[mView window] convertBaseToScreen:origin];
+  origin = nsCocoaUtils::ConvertPointToScreen([mView window], origin);
 
   // 3. Since we're dealing in bottom-left coords, we need to make it top-left coords
   //    before we pass it back to Gecko.
@@ -1784,7 +1785,7 @@ nsChildView::ExecuteNativeKeyBindingRemapped(NativeKeyBindingsType aType,
   NSEvent *originalEvent = reinterpret_cast<NSEvent*>(aEvent.mNativeKeyEvent);
 
   WidgetKeyboardEvent modifiedEvent(aEvent);
-  modifiedEvent.keyCode = aGeckoKeyCode;
+  modifiedEvent.mKeyCode = aGeckoKeyCode;
 
   unichar ch = nsCocoaUtils::ConvertGeckoKeyCodeToMacCharCode(aGeckoKeyCode);
   NSString *chars =
@@ -1816,8 +1817,7 @@ nsChildView::ExecuteNativeKeyBinding(NativeKeyBindingsType aType,
   // vertical writing-mode, we'll remap so that the movement command
   // generated (in terms of characters/lines) will be appropriate for
   // the physical direction of the arrow.
-  if (aEvent.keyCode >= nsIDOMKeyEvent::DOM_VK_LEFT &&
-      aEvent.keyCode <= nsIDOMKeyEvent::DOM_VK_DOWN) {
+  if (aEvent.mKeyCode >= NS_VK_LEFT && aEvent.mKeyCode <= NS_VK_DOWN) {
     WidgetQueryContentEvent query(true, eQuerySelectedText, this);
     DispatchWindowEvent(query);
 
@@ -1825,34 +1825,34 @@ nsChildView::ExecuteNativeKeyBinding(NativeKeyBindingsType aType,
       uint32_t geckoKey = 0;
       uint32_t cocoaKey = 0;
 
-      switch (aEvent.keyCode) {
-      case nsIDOMKeyEvent::DOM_VK_LEFT:
+      switch (aEvent.mKeyCode) {
+      case NS_VK_LEFT:
         if (query.mReply.mWritingMode.IsVerticalLR()) {
-          geckoKey = nsIDOMKeyEvent::DOM_VK_UP;
+          geckoKey = NS_VK_UP;
           cocoaKey = kVK_UpArrow;
         } else {
-          geckoKey = nsIDOMKeyEvent::DOM_VK_DOWN;
+          geckoKey = NS_VK_DOWN;
           cocoaKey = kVK_DownArrow;
         }
         break;
 
-      case nsIDOMKeyEvent::DOM_VK_RIGHT:
+      case NS_VK_RIGHT:
         if (query.mReply.mWritingMode.IsVerticalLR()) {
-          geckoKey = nsIDOMKeyEvent::DOM_VK_DOWN;
+          geckoKey = NS_VK_DOWN;
           cocoaKey = kVK_DownArrow;
         } else {
-          geckoKey = nsIDOMKeyEvent::DOM_VK_UP;
+          geckoKey = NS_VK_UP;
           cocoaKey = kVK_UpArrow;
         }
         break;
 
-      case nsIDOMKeyEvent::DOM_VK_UP:
-        geckoKey = nsIDOMKeyEvent::DOM_VK_LEFT;
+      case NS_VK_UP:
+        geckoKey = NS_VK_LEFT;
         cocoaKey = kVK_LeftArrow;
         break;
 
-      case nsIDOMKeyEvent::DOM_VK_DOWN:
-        geckoKey = nsIDOMKeyEvent::DOM_VK_RIGHT;
+      case NS_VK_DOWN:
+        geckoKey = NS_VK_RIGHT;
         cocoaKey = kVK_RightArrow;
         break;
       }
@@ -2488,9 +2488,12 @@ nsChildView::UpdateVibrancy(const nsTArray<ThemeGeometry>& aThemeGeometries)
     GatherThemeGeometryRegion(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeTooltip);
   LayoutDeviceIntRegion highlightedMenuItemRegion =
     GatherThemeGeometryRegion(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeHighlightedMenuItem);
+  LayoutDeviceIntRegion sourceListRegion =
+    GatherThemeGeometryRegion(aThemeGeometries, nsNativeThemeCocoa::eThemeGeometryTypeSourceList);
 
   MakeRegionsNonOverlapping(sheetRegion, vibrantLightRegion, vibrantDarkRegion,
-                            menuRegion, tooltipRegion, highlightedMenuItemRegion);
+                            menuRegion, tooltipRegion, highlightedMenuItemRegion,
+                            sourceListRegion);
 
   auto& vm = EnsureVibrancyManager();
   vm.UpdateVibrantRegion(VibrancyType::LIGHT, vibrantLightRegion);
@@ -2498,6 +2501,7 @@ nsChildView::UpdateVibrancy(const nsTArray<ThemeGeometry>& aThemeGeometries)
   vm.UpdateVibrantRegion(VibrancyType::MENU, menuRegion);
   vm.UpdateVibrantRegion(VibrancyType::HIGHLIGHTED_MENUITEM, highlightedMenuItemRegion);
   vm.UpdateVibrantRegion(VibrancyType::SHEET, sheetRegion);
+  vm.UpdateVibrantRegion(VibrancyType::SOURCE_LIST, sourceListRegion);
   vm.UpdateVibrantRegion(VibrancyType::DARK, vibrantDarkRegion);
 }
 
@@ -2525,6 +2529,8 @@ ThemeGeometryTypeToVibrancyType(nsITheme::ThemeGeometryType aThemeGeometryType)
       return VibrancyType::HIGHLIGHTED_MENUITEM;
     case nsNativeThemeCocoa::eThemeGeometryTypeSheet:
       return VibrancyType::SHEET;
+    case nsNativeThemeCocoa::eThemeGeometryTypeSourceList:
+      return VibrancyType::SOURCE_LIST;
     default:
       MOZ_CRASH();
   }
@@ -2577,12 +2583,12 @@ nsChildView::SendMayStartSwipe(const mozilla::PanGestureInput& aSwipeStartEvent)
   WidgetSimpleGestureEvent geckoEvent =
     SwipeTracker::CreateSwipeGestureEvent(eSwipeGestureMayStart, this,
                                           position);
-  geckoEvent.direction = direction;
-  geckoEvent.delta = 0.0;
-  geckoEvent.allowedDirections = 0;
+  geckoEvent.mDirection = direction;
+  geckoEvent.mDelta = 0.0;
+  geckoEvent.mAllowedDirections = 0;
   bool shouldStartSwipe = DispatchWindowEvent(geckoEvent); // event cancelled == swipe should start
 
-  SwipeInfo result = { shouldStartSwipe, geckoEvent.allowedDirections };
+  SwipeInfo result = { shouldStartSwipe, geckoEvent.mAllowedDirections };
   return result;
 }
 
@@ -2662,7 +2668,6 @@ nsChildView::EndRemoteDrawing()
 void
 nsChildView::CleanupRemoteDrawing()
 {
-  nsBaseWidget::CleanupRemoteDrawing();
   mBasicCompositorImage = nullptr;
   mCornerMaskImage = nullptr;
   mResizerImage = nullptr;
@@ -3276,6 +3281,15 @@ NSEvent* gLastDragMouseDownEvent = nil;
   if (pluginContext) {
     return pluginContext;
   } else {
+    if (!mGeckoChild) {
+      // -[ChildView widgetDestroyed] has been called, but
+      // -[ChildView delayedTearDown] has not yet completed.  Accessing
+      // [super inputContext] now would uselessly recreate a text input context
+      // for us, under which -[ChildView validAttributesForMarkedText] would
+      // be called and the assertion checking for mTextInputHandler would fail.
+      // We return nil to avoid that.
+      return nil;
+    }
     return [super inputContext];
   }
 }
@@ -3987,6 +4001,8 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (void)viewWillDraw
 {
+  nsAutoRetainCocoaObject kungFuDeathGrip(self);
+
   if (mGeckoChild) {
     // The OS normally *will* draw our NSWindow, no matter what we do here.
     // But Gecko can delete our parent widget(s) (along with mGeckoChild)
@@ -4189,15 +4205,15 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   // Record the left/right direction.
   if (deltaX > 0.0)
-    geckoEvent.direction |= nsIDOMSimpleGestureEvent::DIRECTION_LEFT;
+    geckoEvent.mDirection |= nsIDOMSimpleGestureEvent::DIRECTION_LEFT;
   else if (deltaX < 0.0)
-    geckoEvent.direction |= nsIDOMSimpleGestureEvent::DIRECTION_RIGHT;
+    geckoEvent.mDirection |= nsIDOMSimpleGestureEvent::DIRECTION_RIGHT;
 
   // Record the up/down direction.
   if (deltaY > 0.0)
-    geckoEvent.direction |= nsIDOMSimpleGestureEvent::DIRECTION_UP;
+    geckoEvent.mDirection |= nsIDOMSimpleGestureEvent::DIRECTION_UP;
   else if (deltaY < 0.0)
-    geckoEvent.direction |= nsIDOMSimpleGestureEvent::DIRECTION_DOWN;
+    geckoEvent.mDirection |= nsIDOMSimpleGestureEvent::DIRECTION_DOWN;
 
   // Send the event.
   mGeckoChild->DispatchWindowEvent(geckoEvent);
@@ -4254,7 +4270,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   // Setup the event.
   WidgetSimpleGestureEvent geckoEvent(true, msg, mGeckoChild);
-  geckoEvent.delta = deltaZ;
+  geckoEvent.mDelta = deltaZ;
   [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
 
   // Send the event.
@@ -4279,7 +4295,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
   // Setup the "double tap" event.
   WidgetSimpleGestureEvent geckoEvent(true, eTapGesture, mGeckoChild);
   [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
-  geckoEvent.clickCount = 1;
+  geckoEvent.mClickCount = 1;
 
   // Send the event.
   mGeckoChild->DispatchWindowEvent(geckoEvent);
@@ -4321,11 +4337,11 @@ NSEvent* gLastDragMouseDownEvent = nil;
   // Setup the event.
   WidgetSimpleGestureEvent geckoEvent(true, msg, mGeckoChild);
   [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
-  geckoEvent.delta = -rotation;
+  geckoEvent.mDelta = -rotation;
   if (rotation > 0.0) {
-    geckoEvent.direction = nsIDOMSimpleGestureEvent::ROTATION_COUNTERCLOCKWISE;
+    geckoEvent.mDirection = nsIDOMSimpleGestureEvent::ROTATION_COUNTERCLOCKWISE;
   } else {
-    geckoEvent.direction = nsIDOMSimpleGestureEvent::ROTATION_CLOCKWISE;
+    geckoEvent.mDirection = nsIDOMSimpleGestureEvent::ROTATION_CLOCKWISE;
   }
 
   // Send the event.
@@ -4356,7 +4372,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
     {
       // Setup the "magnify" event.
       WidgetSimpleGestureEvent geckoEvent(true, eMagnifyGesture, mGeckoChild);
-      geckoEvent.delta = mCumulativeMagnification;
+      geckoEvent.mDelta = mCumulativeMagnification;
       [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
 
       // Send the event.
@@ -4369,11 +4385,11 @@ NSEvent* gLastDragMouseDownEvent = nil;
       // Setup the "rotate" event.
       WidgetSimpleGestureEvent geckoEvent(true, eRotateGesture, mGeckoChild);
       [self convertCocoaMouseEvent:anEvent toGeckoEvent:&geckoEvent];
-      geckoEvent.delta = -mCumulativeRotation;
+      geckoEvent.mDelta = -mCumulativeRotation;
       if (mCumulativeRotation > 0.0) {
-        geckoEvent.direction = nsIDOMSimpleGestureEvent::ROTATION_COUNTERCLOCKWISE;
+        geckoEvent.mDirection = nsIDOMSimpleGestureEvent::ROTATION_COUNTERCLOCKWISE;
       } else {
-        geckoEvent.direction = nsIDOMSimpleGestureEvent::ROTATION_CLOCKWISE;
+        geckoEvent.mDirection = nsIDOMSimpleGestureEvent::ROTATION_CLOCKWISE;
       }
 
       // Send the event.
@@ -4513,6 +4529,9 @@ NSEvent* gLastDragMouseDownEvent = nil;
   // in order to send gecko events we'll need a gecko widget
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   NSUInteger modifierFlags = [theEvent modifierFlags];
 
@@ -4526,7 +4545,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
     // blocked.
     clickCount--;
   }
-  geckoEvent.clickCount = clickCount;
+  geckoEvent.mClickCount = clickCount;
 
   if (modifierFlags & NSControlKeyMask)
     geckoEvent.button = WidgetMouseEvent::eRightButton;
@@ -4547,6 +4566,9 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
   if (!mGeckoChild || mBlockedLastMouseDown)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   nsAutoRetainCocoaObject kungFuDeathGrip(self);
 
@@ -4583,7 +4605,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
 
 - (void)sendMouseEnterOrExitEvent:(NSEvent*)aEvent
                             enter:(BOOL)aEnter
-                             type:(WidgetMouseEvent::exitType)aType
+                         exitFrom:(WidgetMouseEvent::ExitFrom)aExitFrom
 {
   if (!mGeckoChild)
     return;
@@ -4595,7 +4617,7 @@ NSEvent* gLastDragMouseDownEvent = nil;
   WidgetMouseEvent event(true, msg, mGeckoChild, WidgetMouseEvent::eReal);
   event.mRefPoint = mGeckoChild->CocoaPointsToDevPixels(localEventLocation);
 
-  event.exit = aType;
+  event.mExitFrom = aExitFrom;
 
   nsEventStatus status; // ignored
   mGeckoChild->DispatchEvent(&event, status);
@@ -4676,6 +4698,9 @@ NewCGSRegionFromRegion(const LayoutDeviceIntRegion& aRegion,
 
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   WidgetMouseEvent geckoEvent(true, eMouseMove, mGeckoChild,
                               WidgetMouseEvent::eReal);
@@ -4692,6 +4717,9 @@ NewCGSRegionFromRegion(const LayoutDeviceIntRegion& aRegion,
 
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   gLastDragView = self;
 
@@ -4719,13 +4747,16 @@ NewCGSRegionFromRegion(const LayoutDeviceIntRegion& aRegion,
   [self maybeRollup:theEvent];
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   // The right mouse went down, fire off a right mouse down event to gecko
   WidgetMouseEvent geckoEvent(true, eMouseDown, mGeckoChild,
                               WidgetMouseEvent::eReal);
   [self convertCocoaMouseEvent:theEvent toGeckoEvent:&geckoEvent];
   geckoEvent.button = WidgetMouseEvent::eRightButton;
-  geckoEvent.clickCount = [theEvent clickCount];
+  geckoEvent.mClickCount = [theEvent clickCount];
 
   mGeckoChild->DispatchInputEvent(&geckoEvent);
   if (!mGeckoChild)
@@ -4743,12 +4774,15 @@ NewCGSRegionFromRegion(const LayoutDeviceIntRegion& aRegion,
 
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   WidgetMouseEvent geckoEvent(true, eMouseUp, mGeckoChild,
                               WidgetMouseEvent::eReal);
   [self convertCocoaMouseEvent:theEvent toGeckoEvent:&geckoEvent];
   geckoEvent.button = WidgetMouseEvent::eRightButton;
-  geckoEvent.clickCount = [theEvent clickCount];
+  geckoEvent.mClickCount = [theEvent clickCount];
 
   nsAutoRetainCocoaObject kungFuDeathGrip(self);
   mGeckoChild->DispatchInputEvent(&geckoEvent);
@@ -4760,6 +4794,9 @@ NewCGSRegionFromRegion(const LayoutDeviceIntRegion& aRegion,
 {
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   WidgetMouseEvent geckoEvent(true, eMouseMove, mGeckoChild,
                               WidgetMouseEvent::eReal);
@@ -4783,12 +4820,15 @@ NewCGSRegionFromRegion(const LayoutDeviceIntRegion& aRegion,
 
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   WidgetMouseEvent geckoEvent(true, eMouseDown, mGeckoChild,
                               WidgetMouseEvent::eReal);
   [self convertCocoaMouseEvent:theEvent toGeckoEvent:&geckoEvent];
   geckoEvent.button = WidgetMouseEvent::eMiddleButton;
-  geckoEvent.clickCount = [theEvent clickCount];
+  geckoEvent.mClickCount = [theEvent clickCount];
 
   mGeckoChild->DispatchInputEvent(&geckoEvent);
 
@@ -4799,6 +4839,9 @@ NewCGSRegionFromRegion(const LayoutDeviceIntRegion& aRegion,
 {
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   WidgetMouseEvent geckoEvent(true, eMouseUp, mGeckoChild,
                               WidgetMouseEvent::eReal);
@@ -4813,6 +4856,9 @@ NewCGSRegionFromRegion(const LayoutDeviceIntRegion& aRegion,
 {
   if (!mGeckoChild)
     return;
+  if (mTextInputHandler->OnHandleEvent(theEvent)) {
+    return;
+  }
 
   WidgetMouseEvent geckoEvent(true, eMouseMove, mGeckoChild,
                               WidgetMouseEvent::eReal);
@@ -5011,7 +5057,8 @@ PanGestureTypeForEvent(NSEvent* aEvent)
 
   CGPoint loc = CGEventGetLocation(cgEvent);
   loc.y = nsCocoaUtils::FlippedScreenY(loc.y);
-  NSPoint locationInWindow = [[self window] convertScreenToBase:NSPointFromCGPoint(loc)];
+  NSPoint locationInWindow =
+    nsCocoaUtils::ConvertPointFromScreen([self window], NSPointFromCGPoint(loc));
   ScreenIntPoint location = ViewAs<ScreenPixel>(
     [self convertWindowCoordinates:locationInWindow],
     PixelCastJustification::LayoutDeviceIsScreenForUntransformedEvent);
@@ -6295,15 +6342,19 @@ ChildViewMouseTracker::ReEvaluateMouseEnterState(NSEvent* aEvent, ChildView* aOl
   sLastMouseEventView = ViewForEvent(aEvent);
   if (sLastMouseEventView != oldView) {
     // Send enter and / or exit events.
-    WidgetMouseEvent::exitType type =
+    WidgetMouseEvent::ExitFrom exitFrom =
       [sLastMouseEventView window] == [oldView window] ?
         WidgetMouseEvent::eChild : WidgetMouseEvent::eTopLevel;
-    [oldView sendMouseEnterOrExitEvent:aEvent enter:NO type:type];
+    [oldView sendMouseEnterOrExitEvent:aEvent
+                                 enter:NO
+                              exitFrom:exitFrom];
     // After the cursor exits the window set it to a visible regular arrow cursor.
-    if (type == WidgetMouseEvent::eTopLevel) {
+    if (exitFrom == WidgetMouseEvent::eTopLevel) {
       [[nsCursorManager sharedInstance] setCursor:eCursor_standard];
     }
-    [sLastMouseEventView sendMouseEnterOrExitEvent:aEvent enter:YES type:type];
+    [sLastMouseEventView sendMouseEnterOrExitEvent:aEvent
+                                             enter:YES
+                                          exitFrom:exitFrom];
   }
 }
 

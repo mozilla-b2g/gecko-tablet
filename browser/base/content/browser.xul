@@ -8,6 +8,7 @@
 
 <?xml-stylesheet href="chrome://browser/content/browser.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/content/places/places.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/content/usercontext/usercontext.css" type="text/css"?>
 <?xml-stylesheet href="chrome://devtools/skin/devtools-browser.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/controlcenter/panel.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/customizableui/panelUIOverlay.css" type="text/css"?>
@@ -383,7 +384,28 @@
 #include browser-context.inc
     </menupopup>
 
-    <menupopup id="placesContext"/>
+    <menupopup id="placesContext">
+      <menuseparator id="placesContext_recentlyBookmarkedSeparator"
+                     ignoreitem="true"
+                     ordinal="2"
+                     hidden="true"/>
+      <menuitem id="placesContext_hideRecentlyBookmarked"
+                label="&hideRecentlyBookmarked.label;"
+                accesskey="&hideRecentlyBookmarked.accesskey;"
+                oncommand="BookmarkingUI.hideRecentlyBookmarked();"
+                closemenu="single"
+                ignoreitem="true"
+                ordinal="2"
+                hidden="true"/>
+      <menuitem id="placesContext_showRecentlyBookmarked"
+                label="&showRecentlyBookmarked.label;"
+                accesskey="&showRecentlyBookmarked.accesskey;"
+                oncommand="BookmarkingUI.showRecentlyBookmarked();"
+                closemenu="single"
+                ignoreitem="true"
+                ordinal="2"
+                hidden="true"/>
+    </menupopup>
 
     <panel id="ctrlTab-panel" class="KUI-panel" hidden="true" norestorefocus="true" level="top">
       <hbox>
@@ -629,7 +651,12 @@
                     key="key_undoCloseTab"
                     label="&undoCloseTab.label;"
                     observes="History:UndoCloseTab"/>
-          <menuseparator id="alltabs-popup-separator"/>
+          <menuseparator id="alltabs-popup-separator-1"/>
+          <menu id="alltabs_containersTab"
+                label="&newUserContext.label;">
+            <menupopup id="alltabs_containersMenuTab" />
+          </menu>
+          <menuseparator id="alltabs-popup-separator-2"/>
         </menupopup>
       </toolbarbutton>
 
@@ -694,7 +721,7 @@
             <textbox id="urlbar" flex="1"
                      placeholder="&urlbar.placeholder2;"
                      type="autocomplete"
-                     autocompletesearch="urlinline history"
+                     autocompletesearch="unifiedcomplete"
                      autocompletesearchparam="enable-actions"
                      autocompletepopup="PopupAutoCompleteRichResult"
                      completeselectedindex="true"

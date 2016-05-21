@@ -78,9 +78,8 @@ public:
   bool mWrappingExistingData;
 };
 
-BasicCompositor::BasicCompositor(CompositorBridgeParent* aParent, nsIWidget *aWidget)
-  : Compositor(aParent)
-  , mWidget(aWidget)
+BasicCompositor::BasicCompositor(CompositorBridgeParent* aParent, widget::CompositorWidgetProxy* aWidget)
+  : Compositor(aWidget, aParent)
   , mDidExternalComposition(false)
 {
   MOZ_COUNT_CTOR(BasicCompositor);
@@ -119,8 +118,8 @@ void BasicCompositor::DetachWidget()
 {
   if (mWidget) {
     mWidget->CleanupRemoteDrawing();
-    mWidget = nullptr;
   }
+  Compositor::DetachWidget();
 }
 
 TextureFactoryIdentifier
@@ -175,10 +174,11 @@ BasicCompositor::CreateRenderTargetForWindow(const LayoutDeviceIntRect& aRect, c
   IntRect rect = aRect.ToUnknownRect();
 
   if (aBufferMode != BufferMode::BUFFER_NONE) {
-    RefPtr<DrawTarget> target = mWidget->CreateBackBufferDrawTarget(mDrawTarget, aRect, aClearRect);
+    RefPtr<DrawTarget> target = mWidget->GetBackBufferDrawTarget(mDrawTarget, aRect, aClearRect);
     if (!target) {
       return nullptr;
     }
+    MOZ_ASSERT(target != mDrawTarget);
     rt = new BasicCompositingRenderTarget(target, rect);
   } else {
     IntRect windowRect = rect;
@@ -277,7 +277,7 @@ SetupMask(const EffectChain& aEffectChain,
 
 void
 BasicCompositor::DrawQuad(const gfx::Rect& aRect,
-                          const gfx::Rect& aClipRect,
+                          const gfx::IntRect& aClipRect,
                           const EffectChain &aEffectChain,
                           gfx::Float aOpacity,
                           const gfx::Matrix4x4& aTransform,
@@ -323,7 +323,7 @@ BasicCompositor::DrawQuad(const gfx::Rect& aRect,
     new3DTransform.PreTranslate(aRect.x, aRect.y, 0);
   }
 
-  buffer->PushClipRect(aClipRect);
+  buffer->PushClipRect(Rect(aClipRect));
 
   newTransform.PostTranslate(-offset.x, -offset.y);
   buffer->SetTransform(newTransform);
@@ -475,14 +475,14 @@ BasicCompositor::ClearRect(const gfx::Rect& aRect)
 
 void
 BasicCompositor::BeginFrame(const nsIntRegion& aInvalidRegion,
-                            const gfx::Rect *aClipRectIn,
-                            const gfx::Rect& aRenderBounds,
+                            const gfx::IntRect *aClipRectIn,
+                            const gfx::IntRect& aRenderBounds,
                             const nsIntRegion& aOpaqueRegion,
-                            gfx::Rect *aClipRectOut /* = nullptr */,
-                            gfx::Rect *aRenderBoundsOut /* = nullptr */)
+                            gfx::IntRect *aClipRectOut /* = nullptr */,
+                            gfx::IntRect *aRenderBoundsOut /* = nullptr */)
 {
   LayoutDeviceIntRect intRect(LayoutDeviceIntPoint(), mWidget->GetClientSize());
-  Rect rect = Rect(0, 0, intRect.width, intRect.height);
+  IntRect rect = IntRect(0, 0, intRect.width, intRect.height);
 
   LayoutDeviceIntRegion invalidRegionSafe;
   if (mDidExternalComposition) {
@@ -500,7 +500,7 @@ BasicCompositor::BeginFrame(const nsIntRegion& aInvalidRegion,
   mInvalidRect = mInvalidRegion.GetBounds();
 
   if (aRenderBoundsOut) {
-    *aRenderBoundsOut = Rect();
+    *aRenderBoundsOut = IntRect();
   }
 
   BufferMode bufferMode = BufferMode::BUFFERED;
@@ -560,9 +560,9 @@ BasicCompositor::BeginFrame(const nsIntRegion& aInvalidRegion,
   }
 
   if (aClipRectIn) {
-    mRenderTarget->mDrawTarget->PushClipRect(*aClipRectIn);
+    mRenderTarget->mDrawTarget->PushClipRect(Rect(*aClipRectIn));
   } else {
-    mRenderTarget->mDrawTarget->PushClipRect(rect);
+    mRenderTarget->mDrawTarget->PushClipRect(Rect(rect));
     if (aClipRectOut) {
       *aClipRectOut = rect;
     }
@@ -591,7 +591,12 @@ BasicCompositor::EndFrame()
   if (mTarget || mRenderTarget->mDrawTarget != mDrawTarget) {
     // Note: Most platforms require us to buffer drawing to the widget surface.
     // That's why we don't draw to mDrawTarget directly.
-    RefPtr<SourceSurface> source = mRenderTarget->mDrawTarget->Snapshot();
+    RefPtr<SourceSurface> source;
+    if (mRenderTarget->mDrawTarget != mDrawTarget) {
+      source = mWidget->EndBackBufferDrawing();
+    } else {
+      source = mRenderTarget->mDrawTarget->Snapshot();
+    }
     RefPtr<DrawTarget> dest(mTarget ? mTarget : mDrawTarget);
 
     nsIntPoint offset = mTarget ? mTargetBounds.TopLeft() : nsIntPoint();

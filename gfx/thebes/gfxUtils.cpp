@@ -401,8 +401,7 @@ static CompositionOp
 OptimalFillOp()
 {
 #ifdef XP_WIN
-    if (gfxWindowsPlatform::GetPlatform()->GetRenderMode() ==
-        gfxWindowsPlatform::RENDER_DIRECT2D) {
+    if (gfxWindowsPlatform::GetPlatform()->IsDirect2DBackend()) {
         // D2D -really- hates operator source.
         return CompositionOp::OP_OVER;
     }
@@ -552,7 +551,8 @@ PrescaleAndTileDrawable(gfxDrawable* aDrawable,
                         Rect aImageRect,
                         const Filter& aFilter,
                         const SurfaceFormat aFormat,
-                        gfxFloat aOpacity)
+                        gfxFloat aOpacity,
+                        ExtendMode aExtendMode)
 {
   gfxSize scaleFactor = aContext->CurrentMatrix().ScaleFactors(true);
   gfxMatrix scaleMatrix = gfxMatrix::Scaling(scaleFactor.width, scaleFactor.height);
@@ -603,7 +603,7 @@ PrescaleAndTileDrawable(gfxDrawable* aDrawable,
 
   scaledDT->SetTransform(ToMatrix(scaleMatrix));
   gfxRect gfxImageRect(aImageRect.x, aImageRect.y, aImageRect.width, aImageRect.height);
-  aDrawable->Draw(tmpCtx, gfxImageRect, ExtendMode::REPEAT, aFilter, 1.0, gfxMatrix());
+  aDrawable->Draw(tmpCtx, gfxImageRect, aExtendMode, aFilter, 1.0, gfxMatrix());
 
   RefPtr<SourceSurface> scaledImage = scaledDT->Snapshot();
 
@@ -619,7 +619,7 @@ PrescaleAndTileDrawable(gfxDrawable* aDrawable,
     DrawOptions drawOptions(aOpacity, aContext->CurrentOp(),
                             aContext->CurrentAntialiasMode());
 
-    SurfacePattern scaledImagePattern(scaledImage, ExtendMode::REPEAT,
+    SurfacePattern scaledImagePattern(scaledImage, aExtendMode,
                                       Matrix(), aFilter);
     destDrawTarget->FillRect(scaledNeededRect, scaledImagePattern, drawOptions);
   }
@@ -670,7 +670,7 @@ gfxUtils::DrawPixelSnapped(gfxContext*         aContext,
 #ifdef MOZ_WIDGET_COCOA
             if (PrescaleAndTileDrawable(aDrawable, aContext, aRegion,
                                         ToRect(imageRect), aFilter,
-                                        aFormat, aOpacity)) {
+                                        aFormat, aOpacity, extendMode)) {
               return;
             }
 #endif
@@ -847,146 +847,6 @@ gfxUtils::GfxRectToIntRect(const gfxRect& aIn, IntRect* aOut)
   *aOut = IntRect(int32_t(aIn.X()), int32_t(aIn.Y()),
   int32_t(aIn.Width()), int32_t(aIn.Height()));
   return gfxRect(aOut->x, aOut->y, aOut->width, aOut->height).IsEqualEdges(aIn);
-}
-
-void
-gfxUtils::GetYCbCrToRGBDestFormatAndSize(const PlanarYCbCrData& aData,
-                                         gfxImageFormat& aSuggestedFormat,
-                                         IntSize& aSuggestedSize)
-{
-  YUVType yuvtype =
-    TypeFromSize(aData.mYSize.width,
-                      aData.mYSize.height,
-                      aData.mCbCrSize.width,
-                      aData.mCbCrSize.height);
-
-  // 'prescale' is true if the scaling is to be done as part of the
-  // YCbCr to RGB conversion rather than on the RGB data when rendered.
-  bool prescale = aSuggestedSize.width > 0 && aSuggestedSize.height > 0 &&
-                    aSuggestedSize != aData.mPicSize;
-
-  if (aSuggestedFormat == SurfaceFormat::R5G6B5_UINT16) {
-#if defined(HAVE_YCBCR_TO_RGB565)
-    if (prescale &&
-        !IsScaleYCbCrToRGB565Fast(aData.mPicX,
-                                       aData.mPicY,
-                                       aData.mPicSize.width,
-                                       aData.mPicSize.height,
-                                       aSuggestedSize.width,
-                                       aSuggestedSize.height,
-                                       yuvtype,
-                                       FILTER_BILINEAR) &&
-        IsConvertYCbCrToRGB565Fast(aData.mPicX,
-                                        aData.mPicY,
-                                        aData.mPicSize.width,
-                                        aData.mPicSize.height,
-                                        yuvtype)) {
-      prescale = false;
-    }
-#else
-    // yuv2rgb16 function not available
-    aSuggestedFormat = SurfaceFormat::X8R8G8B8_UINT32;
-#endif
-  }
-  else if (aSuggestedFormat != SurfaceFormat::X8R8G8B8_UINT32) {
-    // No other formats are currently supported.
-    aSuggestedFormat = SurfaceFormat::X8R8G8B8_UINT32;
-  }
-  if (aSuggestedFormat == SurfaceFormat::X8R8G8B8_UINT32) {
-    /* ScaleYCbCrToRGB32 does not support a picture offset, nor 4:4:4 data.
-       See bugs 639415 and 640073. */
-    if (aData.mPicX != 0 || aData.mPicY != 0 || yuvtype == YV24)
-      prescale = false;
-  }
-  if (!prescale) {
-    aSuggestedSize = aData.mPicSize;
-  }
-}
-
-void
-gfxUtils::ConvertYCbCrToRGB(const PlanarYCbCrData& aData,
-                            const gfxImageFormat& aDestFormat,
-                            const IntSize& aDestSize,
-                            unsigned char* aDestBuffer,
-                            int32_t aStride)
-{
-  // ConvertYCbCrToRGB et al. assume the chroma planes are rounded up if the
-  // luma plane is odd sized.
-  MOZ_ASSERT((aData.mCbCrSize.width == aData.mYSize.width ||
-              aData.mCbCrSize.width == (aData.mYSize.width + 1) >> 1) &&
-             (aData.mCbCrSize.height == aData.mYSize.height ||
-              aData.mCbCrSize.height == (aData.mYSize.height + 1) >> 1));
-  YUVType yuvtype =
-    TypeFromSize(aData.mYSize.width,
-                      aData.mYSize.height,
-                      aData.mCbCrSize.width,
-                      aData.mCbCrSize.height);
-
-  // Convert from YCbCr to RGB now, scaling the image if needed.
-  if (aDestSize != aData.mPicSize) {
-#if defined(HAVE_YCBCR_TO_RGB565)
-    if (aDestFormat == SurfaceFormat::R5G6B5_UINT16) {
-      ScaleYCbCrToRGB565(aData.mYChannel,
-                              aData.mCbChannel,
-                              aData.mCrChannel,
-                              aDestBuffer,
-                              aData.mPicX,
-                              aData.mPicY,
-                              aData.mPicSize.width,
-                              aData.mPicSize.height,
-                              aDestSize.width,
-                              aDestSize.height,
-                              aData.mYStride,
-                              aData.mCbCrStride,
-                              aStride,
-                              yuvtype,
-                              FILTER_BILINEAR);
-    } else
-#endif
-      ScaleYCbCrToRGB32(aData.mYChannel,
-                             aData.mCbChannel,
-                             aData.mCrChannel,
-                             aDestBuffer,
-                             aData.mPicSize.width,
-                             aData.mPicSize.height,
-                             aDestSize.width,
-                             aDestSize.height,
-                             aData.mYStride,
-                             aData.mCbCrStride,
-                             aStride,
-                             yuvtype,
-                             ROTATE_0,
-                             FILTER_BILINEAR);
-  } else { // no prescale
-#if defined(HAVE_YCBCR_TO_RGB565)
-    if (aDestFormat == SurfaceFormat::R5G6B5_UINT16) {
-      ConvertYCbCrToRGB565(aData.mYChannel,
-                                aData.mCbChannel,
-                                aData.mCrChannel,
-                                aDestBuffer,
-                                aData.mPicX,
-                                aData.mPicY,
-                                aData.mPicSize.width,
-                                aData.mPicSize.height,
-                                aData.mYStride,
-                                aData.mCbCrStride,
-                                aStride,
-                                yuvtype);
-    } else // aDestFormat != SurfaceFormat::R5G6B5_UINT16
-#endif
-      ConvertYCbCrToRGB32(aData.mYChannel,
-                               aData.mCbChannel,
-                               aData.mCrChannel,
-                               aDestBuffer,
-                               aData.mPicX,
-                               aData.mPicY,
-                               aData.mPicSize.width,
-                               aData.mPicSize.height,
-                               aData.mYStride,
-                               aData.mCbCrStride,
-                               aStride,
-                               yuvtype);
-  }
 }
 
 /* static */ void gfxUtils::ClearThebesSurface(gfxASurface* aSurface)
@@ -1502,7 +1362,8 @@ public:
                              int32_t feature,
                              nsACString& failureId,
                              int32_t* status)
-      : WorkerMainThreadRunnable(workerPrivate)
+      : WorkerMainThreadRunnable(workerPrivate,
+                                 NS_LITERAL_CSTRING("GFX :: GetFeatureStatus"))
       , mGfxInfo(gfxInfo)
       , mFeature(feature)
       , mStatus(status)

@@ -1,3 +1,5 @@
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 // Copyright (c) 2006-2008 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -48,7 +50,7 @@ class Channel : public Message::Sender {
   enum {
     // The maximum message size in bytes. Attempting to receive a
     // message of this size or bigger results in a channel error.
-    kMaximumMessageSize = 256 * 1024 * 1024,
+    kMaximumMessageSize = 128 * 1024 * 1024,
 
     // Ammount of data to read at once from the pipe.
     kReadBufferSize = 4 * 1024,
@@ -78,7 +80,7 @@ class Channel : public Message::Sender {
   // Connect to a pre-created channel as |mode|.  Clients connect to
   // the pre-existing server pipe, and servers take over |server_pipe|.
   Channel(const std::wstring& channel_id, void* server_pipe,
-	  Mode mode, Listener* listener);
+          Mode mode, Listener* listener);
 # endif
 
   ~Channel();

@@ -52,14 +52,24 @@ Notification.prototype = {
   },
 
   observe(subject, topic, data) {
-    if (topic === "alertclickcallback") {
-      notificationsMap.get(this.extension).emit("clicked", data);
-    }
-    if (topic === "alertfinished") {
-      notificationsMap.get(this.extension).emit("closed", data);
+    let notifications = notificationsMap.get(this.extension);
+
+    function emitAndDelete(event) {
+      notifications.emit(event, data);
+      notifications.delete(this.id);
     }
 
-    notificationsMap.get(this.extension).delete(this.id);
+    // Don't try to emit events if the extension has been unloaded
+    if (!notifications) {
+      return;
+    }
+
+    if (topic === "alertclickcallback") {
+      emitAndDelete("clicked");
+    }
+    if (topic === "alertfinished") {
+      emitAndDelete("closed");
+    }
   },
 };
 

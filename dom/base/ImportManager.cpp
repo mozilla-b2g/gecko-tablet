@@ -378,7 +378,7 @@ ImportLoader::RemoveLinkElement(nsINode* aNode)
 // be set on the link element before the load event is fired even
 // if ImportLoader::Get returns an already loaded import and we
 // fire the load event immediately on the new referring link element.
-class AsyncEvent : public nsRunnable {
+class AsyncEvent : public Runnable {
 public:
   AsyncEvent(nsINode* aNode, bool aSuccess)
     : mNode(aNode)
@@ -596,8 +596,10 @@ ImportLoader::OnStartRequest(nsIRequest* aRequest, nsISupports* aContext)
   nsCOMPtr<nsIDocument> master = mImportParent->MasterDocument();
   mDocument->SetMasterDocument(master);
 
-  // We want to inherit the sandbox flags from the master document.
+  // We want to inherit the sandbox flags and fullscreen enabled flag
+  // from the master document.
   mDocument->SetSandboxFlags(master->GetSandboxFlags());
+  mDocument->SetFullscreenEnabled(master->FullscreenEnabledInternal());
 
   // We have to connect the blank document we created with the channel we opened,
   // and create its own LoadGroup for it.

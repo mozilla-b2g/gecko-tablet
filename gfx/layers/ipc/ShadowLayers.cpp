@@ -21,6 +21,7 @@
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/layers/CompositableClient.h"  // for CompositableClient, etc
+#include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/LayersMessages.h"  // for Edit, etc
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor, etc
@@ -170,7 +171,8 @@ public:
         MOZ_ASSERT(ok);
         break;
       }
-      default: MOZ_CRASH();
+      default:
+        MOZ_CRASH("GFX: SL Fallback destroy actors");
       }
     }
     mDestroyedActors.Clear();
@@ -208,10 +210,10 @@ const uint32_t sShmemPageSize = 4096;
 const uint32_t sSupportedBlockSize = 4;
 #endif
 
-FixedSizeSmallShmemSectionAllocator::FixedSizeSmallShmemSectionAllocator(ShmemAllocator* aShmProvider)
+FixedSizeSmallShmemSectionAllocator::FixedSizeSmallShmemSectionAllocator(ClientIPCAllocator* aShmProvider)
 : mShmProvider(aShmProvider)
 {
-  MOZ_ASSERT(mShmProvider);
+  MOZ_ASSERT(mShmProvider && mShmProvider->AsShmemAllocator());
 }
 
 FixedSizeSmallShmemSectionAllocator::~FixedSizeSmallShmemSectionAllocator()
@@ -227,6 +229,11 @@ FixedSizeSmallShmemSectionAllocator::AllocShmemSection(uint32_t aSize, ShmemSect
   MOZ_ASSERT(aSize == sSupportedBlockSize);
   MOZ_ASSERT(aShmemSection);
 
+  if (!IPCOpen()) {
+    gfxCriticalError() << "Attempt to allocate a ShmemSection after shutdown.";
+    return false;
+  }
+
   uint32_t allocationSize = (aSize + sizeof(ShmemSectionHeapAllocation));
 
   for (size_t i = 0; i < mUsedShmems.size(); i++) {
@@ -240,7 +247,7 @@ FixedSizeSmallShmemSectionAllocator::AllocShmemSection(uint32_t aSize, ShmemSect
 
   if (!aShmemSection->shmem().IsWritable()) {
     ipc::Shmem tmp;
-    if (!mShmProvider->AllocUnsafeShmem(sShmemPageSize, OptimalShmemType(), &tmp)) {
+    if (!GetShmAllocator()->AllocUnsafeShmem(sShmemPageSize, OptimalShmemType(), &tmp)) {
       return false;
     }
 
@@ -295,6 +302,10 @@ FixedSizeSmallShmemSectionAllocator::FreeShmemSection(mozilla::layers::ShmemSect
   MOZ_ASSERT(aShmemSection.size() == sSupportedBlockSize);
   MOZ_ASSERT(aShmemSection.offset() < sShmemPageSize - sSupportedBlockSize);
 
+  if (!aShmemSection.shmem().IsWritable()) {
+    return;
+  }
+
   ShmemSectionHeapAllocation* allocHeader =
     reinterpret_cast<ShmemSectionHeapAllocation*>(aShmemSection.shmem().get<char>() +
                                                   aShmemSection.offset() -
@@ -313,6 +324,11 @@ FixedSizeSmallShmemSectionAllocator::FreeShmemSection(mozilla::layers::ShmemSect
 void
 FixedSizeSmallShmemSectionAllocator::DeallocShmemSection(mozilla::layers::ShmemSection& aShmemSection)
 {
+  if (!IPCOpen()) {
+    gfxCriticalNote << "Attempt to dealloc a ShmemSections after shutdown.";
+    return;
+  }
+
   FreeShmemSection(aShmemSection);
   ShrinkShmemSectionHeap();
 }
@@ -321,14 +337,18 @@ FixedSizeSmallShmemSectionAllocator::DeallocShmemSection(mozilla::layers::ShmemS
 void
 FixedSizeSmallShmemSectionAllocator::ShrinkShmemSectionHeap()
 {
+  if (!IPCOpen()) {
+    mUsedShmems.clear();
+    return;
+  }
+
   // The loop will terminate as we either increase i, or decrease size
   // every time through.
   size_t i = 0;
   while (i < mUsedShmems.size()) {
     ShmemSectionHeapHeader* header = mUsedShmems[i].get<ShmemSectionHeapHeader>();
     if (header->mAllocatedBlocks == 0) {
-      mShmProvider->DeallocShmem(mUsedShmems[i]);
-
+      GetShmAllocator()->DeallocShmem(mUsedShmems[i]);
       // We don't particularly care about order, move the last one in the array
       // to this position.
       if (i < mUsedShmems.size() - 1) {
@@ -808,12 +828,12 @@ ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies,
     common.useClipRect() = !!mutant->GetClipRect();
     common.clipRect() = (common.useClipRect() ?
                          *mutant->GetClipRect() : ParentLayerIntRect());
+    common.scrolledClip() = mutant->GetScrolledClip();
     common.isFixedPosition() = mutant->GetIsFixedPosition();
     if (mutant->GetIsFixedPosition()) {
       common.fixedPositionScrollContainerId() = mutant->GetFixedPositionScrollContainerId();
       common.fixedPositionAnchor() = mutant->GetFixedPositionAnchor();
       common.fixedPositionSides() = mutant->GetFixedPositionSides();
-      common.isClipFixed() = mutant->IsClipFixed();
     }
     common.isStickyPosition() = mutant->GetIsStickyPosition();
     if (mutant->GetIsStickyPosition()) {
@@ -1056,10 +1076,11 @@ ShadowLayerForwarder::CreateTexture(const SurfaceDescriptor& aSharedData,
                                     TextureFlags aFlags)
 {
   if (!HasShadowManager() ||
-      !mShadowManager->IPCOpen()) {
+      !mShadowManager->IPCOpen() ||
+      !mShadowManager->Manager()) {
     return nullptr;
   }
-  return mShadowManager->SendPTextureConstructor(aSharedData, aLayersBackend, aFlags);
+  return mShadowManager->Manager()->SendPTextureConstructor(aSharedData, aLayersBackend, aFlags, mShadowManager->GetId());
 }
 
 

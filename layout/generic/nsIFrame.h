@@ -932,12 +932,18 @@ public:
 
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(LineBaselineOffset, nscoord)
 
+  // Temporary override for a flex item's main-size property (either width
+  // or height), imposed by its flex container.
+  NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(FlexItemMainSizeOverride, nscoord)
+
   NS_DECLARE_FRAME_PROPERTY_RELEASABLE(CachedBackgroundImage, gfxASurface)
   NS_DECLARE_FRAME_PROPERTY_RELEASABLE(CachedBackgroundImageDT, DrawTarget)
 
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(InvalidationRect, nsRect)
 
   NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(RefusedAsyncAnimationProperty, bool)
+
+  NS_DECLARE_FRAME_PROPERTY_SMALL_VALUE(FragStretchBSizeProperty, nscoord)
 
   NS_DECLARE_FRAME_PROPERTY_WITH_DTOR(GenConProperty, ContentArray,
                                       DestroyContentArray)
@@ -1154,6 +1160,7 @@ protected:
    * Called when a frame transitions between visibility states (for example,
    * from nonvisible to visible, or from visible to nonvisible).
    *
+   * @param aOldVisibility    The previous visibility state.
    * @param aNewVisibility    The new visibility state.
    * @param aNonvisibleAction A requested action if the frame has become
    *                          nonvisible. If Nothing(), no action is
@@ -1165,7 +1172,8 @@ protected:
    * Subclasses which override this method should call their parent class's
    * implementation.
    */
-  virtual void OnVisibilityChange(Visibility aNewVisibility,
+  virtual void OnVisibilityChange(Visibility aOldVisibility,
+                                  Visibility aNewVisibility,
                                   Maybe<OnNonvisible> aNonvisibleAction = Nothing());
 
 public:
@@ -1888,10 +1896,10 @@ public:
      * shrink-wrap (e.g., it's floating, absolutely positioned, or
      * inline-block). */
     eShrinkWrap =        1 << 0,
-    /* Set if we'd like to compute our 'auto' height, regardless of our actual
-     * computed value of 'height'. (e.g. to get an intrinsic height for flex
+    /* Set if we'd like to compute our 'auto' bsize, regardless of our actual
+     * corresponding computed value. (e.g. to get an intrinsic height for flex
      * items with "min-height: auto" to use during flexbox layout.) */
-    eUseAutoHeight =     1 << 1
+    eUseAutoBSize =      1 << 1
   };
 
   /**
@@ -2046,14 +2054,28 @@ public:
                          const nsHTMLReflowState* aReflowState,
                          nsDidReflowStatus        aStatus) = 0;
 
-  // XXX Maybe these three should be a separate interface?
-
   /**
    * Updates the overflow areas of the frame. This can be called if an
    * overflow area of the frame's children has changed without reflowing.
    * @return true if either of the overflow areas for this frame have changed.
    */
-  virtual bool UpdateOverflow() = 0;
+  bool UpdateOverflow();
+
+  /**
+   * Computes any overflow area created by the frame itself (outside of the
+   * frame bounds) and includes it into aOverflowAreas.
+   *
+   * Returns false if updating overflow isn't supported for this frame.
+   * If the frame requires a reflow instead, then it is responsible
+   * for scheduling one.
+   */
+  virtual bool ComputeCustomOverflow(nsOverflowAreas& aOverflowAreas) = 0;
+
+  /**
+   * Computes any overflow area created by children of this frame and
+   * includes it into aOverflowAreas.
+   */
+  virtual void UnionChildOverflow(nsOverflowAreas& aOverflowAreas) = 0;
 
   /**
    * Helper method used by block reflow to identify runs of text so
@@ -2943,6 +2965,9 @@ public:
   virtual void SetXULLayoutManager(nsBoxLayout* aLayout) { }
   virtual nsBoxLayout* GetXULLayoutManager() { return nullptr; }
   nsresult GetXULClientRect(nsRect& aContentRect);
+
+  virtual uint32_t GetXULLayoutFlags()
+  { return 0; }
 
   // For nsSprocketLayout
   virtual Valignment GetXULVAlign() const = 0;

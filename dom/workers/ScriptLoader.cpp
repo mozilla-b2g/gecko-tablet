@@ -111,15 +111,22 @@ ChannelFromScriptURL(nsIPrincipal* principal,
                      WorkerScriptType aWorkerScriptType,
                      nsContentPolicyType aContentPolicyType,
                      nsLoadFlags aLoadFlags,
+                     bool aDefaultURIEncoding,
                      nsIChannel** aChannel)
 {
   AssertIsOnMainThread();
 
   nsresult rv;
   nsCOMPtr<nsIURI> uri;
-  rv = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
-                                                 aScriptURL, parentDoc,
-                                                 baseURI);
+
+  if (aDefaultURIEncoding) {
+    rv = NS_NewURI(getter_AddRefs(uri), aScriptURL, nullptr, baseURI);
+  } else {
+    rv = nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
+                                                   aScriptURL, parentDoc,
+                                                   baseURI);
+  }
+
   if (NS_FAILED(rv)) {
     return NS_ERROR_DOM_SYNTAX_ERR;
   }
@@ -717,11 +724,9 @@ private:
     if (aStatus >= Terminating && !mCanceled) {
       mCanceled = true;
 
-      nsCOMPtr<nsIRunnable> runnable =
-        NS_NewRunnableMethod(this,
-          &ScriptLoaderRunnable::CancelMainThreadWithBindingAborted);
-      NS_ASSERTION(runnable, "This should never fail!");
-      MOZ_ALWAYS_SUCCEEDS(NS_DispatchToMainThread(runnable));
+      MOZ_ALWAYS_SUCCEEDS(
+        NS_DispatchToMainThread(NewRunnableMethod(this,
+                                                  &ScriptLoaderRunnable::CancelMainThreadWithBindingAborted)));
     }
 
     return true;
@@ -907,7 +912,7 @@ private:
     if (topWorkerPrivate->IsDedicatedWorker()) {
       nsCOMPtr<nsPIDOMWindowInner> window = topWorkerPrivate->GetWindow();
       if (window) {
-        nsCOMPtr<nsIDocShell> docShell = do_GetInterface(window);
+        nsCOMPtr<nsIDocShell> docShell = window->GetDocShell();
         if (docShell) {
           nsresult rv = docShell->GetDefaultLoadFlags(&loadFlags);
           NS_ENSURE_SUCCESS(rv, rv);
@@ -923,10 +928,14 @@ private:
     }
 
     if (!channel) {
+      // Only top level workers' main script use the document charset for the
+      // script uri encoding. Otherwise, default encoding (UTF-8) is applied.
+      bool useDefaultEncoding = !(!parentWorker && IsMainWorkerScript());
       rv = ChannelFromScriptURL(principal, baseURI, parentDoc, loadGroup, ios,
                                 secMan, loadInfo.mURL, IsMainWorkerScript(),
                                 mWorkerScriptType,
                                 mWorkerPrivate->ContentPolicyType(), loadFlags,
+                                useDefaultEncoding,
                                 getter_AddRefs(channel));
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return rv;
@@ -1658,43 +1667,42 @@ CacheScriptLoader::OnStreamComplete(nsIStreamLoader* aLoader, nsISupports* aCont
   return NS_OK;
 }
 
-class ChannelGetterRunnable final : public nsRunnable
+class ChannelGetterRunnable final : public WorkerMainThreadRunnable
 {
-  WorkerPrivate* mParentWorker;
-  nsCOMPtr<nsIEventTarget> mSyncLoopTarget;
   const nsAString& mScriptURL;
   nsIChannel** mChannel;
   nsresult mResult;
 
 public:
   ChannelGetterRunnable(WorkerPrivate* aParentWorker,
-                        nsIEventTarget* aSyncLoopTarget,
                         const nsAString& aScriptURL,
                         nsIChannel** aChannel)
-  : mParentWorker(aParentWorker), mSyncLoopTarget(aSyncLoopTarget),
-    mScriptURL(aScriptURL), mChannel(aChannel), mResult(NS_ERROR_FAILURE)
+    : WorkerMainThreadRunnable(aParentWorker,
+                               NS_LITERAL_CSTRING("ScriptLoader :: ChannelGetter"))
+    , mScriptURL(aScriptURL)
+    , mChannel(aChannel)
+    , mResult(NS_ERROR_FAILURE)
   {
-    MOZ_ASSERT(mParentWorker);
+    MOZ_ASSERT(aParentWorker);
     aParentWorker->AssertIsOnWorkerThread();
-    MOZ_ASSERT(aSyncLoopTarget);
   }
 
-  NS_IMETHOD
-  Run() override
+  virtual bool
+  MainThreadRun() override
   {
     AssertIsOnMainThread();
 
-    nsIPrincipal* principal = mParentWorker->GetPrincipal();
+    nsIPrincipal* principal = mWorkerPrivate->GetPrincipal();
     MOZ_ASSERT(principal);
 
     // Figure out our base URI.
-    nsCOMPtr<nsIURI> baseURI = mParentWorker->GetBaseURI();
+    nsCOMPtr<nsIURI> baseURI = mWorkerPrivate->GetBaseURI();
     MOZ_ASSERT(baseURI);
 
     // May be null.
-    nsCOMPtr<nsIDocument> parentDoc = mParentWorker->GetDocument();
+    nsCOMPtr<nsIDocument> parentDoc = mWorkerPrivate->GetDocument();
 
-    nsCOMPtr<nsILoadGroup> loadGroup = mParentWorker->GetLoadGroup();
+    nsCOMPtr<nsILoadGroup> loadGroup = mWorkerPrivate->GetLoadGroup();
 
     nsCOMPtr<nsIChannel> channel;
     mResult =
@@ -1703,19 +1711,14 @@ public:
                                                    mScriptURL,
                                                    // Nested workers are always dedicated.
                                                    nsIContentPolicy::TYPE_INTERNAL_WORKER,
+                                                   // Nested workers use default uri encoding.
+                                                   true,
                                                    getter_AddRefs(channel));
     if (NS_SUCCEEDED(mResult)) {
       channel.forget(mChannel);
     }
 
-    RefPtr<MainThreadStopSyncLoopRunnable> runnable =
-      new MainThreadStopSyncLoopRunnable(mParentWorker,
-                                         mSyncLoopTarget.forget(), true);
-    if (!runnable->Dispatch()) {
-      NS_ERROR("This should never fail!");
-    }
-
-    return NS_OK;
+    return true;
   }
 
   nsresult
@@ -1777,8 +1780,10 @@ ScriptExecutorRunnable::PreRun(WorkerPrivate* aWorkerPrivate)
     NS_WARNING("Failed to make global!");
     // There's no way to report the exception on jsapi right now, because there
     // is no way to even enter a compartment on this thread anymore.  Just clear
-    // the exception.  We'll report some sort of error to our caller thread in
-    // ShutdownScriptLoader.
+    // the exception.  We'll report some sort of error to our caller in
+    // ShutdownScriptLoader, but it will get squelched for the same reason we're
+    // squelching here: all the error reporting machinery relies on being able
+    // to enter a compartment to report the error.
     jsapi.ClearException();
     return false;
   }
@@ -2025,6 +2030,7 @@ ChannelFromScriptURLMainThread(nsIPrincipal* aPrincipal,
                                nsILoadGroup* aLoadGroup,
                                const nsAString& aScriptURL,
                                nsContentPolicyType aContentPolicyType,
+                               bool aDefaultURIEncoding,
                                nsIChannel** aChannel)
 {
   AssertIsOnMainThread();
@@ -2037,7 +2043,7 @@ ChannelFromScriptURLMainThread(nsIPrincipal* aPrincipal,
   return ChannelFromScriptURL(aPrincipal, aBaseURI, aParentDoc, aLoadGroup,
                               ios, secMan, aScriptURL, true, WorkerScript,
                               aContentPolicyType, nsIRequest::LOAD_NORMAL,
-                              aChannel);
+                              aDefaultURIEncoding, aChannel);
 }
 
 nsresult
@@ -2048,19 +2054,14 @@ ChannelFromScriptURLWorkerThread(JSContext* aCx,
 {
   aParent->AssertIsOnWorkerThread();
 
-  AutoSyncLoopHolder syncLoop(aParent);
-
   RefPtr<ChannelGetterRunnable> getter =
-    new ChannelGetterRunnable(aParent, syncLoop.EventTarget(), aScriptURL,
-                              aChannel);
+    new ChannelGetterRunnable(aParent, aScriptURL, aChannel);
 
-  if (NS_FAILED(NS_DispatchToMainThread(getter))) {
+  ErrorResult rv;
+  getter->Dispatch(rv);
+  if (rv.Failed()) {
     NS_ERROR("Failed to dispatch!");
-    return NS_ERROR_FAILURE;
-  }
-
-  if (!syncLoop.Run()) {
-    return NS_ERROR_FAILURE;
+    return rv.StealNSResult();
   }
 
   return getter->GetResult();

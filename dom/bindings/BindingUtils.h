@@ -521,7 +521,7 @@ TraceProtoAndIfaceCache(JSTracer* trc, JSObject* obj)
   }
 #endif
 
-  if (!HasProtoAndIfaceCache(obj))
+  if (!DOMGlobalHasProtoAndIFaceCache(obj))
     return;
   ProtoAndIfaceCache* protoAndIfaceCache = GetProtoAndIfaceCache(obj);
   protoAndIfaceCache->Trace(trc);
@@ -532,7 +532,7 @@ DestroyProtoAndIfaceCache(JSObject* obj)
 {
   MOZ_ASSERT(js::GetObjectClass(obj)->flags & JSCLASS_DOM_GLOBAL);
 
-  if (!HasProtoAndIfaceCache(obj)) {
+  if (!DOMGlobalHasProtoAndIFaceCache(obj)) {
     return;
   }
 
@@ -2273,7 +2273,7 @@ void DoTraceSequence(JSTracer* trc, InfallibleTArray<T>& seq)
 
 // Rooter class for sequences; this is what we mostly use in the codegen
 template<typename T>
-class MOZ_RAII SequenceRooter : private JS::CustomAutoRooter
+class MOZ_RAII SequenceRooter final : private JS::CustomAutoRooter
 {
 public:
   SequenceRooter(JSContext *aCx, FallibleTArray<T>* aSequence

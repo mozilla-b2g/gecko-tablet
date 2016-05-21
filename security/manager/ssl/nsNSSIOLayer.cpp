@@ -373,7 +373,7 @@ nsNSSSocketInfo::IsAcceptableForHost(const nsACString& hostname, bool* _retval)
   }
   nsAutoCString hostnameFlat(PromiseFlatCString(hostname));
   CertVerifier::Flags flags = CertVerifier::FLAG_LOCAL_ONLY;
-  ScopedCERTCertList unusedBuiltChain;
+  UniqueCERTCertList unusedBuiltChain;
   SECStatus rv = certVerifier->VerifySSLServerCert(nssCert, nullptr,
                                                    mozilla::pkix::Now(),
                                                    nullptr, hostnameFlat.get(),
@@ -465,7 +465,7 @@ nsNSSSocketInfo::SetNPNList(nsTArray<nsCString>& protocolArray)
 
   if (SSL_SetNextProtoNego(
         mFd,
-        reinterpret_cast<const unsigned char*>(npnList.get()),
+        BitwiseCast<const unsigned char*, const char*>(npnList.get()),
         npnList.Length()) != SECSuccess)
     return NS_ERROR_FAILURE;
 
@@ -747,6 +747,8 @@ nsSSLIOLayerHelpers::rememberIntolerantAtVersion(const nsACString& hostName,
       return false;
     }
 
+    // This telemetry doesn't support TLS 1.3
+    // See bug 1250582
     uint32_t fallbackLimitBucket = 0;
     // added if the version has reached the min version.
     if (intolerant <= minVersion) {
@@ -1133,6 +1135,10 @@ retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
   Telemetry::ID pre;
   Telemetry::ID post;
   switch (range.max) {
+    case SSL_LIBRARY_VERSION_TLS_1_3:
+      pre = Telemetry::SSL_TLS13_INTOLERANCE_REASON_PRE;
+      post = Telemetry::SSL_TLS13_INTOLERANCE_REASON_POST;
+      break;
     case SSL_LIBRARY_VERSION_TLS_1_2:
       pre = Telemetry::SSL_TLS12_INTOLERANCE_REASON_PRE;
       post = Telemetry::SSL_TLS12_INTOLERANCE_REASON_POST;
@@ -1734,7 +1740,7 @@ nsSSLIOLayerHelpers::addInsecureFallbackSite(const nsCString& hostname,
   Preferences::SetCString("security.tls.insecure_fallback_hosts", value);
 }
 
-class FallbackPrefRemover final : public nsRunnable
+class FallbackPrefRemover final : public Runnable
 {
 public:
   explicit FallbackPrefRemover(const nsACString& aHost)
@@ -1782,7 +1788,7 @@ nsSSLIOLayerHelpers::removeInsecureFallbackSite(const nsACString& hostname,
   if (!isPublic()) {
     return;
   }
-  RefPtr<nsRunnable> runnable = new FallbackPrefRemover(hostname);
+  RefPtr<Runnable> runnable = new FallbackPrefRemover(hostname);
   if (NS_IsMainThread()) {
     runnable->Run();
   } else {
@@ -2037,7 +2043,7 @@ nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
   }
 
   RefPtr<nsNSSSocketInfo> info(
-    reinterpret_cast<nsNSSSocketInfo*>(socket->higher->secret));
+    BitwiseCast<nsNSSSocketInfo*, PRFilePrivate*>(socket->higher->secret));
 
   UniqueCERTCertificate serverCert(SSL_PeerCertificate(socket));
   if (!serverCert) {
@@ -2089,7 +2095,7 @@ ClientAuthDataRunnable::RunOnTargetThread()
   char** caNameStrings;
   UniqueCERTCertificate cert;
   UniqueSECKEYPrivateKey privKey;
-  ScopedCERTCertList certList;
+  UniqueCERTCertList certList;
   CERTCertListNode* node;
   UniqueCERTCertNicknames nicknames;
   int keyError = 0; // used for private key retrieval error
@@ -2142,9 +2148,9 @@ ClientAuthDataRunnable::RunOnTargetThread()
     // automatically find the right cert
 
     // find all user certs that are valid and for SSL
-    certList = CERT_FindUserCertsByUsage(CERT_GetDefaultCertDB(),
-                                         certUsageSSLClient, false,
-                                         true, wincx);
+    certList.reset(CERT_FindUserCertsByUsage(CERT_GetDefaultCertDB(),
+                                             certUsageSSLClient, false, true,
+                                             wincx));
     if (!certList) {
       goto noCert;
     }
@@ -2234,7 +2240,7 @@ ClientAuthDataRunnable::RunOnTargetThread()
             getter_AddRefs(found_cert));
           if (NS_SUCCEEDED(find_rv) && found_cert) {
             nsNSSCertificate* obj_cert =
-              reinterpret_cast<nsNSSCertificate*>(found_cert.get());
+              BitwiseCast<nsNSSCertificate*, nsIX509Cert*>(found_cert.get());
             if (obj_cert) {
               cert.reset(obj_cert->GetCert());
             }
@@ -2249,16 +2255,16 @@ ClientAuthDataRunnable::RunOnTargetThread()
 
     if (!hasRemembered) {
       // user selects a cert to present
-      nsIClientAuthDialogs* dialogs = nullptr;
+      nsCOMPtr<nsIClientAuthDialogs> dialogs;
       int32_t selectedIndex = -1;
       char16_t** certNicknameList = nullptr;
       char16_t** certDetailsList = nullptr;
 
       // find all user certs that are for SSL
       // note that we are allowing expired certs in this list
-      certList = CERT_FindUserCertsByUsage(CERT_GetDefaultCertDB(),
-        certUsageSSLClient, false,
-        false, wincx);
+      certList.reset(CERT_FindUserCertsByUsage(CERT_GetDefaultCertDB(),
+                                               certUsageSSLClient, false,
+                                               false, wincx));
       if (!certList) {
         goto noCert;
       }
@@ -2289,7 +2295,7 @@ ClientAuthDataRunnable::RunOnTargetThread()
         goto noCert;
       }
 
-      nicknames.reset(getNSSCertNicknamesFromCertList(certList.get()));
+      nicknames.reset(getNSSCertNicknamesFromCertList(certList));
 
       if (!nicknames) {
         goto loser;
@@ -2363,9 +2369,9 @@ ClientAuthDataRunnable::RunOnTargetThread()
       }
 
       // Throw up the client auth dialog and get back the index of the selected cert
-      nsresult rv = getNSSDialogs((void**)&dialogs,
-        NS_GET_IID(nsIClientAuthDialogs),
-        NS_CLIENTAUTHDIALOGS_CONTRACTID);
+      nsresult rv = getNSSDialogs(getter_AddRefs(dialogs),
+                                  NS_GET_IID(nsIClientAuthDialogs),
+                                  NS_CLIENTAUTHDIALOGS_CONTRACTID);
 
       if (NS_FAILED(rv)) {
         NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(CertsToUse, certNicknameList);
@@ -2379,7 +2385,6 @@ ClientAuthDataRunnable::RunOnTargetThread()
                                       (const char16_t**)certDetailsList,
                                       CertsToUse, &selectedIndex, &canceled);
 
-      NS_RELEASE(dialogs);
       NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(CertsToUse, certNicknameList);
       NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(CertsToUse, certDetailsList);
 

@@ -49,6 +49,10 @@ class SandboxBroker;
 class SandboxBrokerPolicyFactory;
 #endif
 
+namespace embedding {
+class PrintingParent;
+}
+
 namespace ipc {
 class OptionalURIParams;
 class PFileDescriptorSetParent;
@@ -336,30 +340,15 @@ public:
     return mSendPermissionUpdates;
   }
 
-  bool NeedsDataStoreInfos() const
-  {
-    return mSendDataStoreInfos;
-  }
-
   /**
    * Kill our subprocess and make sure it dies.  Should only be used
    * in emergency situations since it bypasses the normal shutdown
    * process.
+   *
+   * WARNING: aReason appears in telemetry, so any new value passed in requires
+   * data review.
    */
   void KillHard(const char* aWhy);
-
-  /**
-   * API for adding a crash reporter annotation that provides a reason
-   * for a listener request to abort the child.
-   */
-  bool IsKillHardAnnotationSet() const { return mKillHardAnnotation.IsEmpty(); }
-
-  const nsCString& GetKillHardAnnotation() const { return mKillHardAnnotation; }
-
-  void SetKillHardAnnotation(const nsACString& aReason)
-  {
-    mKillHardAnnotation = aReason;
-  }
 
   ContentParentId ChildID() const override { return mChildID; }
 
@@ -395,9 +384,17 @@ public:
 
   virtual PPrintingParent* AllocPPrintingParent() override;
 
-  virtual bool RecvPPrintingConstructor(PPrintingParent* aActor) override;
-
   virtual bool DeallocPPrintingParent(PPrintingParent* aActor) override;
+
+#if defined(NS_PRINTING)
+  /**
+   * @return the PrintingParent for this ContentParent.
+   */
+  already_AddRefed<embedding::PrintingParent> GetPrintingParent();
+#endif
+
+  virtual PSendStreamParent* AllocPSendStreamParent() override;
+  virtual bool DeallocPSendStreamParent(PSendStreamParent* aActor) override;
 
   virtual PScreenManagerParent*
   AllocPScreenManagerParent(uint32_t* aNumberOfScreens,
@@ -507,7 +504,6 @@ public:
                                 const bool& aCalledFromJS,
                                 const bool& aPositionSpecified,
                                 const bool& aSizeSpecified,
-                                const nsCString& aURI,
                                 const nsString& aName,
                                 const nsCString& aFeatures,
                                 const nsCString& aBaseURI,
@@ -989,12 +985,6 @@ private:
 
   virtual bool RecvGetLookAndFeelCache(nsTArray<LookAndFeelInt>* aLookAndFeelIntCache) override;
 
-  virtual bool RecvDataStoreGetStores(
-                     const nsString& aName,
-                     const nsString& aOwner,
-                     const IPC::Principal& aPrincipal,
-                     InfallibleTArray<DataStoreSetting>* aValue) override;
-
   virtual bool RecvSpeakerManagerGetSpeakerStatus(bool* aValue) override;
 
   virtual bool RecvSpeakerManagerForceSpeaker(const bool& aEnable) override;
@@ -1103,6 +1093,21 @@ private:
   virtual bool RecvNotifyBenchmarkResult(const nsString& aCodecName,
                                          const uint32_t& aDecodeFPS) override;
 
+  virtual bool RecvNotifyPushObservers(const nsCString& aScope,
+                                       const IPC::Principal& aPrincipal,
+                                       const nsString& aMessageId) override;
+
+  virtual bool RecvNotifyPushObserversWithData(const nsCString& aScope,
+                                               const IPC::Principal& aPrincipal,
+                                               const nsString& aMessageId,
+                                               InfallibleTArray<uint8_t>&& aData) override;
+
+  virtual bool RecvNotifyPushSubscriptionChangeObservers(const nsCString& aScope,
+                                                         const IPC::Principal& aPrincipal) override;
+
+  virtual bool RecvNotifyPushSubscriptionModifiedObservers(const nsCString& aScope,
+                                                           const IPC::Principal& aPrincipal) override;
+
   // If you add strong pointers to cycle collected objects here, be sure to
   // release these objects in ShutDownProcess.  See the comment there for more
   // details.
@@ -1144,7 +1149,6 @@ private:
   bool mMetamorphosed;
 
   bool mSendPermissionUpdates;
-  bool mSendDataStoreInfos;
   bool mIsForBrowser;
   bool mIsNuwaProcess;
   bool mHasGamepadListener;
@@ -1196,6 +1200,10 @@ private:
   mozilla::UniquePtr<SandboxBroker> mSandboxBroker;
   static mozilla::UniquePtr<SandboxBrokerPolicyFactory>
       sSandboxBrokerPolicyFactory;
+#endif
+
+#ifdef NS_PRINTING
+  RefPtr<embedding::PrintingParent> mPrintingParent;
 #endif
 };
 

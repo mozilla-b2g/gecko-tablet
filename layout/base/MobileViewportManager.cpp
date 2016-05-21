@@ -14,6 +14,7 @@
 #include "nsViewManager.h"
 #include "nsViewportInfo.h"
 #include "UnitTransforms.h"
+#include "nsIDocument.h"
 
 #define MVM_LOG(...)
 // #define MVM_LOG(...) printf_stderr("MVM: " __VA_ARGS__)
@@ -84,6 +85,12 @@ MobileViewportManager::Destroy()
 }
 
 void
+MobileViewportManager::SetRestoreResolution(float aResolution)
+{
+  mRestoreResolution = Some(aResolution);
+}
+
+void
 MobileViewportManager::RequestReflow()
 {
   MVM_LOG("%p: got a reflow request\n", this);
@@ -145,6 +152,22 @@ MobileViewportManager::SetInitialViewport()
 }
 
 CSSToScreenScale
+MobileViewportManager::ClampZoom(const CSSToScreenScale& aZoom,
+                                 const nsViewportInfo& aViewportInfo)
+{
+  CSSToScreenScale zoom = aZoom;
+  if (zoom < aViewportInfo.GetMinZoom()) {
+    zoom = aViewportInfo.GetMinZoom();
+    MVM_LOG("%p: Clamped to %f\n", this, zoom.scale);
+  }
+  if (zoom > aViewportInfo.GetMaxZoom()) {
+    zoom = aViewportInfo.GetMaxZoom();
+    MVM_LOG("%p: Clamped to %f\n", this, zoom.scale);
+  }
+  return zoom;
+}
+
+CSSToScreenScale
 MobileViewportManager::UpdateResolution(const nsViewportInfo& aViewportInfo,
                                         const ScreenIntSize& aDisplaySize,
                                         const CSSSize& aViewport,
@@ -155,18 +178,18 @@ MobileViewportManager::UpdateResolution(const nsViewportInfo& aViewportInfo,
   LayoutDeviceToLayerScale res(mPresShell->GetResolution());
 
   if (mIsFirstPaint) {
-    CSSToScreenScale defaultZoom = aViewportInfo.GetDefaultZoom();
-    MVM_LOG("%p: default zoom from viewport is %f\n", this, defaultZoom.scale);
-    if (!aViewportInfo.IsDefaultZoomValid()) {
-      defaultZoom = MaxScaleRatio(ScreenSize(aDisplaySize), aViewport);
-      MVM_LOG("%p: Intrinsic computed zoom is %f\n", this, defaultZoom.scale);
-      if (defaultZoom < aViewportInfo.GetMinZoom()) {
-        defaultZoom = aViewportInfo.GetMinZoom();
-        MVM_LOG("%p: Clamped to %f\n", this, defaultZoom.scale);
-      }
-      if (defaultZoom > aViewportInfo.GetMaxZoom()) {
-        defaultZoom = aViewportInfo.GetMaxZoom();
-        MVM_LOG("%p: Clamped to %f\n", this, defaultZoom.scale);
+    CSSToScreenScale defaultZoom;
+    if (mRestoreResolution) {
+      defaultZoom = CSSToScreenScale(mRestoreResolution.value() * cssToDev.scale);
+      MVM_LOG("%p: restored zoom is %f\n", this, defaultZoom.scale);
+      defaultZoom = ClampZoom(defaultZoom, aViewportInfo);
+    } else {
+      defaultZoom = aViewportInfo.GetDefaultZoom();
+      MVM_LOG("%p: default zoom from viewport is %f\n", this, defaultZoom.scale);
+      if (!aViewportInfo.IsDefaultZoomValid()) {
+        defaultZoom = MaxScaleRatio(ScreenSize(aDisplaySize), aViewport);
+        MVM_LOG("%p: Intrinsic computed zoom is %f\n", this, defaultZoom.scale);
+        defaultZoom = ClampZoom(defaultZoom, aViewportInfo);
       }
     }
     MOZ_ASSERT(aViewportInfo.GetMinZoom() <= defaultZoom &&

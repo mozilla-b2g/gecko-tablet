@@ -30,7 +30,7 @@
 #include "nsPoint.h"                    // for nsIntPoint
 #include "nsThreadUtils.h"              // for NS_IsMainThread
 #include "OverscrollHandoffState.h"     // for OverscrollHandoffState
-#include "TreeTraversal.h"              // for generic tree traveral algorithms
+#include "TreeTraversal.h"              // for ForEachNode, BreadthFirstSearch, etc
 #include "LayersLogging.h"              // for Stringify
 #include "Units.h"                      // for ParentlayerPixel
 #include "GestureEventListener.h"       // for GestureEventListener::setLongTapEnabled
@@ -166,7 +166,7 @@ APZCTreeManager::UpdateHitTestingTree(CompositorBridgeParent* aCompositor,
   // we are sure that the layer was removed and not just transplanted elsewhere. Doing that
   // as part of a recursive tree walk is hard and so maintaining a list and removing
   // APZCs that are still alive is much simpler.
-  ForEachNode(mRootNode.get(),
+  ForEachNode<ReverseIterator>(mRootNode.get(),
       [&state] (HitTestingTreeNode* aNode)
       {
         state.mNodesToDestroy.AppendElement(aNode);
@@ -254,7 +254,7 @@ APZCTreeManager::PrintAPZCInfo(const LayerMetricsWrapper& aLayer,
                << "\tsr=" << metrics.GetScrollableRect()
                << (aLayer.IsScrollInfoLayer() ? "\tscrollinfo" : "")
                << (apzc->HasScrollgrab() ? "\tscrollgrab" : "") << "\t"
-               << metrics.GetContentDescription().get();
+               << aLayer.Metadata().GetContentDescription().get();
 }
 
 void
@@ -369,6 +369,7 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
                            aLayer.GetScrollbarDirection(),
                            aLayer.GetScrollbarSize(),
                            aLayer.IsScrollbarContainer());
+    node->SetFixedPosData(aLayer.GetFixedPositionScrollContainerId());
     return node;
   }
 
@@ -549,6 +550,7 @@ APZCTreeManager::PrepareNodeForLayer(const LayerMetricsWrapper& aLayer,
                          aLayer.GetScrollbarDirection(),
                          aLayer.GetScrollbarSize(),
                          aLayer.IsScrollbarContainer());
+  node->SetFixedPosData(aLayer.GetFixedPositionScrollContainerId());
   return node;
 }
 
@@ -649,8 +651,8 @@ APZCTreeManager::FlushApzRepaints(uint64_t aLayersId)
   const CompositorBridgeParent::LayerTreeState* state =
     CompositorBridgeParent::GetIndirectShadowTree(aLayersId);
   MOZ_ASSERT(state && state->mController);
-  NS_DispatchToMainThread(NS_NewRunnableMethod(
-    state->mController.get(), &GeckoContentController::NotifyFlushComplete));
+  NS_DispatchToMainThread(NewRunnableMethod(
+    state->mController, &GeckoContentController::NotifyFlushComplete));
 }
 
 nsEventStatus
@@ -694,9 +696,15 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
       }
 
       if (apzc) {
+        bool targetConfirmed = (hitResult == HitLayer);
+        if (gfxPrefs::APZDragEnabled() && hitScrollbar) {
+          // If scrollbar dragging is enabled and we hit a scrollbar, wait
+          // for the main-thread confirmation because it contains drag metrics
+          // that we need.
+          targetConfirmed = false;
+        }
         result = mInputQueue->ReceiveInputEvent(
-          apzc,
-          /* aTargetConfirmed = */ false,
+          apzc, targetConfirmed,
           mouseInput, aOutInputBlockId);
 
         if (result == nsEventStatus_eConsumeDoDefault) {
@@ -780,6 +788,16 @@ APZCTreeManager::ReceiveInputEvent(InputData& aEvent,
       if (!panInput.mHandledByAPZ) {
         return result;
       }
+
+      // If/when we enable support for pan inputs off-main-thread, we'll need
+      // to duplicate this EventStateManager code or something. See the other
+      // call to GetUserPrefsForWheelEvent in this file for why these fields
+      // are stored separately.
+      MOZ_ASSERT(NS_IsMainThread());
+      WidgetWheelEvent wheelEvent = panInput.ToWidgetWheelEvent(nullptr);
+      EventStateManager::GetUserPrefsForWheelEvent(&wheelEvent,
+        &panInput.mUserDeltaMultiplierX,
+        &panInput.mUserDeltaMultiplierY);
 
       RefPtr<AsyncPanZoomController> apzc = GetTargetAPZC(panInput.mPanStartPoint,
                                                             &hitResult);
@@ -1253,7 +1271,7 @@ APZCTreeManager::UpdateZoomConstraints(const ScrollableLayerGuid& aGuid,
     mZoomConstraints.erase(aGuid);
   }
   if (node && aConstraints) {
-    ForEachNode(node.get(),
+    ForEachNode<ReverseIterator>(node.get(),
         [&aConstraints, &node, this](HitTestingTreeNode* aNode)
         {
           if (aNode != node) {
@@ -1300,7 +1318,7 @@ APZCTreeManager::FlushRepaintsToClearScreenToGeckoTransform()
   MutexAutoLock lock(mTreeLock);
   mTreeLock.AssertCurrentThreadOwns();
 
-  ForEachNode(mRootNode.get(),
+  ForEachNode<ReverseIterator>(mRootNode.get(),
       [](HitTestingTreeNode* aNode)
       {
         if (aNode->IsPrimaryHolder()) {
@@ -1335,8 +1353,7 @@ APZCTreeManager::ClearTree()
   // Ensure that no references to APZCs are alive in any lingering input
   // blocks. This breaks cycles from InputBlockState::mTargetApzc back to
   // the InputQueue.
-  APZThreadUtils::RunOnControllerThread(NewRunnableMethod(
-    mInputQueue.get(), &InputQueue::Clear));
+  APZThreadUtils::RunOnControllerThread(NewRunnableMethod(mInputQueue, &InputQueue::Clear));
 
   MutexAutoLock lock(mTreeLock);
 
@@ -1345,7 +1362,7 @@ APZCTreeManager::ClearTree()
   // does a pre-order traversal of the tree, and Destroy() nulls out
   // the fields needed to reach the children of the node.
   nsTArray<RefPtr<HitTestingTreeNode>> nodesToDestroy;
-  ForEachNode(mRootNode.get(),
+  ForEachNode<ReverseIterator>(mRootNode.get(),
       [&nodesToDestroy](HitTestingTreeNode* aNode)
       {
         nodesToDestroy.AppendElement(aNode);
@@ -1564,7 +1581,7 @@ APZCTreeManager::GetTargetNode(const ScrollableLayerGuid& aGuid,
                                GuidComparator aComparator)
 {
   mTreeLock.AssertCurrentThreadOwns();
-  RefPtr<HitTestingTreeNode> target = DepthFirstSearchPostOrder(mRootNode.get(),
+  RefPtr<HitTestingTreeNode> target = DepthFirstSearchPostOrder<ReverseIterator>(mRootNode.get(),
       [&aGuid, &aComparator](HitTestingTreeNode* node)
       {
         bool matches = false;
@@ -1695,10 +1712,30 @@ APZCTreeManager::FindScrollNode(const AsyncDragMetrics& aDragMetrics)
 {
   MutexAutoLock lock(mTreeLock);
 
-  return DepthFirstSearch(mRootNode.get(),
+  return DepthFirstSearch<ReverseIterator>(mRootNode.get(),
       [&aDragMetrics](HitTestingTreeNode* aNode) {
         return aNode->MatchesScrollDragMetrics(aDragMetrics);
       });
+}
+
+AsyncPanZoomController*
+APZCTreeManager::GetTargetApzcForNode(HitTestingTreeNode* aNode)
+{
+  for (const HitTestingTreeNode* n = aNode;
+       n && n->GetLayersId() == aNode->GetLayersId();
+       n = n->GetParent()) {
+    if (n->GetApzc()) {
+      APZCTM_LOG("Found target %p using ancestor lookup\n", n->GetApzc());
+      return n->GetApzc();
+    }
+    if (n->GetFixedPosTarget() != FrameMetrics::NULL_SCROLL_ID) {
+      ScrollableLayerGuid guid(n->GetLayersId(), 0, n->GetFixedPosTarget());
+      RefPtr<HitTestingTreeNode> fpNode = GetTargetNode(guid, &GuidComparatorIgnoringPresShell);
+      APZCTM_LOG("Found target node %p using fixed-pos lookup on %" PRIu64 "\n", fpNode.get(), n->GetFixedPosTarget());
+      return fpNode ? fpNode->GetApzc() : nullptr;
+    }
+  }
+  return nullptr;
 }
 
 AsyncPanZoomController*
@@ -1716,7 +1753,7 @@ APZCTreeManager::GetAPZCAtPoint(HitTestingTreeNode* aNode,
   std::stack<ParentLayerPoint> hitTestPoints;
   hitTestPoints.push(aHitTestPoint);
 
-  ForEachNode(root,
+  ForEachNode<ReverseIterator>(root,
       [&hitTestPoints](HitTestingTreeNode* aNode) {
         if (aNode->IsOutsideClip(hitTestPoints.top())) {
           // If the point being tested is outside the clip region for this node
@@ -1764,10 +1801,12 @@ APZCTreeManager::GetAPZCAtPoint(HitTestingTreeNode* aNode,
           }
         }
       }
-      AsyncPanZoomController* result = resultNode->GetNearestContainingApzcWithSameLayersId();
+
+      AsyncPanZoomController* result = GetTargetApzcForNode(resultNode);
       if (!result) {
         result = FindRootApzcForLayersId(resultNode->GetLayersId());
         MOZ_ASSERT(result);
+        APZCTM_LOG("Found target %p using root lookup\n", result);
       }
       APZCTM_LOG("Successfully matched APZC %p via node %p (hit result %d)\n",
           result, resultNode, *aOutHitResult);
@@ -1782,7 +1821,7 @@ APZCTreeManager::FindRootApzcForLayersId(uint64_t aLayersId) const
 {
   mTreeLock.AssertCurrentThreadOwns();
 
-  HitTestingTreeNode* resultNode = BreadthFirstSearch(mRootNode.get(),
+  HitTestingTreeNode* resultNode = BreadthFirstSearch<ReverseIterator>(mRootNode.get(),
       [aLayersId](HitTestingTreeNode* aNode) {
         AsyncPanZoomController* apzc = aNode->GetApzc();
         return apzc
@@ -1797,7 +1836,7 @@ APZCTreeManager::FindRootContentApzcForLayersId(uint64_t aLayersId) const
 {
   mTreeLock.AssertCurrentThreadOwns();
 
-  HitTestingTreeNode* resultNode = BreadthFirstSearch(mRootNode.get(),
+  HitTestingTreeNode* resultNode = BreadthFirstSearch<ReverseIterator>(mRootNode.get(),
       [aLayersId](HitTestingTreeNode* aNode) {
         AsyncPanZoomController* apzc = aNode->GetApzc();
         return apzc
@@ -1818,7 +1857,7 @@ APZCTreeManager::FindRootContentOrRootApzc() const
   // is one, or the root APZC if there is not.
   // Since BreadthFirstSearch is a pre-order search, we first do a search for
   // the RCD, and then if we don't find one, we do a search for the root APZC.
-  HitTestingTreeNode* resultNode = BreadthFirstSearch(mRootNode.get(),
+  HitTestingTreeNode* resultNode = BreadthFirstSearch<ReverseIterator>(mRootNode.get(),
       [](HitTestingTreeNode* aNode) {
         AsyncPanZoomController* apzc = aNode->GetApzc();
         return apzc && apzc->IsRootContent();
@@ -1826,7 +1865,7 @@ APZCTreeManager::FindRootContentOrRootApzc() const
   if (resultNode) {
     return resultNode->GetApzc();
   }
-  resultNode = BreadthFirstSearch(mRootNode.get(),
+  resultNode = BreadthFirstSearch<ReverseIterator>(mRootNode.get(),
       [](HitTestingTreeNode* aNode) {
         AsyncPanZoomController* apzc = aNode->GetApzc();
         return (apzc != nullptr);

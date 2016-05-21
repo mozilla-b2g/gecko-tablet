@@ -6,7 +6,6 @@
 #include "GonkDecoderModule.h"
 #include "GonkVideoDecoderManager.h"
 #include "GonkAudioDecoderManager.h"
-#include "mozilla/Preferences.h"
 #include "mozilla/DebugOnly.h"
 #include "GonkMediaDataDecoder.h"
 
@@ -17,13 +16,6 @@ GonkDecoderModule::GonkDecoderModule()
 
 GonkDecoderModule::~GonkDecoderModule()
 {
-}
-
-/* static */
-void
-GonkDecoderModule::Init()
-{
-  MOZ_ASSERT(NS_IsMainThread(), "Must be on main thread.");
 }
 
 already_AddRefed<MediaDataDecoder>

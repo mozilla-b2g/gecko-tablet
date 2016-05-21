@@ -17,7 +17,7 @@
 
 #include "TexturePoolOGL.h"
 #include "mozilla/layers/CompositorOGL.h"
-#include "mozilla/layers/CompositorBridgeParent.h"
+#include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/LayerManagerComposite.h"
 #include "mozilla/layers/TextureHostOGL.h"
 
@@ -342,7 +342,7 @@ public:
     }
 private:
     friend class CreateServerSocketRunnable;
-    class CreateServerSocketRunnable : public nsRunnable
+    class CreateServerSocketRunnable : public Runnable
     {
     public:
         explicit CreateServerSocketRunnable(LayerScopeManager *aLayerScopeManager)
@@ -1899,7 +1899,7 @@ bool
 LayerScope::CheckSendable()
 {
     // Only compositor threads check LayerScope status
-    MOZ_ASSERT(CompositorBridgeParent::IsInCompositorThread() || gIsGtest);
+    MOZ_ASSERT(CompositorThreadHolder::IsInCompositorThread() || gIsGtest);
 
     if (!gfxPrefs::LayerScopeEnabled()) {
         return false;

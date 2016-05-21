@@ -17,7 +17,9 @@
 #include "mozilla/dom/TabContext.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/dom/File.h"
+#include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/Move.h"
 #include "nsCOMPtr.h"
 #include "nsIAuthPromptProvider.h"
 #include "nsIBrowserDOMWindow.h"
@@ -77,6 +79,39 @@ class DataTransfer;
 namespace ipc {
 class StructuredCloneData;
 } // ipc namespace
+
+// This observer runs on the compositor thread, so we dispatch a runnable to the
+// main thread to actually dispatch the event.
+class LayerTreeUpdateObserver : public layers::CompositorUpdateObserver
+{
+public:
+  explicit LayerTreeUpdateObserver(TabParent* aTabParent)
+    : mTabParent(aTabParent)
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+  }
+
+  virtual void ObserveUpdate(uint64_t aLayersId, bool aActive) override;
+
+  virtual void SwapTabParent(LayerTreeUpdateObserver* aOther) {
+    MOZ_ASSERT(NS_IsMainThread());
+    Swap(mTabParent, aOther->mTabParent);
+  }
+
+  void TabParentDestroyed() {
+    MOZ_ASSERT(NS_IsMainThread());
+    mTabParent = nullptr;
+  }
+
+  TabParent* GetTabParent() {
+    MOZ_ASSERT(NS_IsMainThread());
+    return mTabParent;
+  }
+
+private:
+  // NB: Should never be touched off the main thread!
+  TabParent* mTabParent;
+};
 
 class TabParent final : public PBrowserParent
                       , public nsIDOMEventListener
@@ -161,12 +196,21 @@ public:
   virtual bool RecvMoveFocus(const bool& aForward,
                              const bool& aForDocumentNavigation) override;
 
+  virtual bool RecvSizeShellTo(const uint32_t& aFlags,
+                               const int32_t& aWidth,
+                               const int32_t& aHeight,
+                               const int32_t& aShellItemWidth,
+                               const int32_t& aShellItemHeight) override;
+
   virtual bool RecvEvent(const RemoteDOMEvent& aEvent) override;
 
   virtual bool RecvReplyKeyEvent(const WidgetKeyboardEvent& aEvent) override;
 
   virtual bool
   RecvDispatchAfterKeyboardEvent(const WidgetKeyboardEvent& aEvent) override;
+
+  virtual bool
+  RecvAccessKeyNotHandled(const WidgetKeyboardEvent& aEvent) override;
 
   virtual bool RecvBrowserFrameOpenWindow(PBrowserParent* aOpener,
                                           PRenderFrameParent* aRenderFrame,
@@ -358,8 +402,8 @@ public:
 
   void ThemeChanged();
 
-  void HandleAccessKey(nsTArray<uint32_t>& aCharCodes,
-                       const bool& aIsTrusted,
+  void HandleAccessKey(const WidgetKeyboardEvent& aEvent,
+                       nsTArray<uint32_t>& aCharCodes,
                        const int32_t& aModifierMask);
 
   void Activate();
@@ -743,6 +787,8 @@ private:
   static void AddTabParentToTable(uint64_t aLayersId, TabParent* aTabParent);
 
   static void RemoveTabParentFromTable(uint64_t aLayersId);
+
+  RefPtr<LayerTreeUpdateObserver> mLayerUpdateObserver;
 
 public:
   static TabParent* GetTabParentFromLayersId(uint64_t aLayersId);

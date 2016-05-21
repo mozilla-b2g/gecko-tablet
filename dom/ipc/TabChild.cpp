@@ -52,6 +52,7 @@
 #include "nsContentUtils.h"
 #include "nsDocShell.h"
 #include "nsEmbedCID.h"
+#include "nsGlobalWindow.h"
 #include <algorithm>
 #ifdef MOZ_CRASHREPORTER
 #include "nsExceptionHandler.h"
@@ -110,6 +111,13 @@
 #include "mozilla/EventForwards.h"
 #include "nsDeviceContext.h"
 #include "FrameLayerBuilder.h"
+
+#ifdef NS_PRINTING
+#include "nsIPrintSession.h"
+#include "nsIPrintSettings.h"
+#include "nsIPrintSettingsService.h"
+#include "nsIWebBrowserPrint.h"
+#endif
 
 #define BROWSER_ELEMENT_CHILD_SCRIPT \
     NS_LITERAL_STRING("chrome://global/content/BrowserElementChild.js")
@@ -337,7 +345,7 @@ public:
     }
 };
 
-class TabChild::CachedFileDescriptorCallbackRunnable : public nsRunnable
+class TabChild::CachedFileDescriptorCallbackRunnable : public Runnable
 {
     typedef TabChild::CachedFileDescriptorInfo CachedFileDescriptorInfo;
 
@@ -373,7 +381,7 @@ private:
 };
 
 class TabChild::DelayedDeleteRunnable final
-  : public nsRunnable
+  : public Runnable
 {
     RefPtr<TabChild> mTabChild;
 
@@ -871,12 +879,20 @@ TabChild::NotifyTabContextUpdated()
     return;
   }
 
-  docShell->SetFrameType(IsMozBrowserElement() ?
-                           nsIDocShell::FRAME_TYPE_BROWSER :
-                           HasOwnApp() ?
-                             nsIDocShell::FRAME_TYPE_APP :
-                             nsIDocShell::FRAME_TYPE_REGULAR);
+  UpdateFrameType();
   nsDocShell::Cast(docShell)->SetOriginAttributes(OriginAttributesRef());
+}
+
+void
+TabChild::UpdateFrameType()
+{
+  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
+  MOZ_ASSERT(docShell);
+
+  // TODO: Bug 1252794 - remove frameType from nsIDocShell.idl
+  docShell->SetFrameType(IsMozBrowserElement() ? nsIDocShell::FRAME_TYPE_BROWSER :
+                           HasOwnApp() ? nsIDocShell::FRAME_TYPE_APP :
+                             nsIDocShell::FRAME_TYPE_REGULAR);
 }
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(TabChild)
@@ -944,7 +960,30 @@ TabChild::DestroyBrowserWindow()
 }
 
 NS_IMETHODIMP
-TabChild::SizeBrowserTo(int32_t aCX, int32_t aCY)
+TabChild::RemoteSizeShellTo(int32_t aWidth, int32_t aHeight,
+                            int32_t aShellItemWidth, int32_t aShellItemHeight)
+{
+  nsCOMPtr<nsIDocShell> ourDocShell = do_GetInterface(WebNavigation());
+  nsCOMPtr<nsIBaseWindow> docShellAsWin(do_QueryInterface(ourDocShell));
+  int32_t width, height;
+  docShellAsWin->GetSize(&width, &height);
+
+  uint32_t flags = 0;
+  if (width == aWidth) {
+    flags |= nsIEmbeddingSiteWindow::DIM_FLAGS_IGNORE_CX;
+  }
+
+  if (height == aHeight) {
+    flags |= nsIEmbeddingSiteWindow::DIM_FLAGS_IGNORE_CY;
+  }
+
+  bool sent = SendSizeShellTo(flags, aWidth, aHeight, aShellItemWidth, aShellItemHeight);
+
+  return sent ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+TabChild::SizeBrowserTo(int32_t aWidth, int32_t aHeight)
 {
   NS_WARNING("TabChild::SizeBrowserTo not supported in TabChild");
 
@@ -988,9 +1027,37 @@ TabChild::SetStatusWithContext(uint32_t aStatusType,
 
 NS_IMETHODIMP
 TabChild::SetDimensions(uint32_t aFlags, int32_t aX, int32_t aY,
-                             int32_t aCx, int32_t aCy)
+                        int32_t aCx, int32_t aCy)
 {
-  Unused << PBrowserChild::SendSetDimensions(aFlags, aX, aY, aCx, aCy);
+  // The parent is in charge of the dimension changes. If JS code wants to
+  // change the dimensions (moveTo, screenX, etc.) we send a message to the
+  // parent about the new requested dimension, the parent does the resize/move
+  // then send a message to the child to update itself. For APIs like screenX
+  // this function is called with the current value for the non-changed values.
+  // In a series of calls like window.screenX = 10; window.screenY = 10; for
+  // the second call, since screenX is not yet updated we might accidentally
+  // reset back screenX to it's old value. To avoid this if a parameter did not
+  // change we want the parent to ignore its value.
+  int32_t x, y, cx, cy;
+  GetDimensions(aFlags, &x, &y, &cx, &cy);
+
+  if (x == aX) {
+    aFlags |= nsIEmbeddingSiteWindow::DIM_FLAGS_IGNORE_X;
+  }
+
+  if (y == aY) {
+    aFlags |= nsIEmbeddingSiteWindow::DIM_FLAGS_IGNORE_Y;
+  }
+
+  if (cx == aCx) {
+    aFlags |= nsIEmbeddingSiteWindow::DIM_FLAGS_IGNORE_CX;
+  }
+
+  if (cy == aCy) {
+    aFlags |= nsIEmbeddingSiteWindow::DIM_FLAGS_IGNORE_CY;
+  }
+
+  Unused << SendSetDimensions(aFlags, aX, aY, aCx, aCy);
 
   return NS_OK;
 }
@@ -2050,8 +2117,15 @@ TabChild::RecvRealKeyEvent(const WidgetKeyboardEvent& event,
     mIgnoreKeyPressEvent = status == nsEventStatus_eConsumeNoDefault;
   }
 
+  // If a response is desired from the content process, resend the key event.
+  // If mAccessKeyForwardedToChild is set, then don't resend the key event yet
+  // as RecvHandleAccessKey will do this.
   if (localEvent.mFlags.mWantReplyFromContentProcess) {
     SendReplyKeyEvent(localEvent);
+  }
+
+  if (localEvent.mAccessKeyForwardedToChild) {
+    SendAccessKeyNotHandled(localEvent);
   }
 
   if (PresShell::BeforeAfterKeyboardEventEnabled()) {
@@ -2265,7 +2339,7 @@ TabChild::RecvAppOfflineStatus(const uint32_t& aId, const bool& aOffline)
 }
 
 bool
-TabChild::RecvSwappedWithOtherRemoteLoader()
+TabChild::RecvSwappedWithOtherRemoteLoader(const IPCTabContext& aContext)
 {
   nsCOMPtr<nsIDocShell> ourDocShell = do_GetInterface(WebNavigation());
   if (NS_WARN_IF(!ourDocShell)) {
@@ -2285,6 +2359,33 @@ TabChild::RecvSwappedWithOtherRemoteLoader()
 
   nsContentUtils::FirePageShowEvent(ourDocShell, ourEventTarget, false);
   nsContentUtils::FirePageHideEvent(ourDocShell, ourEventTarget);
+
+  // Owner content type may have changed, so store the possibly updated context
+  // and notify others.
+  MaybeInvalidTabContext maybeContext(aContext);
+  if (!maybeContext.IsValid()) {
+    NS_ERROR(nsPrintfCString("Received an invalid TabContext from "
+                             "the parent process. (%s)",
+                             maybeContext.GetInvalidReason()).get());
+    MOZ_CRASH("Invalid TabContext received from the parent process.");
+  }
+
+  if (!UpdateTabContextAfterSwap(maybeContext.GetTabContext())) {
+    MOZ_CRASH("Update to TabContext after swap was denied.");
+  }
+
+  // Since mIsMozBrowserElement may change in UpdateTabContextAfterSwap, so we
+  // call UpdateFrameType here to make sure the frameType on the docshell is
+  // correct.
+  UpdateFrameType();
+
+  // Ignore previous value of mTriedBrowserInit since owner content has changed.
+  mTriedBrowserInit = true;
+  // Initialize the child side of the browser element machinery, if appropriate.
+  if (IsMozBrowserOrApp()) {
+    RecvLoadRemoteScript(BROWSER_ELEMENT_CHILD_SCRIPT, true);
+  }
+
   nsContentUtils::FirePageShowEvent(ourDocShell, ourEventTarget, true);
 
   docShell->SetInFrameSwap(false);
@@ -2293,8 +2394,8 @@ TabChild::RecvSwappedWithOtherRemoteLoader()
 }
 
 bool
-TabChild::RecvHandleAccessKey(nsTArray<uint32_t>&& aCharCodes,
-                              const bool& aIsTrusted,
+TabChild::RecvHandleAccessKey(const WidgetKeyboardEvent& aEvent,
+                              nsTArray<uint32_t>&& aCharCodes,
                               const int32_t& aModifierMask)
 {
   nsCOMPtr<nsIDocument> document(GetDocument());
@@ -2302,7 +2403,16 @@ TabChild::RecvHandleAccessKey(nsTArray<uint32_t>&& aCharCodes,
   if (presShell) {
     nsPresContext* pc = presShell->GetPresContext();
     if (pc) {
-      pc->EventStateManager()->HandleAccessKey(pc, aCharCodes, aIsTrusted, aModifierMask);
+      if (!pc->EventStateManager()->
+                 HandleAccessKey(&(const_cast<WidgetKeyboardEvent&>(aEvent)),
+                                 pc, aCharCodes,
+                                 aModifierMask, true)) {
+        // If no accesskey was found, inform the parent so that accesskeys on
+        // menus can be handled.
+        WidgetKeyboardEvent localEvent(aEvent);
+        localEvent.mWidget = mPuppetWidget;
+        SendAccessKeyNotHandled(localEvent);
+      }
     }
   }
 
@@ -2341,6 +2451,45 @@ TabChild::RecvSetUseGlobalHistory(const bool& aUse)
     NS_WARNING("Failed to set UseGlobalHistory on TabChild docShell");
   }
 
+  return true;
+}
+
+bool
+TabChild::RecvPrint(const PrintData& aPrintData)
+{
+#ifdef NS_PRINTING
+  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint = do_GetInterface(mWebNav);
+  if (NS_WARN_IF(!webBrowserPrint)) {
+    return true;
+  }
+
+  nsCOMPtr<nsIPrintSettingsService> printSettingsSvc =
+    do_GetService("@mozilla.org/gfx/printsettings-service;1");
+  if (NS_WARN_IF(!printSettingsSvc)) {
+    return true;
+  }
+
+  nsCOMPtr<nsIPrintSettings> printSettings;
+  nsresult rv =
+    printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return true;
+  }
+
+  nsCOMPtr<nsIPrintSession>  printSession =
+    do_CreateInstance("@mozilla.org/gfx/printsession;1", &rv);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return true;
+  }
+
+  printSettings->SetPrintSession(printSession);
+  printSettingsSvc->DeserializeToPrintSettings(aPrintData, printSettings);
+  rv = webBrowserPrint->Print(printSettings, nullptr);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return true;
+  }
+
+#endif
   return true;
 }
 
@@ -2881,7 +3030,7 @@ TabChild::InvalidateLayers()
 void
 TabChild::CompositorUpdated(const TextureFactoryIdentifier& aNewIdentifier)
 {
-  gfxPlatform::GetPlatform()->UpdateRenderModeIfDeviceReset();
+  gfxPlatform::GetPlatform()->CompositorUpdated();
 
   RefPtr<LayerManager> lm = mPuppetWidget->GetLayerManager();
   ClientLayerManager* clm = lm->AsClientLayerManager();

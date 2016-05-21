@@ -11,6 +11,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/Date.h"
 #include "mozilla/dom/Directory.h"
+#include "mozilla/dom/FileSystemUtils.h"
 #include "nsAttrValueInlines.h"
 #include "nsCRTGlue.h"
 
@@ -288,7 +289,18 @@ class HTMLInputElementState final : public nsISupports
         if (aArray[i].IsFile()) {
           BlobImplOrDirectoryPath* data = mBlobImplsOrDirectoryPaths.AppendElement();
 
-          data->mBlobImpl = aArray[i].GetAsFile()->Impl();
+          RefPtr<File> file = aArray[i].GetAsFile();
+
+          nsAutoString name;
+          file->GetName(name);
+
+          nsAutoString path;
+          path.AssignLiteral(FILESYSTEM_DOM_PATH_SEPARATOR_LITERAL);
+          path.Append(name);
+
+          file->SetPath(path);
+
+          data->mBlobImpl = file->Impl();
           data->mType = BlobImplOrDirectoryPath::eBlobImpl;
         } else {
           MOZ_ASSERT(aArray[i].IsDirectory());
@@ -537,10 +549,20 @@ HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
   // event because it will think this is done by a script.
   // So, we can safely send one by ourself.
   mInput->SetFilesOrDirectories(newFilesOrDirectories, true);
-  return nsContentUtils::DispatchTrustedEvent(mInput->OwnerDoc(),
-                                              static_cast<nsIDOMHTMLInputElement*>(mInput.get()),
-                                              NS_LITERAL_STRING("change"), true,
-                                              false);
+
+  nsresult rv = NS_OK;
+  rv = nsContentUtils::DispatchTrustedEvent(mInput->OwnerDoc(),
+                                            static_cast<nsIDOMHTMLInputElement*>(mInput.get()),
+                                            NS_LITERAL_STRING("input"), true,
+                                            false);
+  NS_WARN_IF(NS_FAILED(rv));
+
+  rv = nsContentUtils::DispatchTrustedEvent(mInput->OwnerDoc(),
+                                            static_cast<nsIDOMHTMLInputElement*>(mInput.get()),
+                                            NS_LITERAL_STRING("change"), true,
+                                            false);
+
+  return rv;
 }
 
 NS_IMPL_ISUPPORTS(HTMLInputElement::nsFilePickerShownCallback,
@@ -985,7 +1007,7 @@ HTMLInputElement::HTMLInputElement(already_AddRefed<mozilla::dom::NodeInfo>& aNo
 HTMLInputElement::~HTMLInputElement()
 {
   if (mNumberControlSpinnerIsSpinning) {
-    StopNumberControlSpinnerSpin();
+    StopNumberControlSpinnerSpin(eDisallowDispatchingEvents);
   }
   DestroyImageLoadingContent();
   FreeData();
@@ -1031,7 +1053,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(HTMLInputElement,
   }
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFilesOrDirectories)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFileList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFilesAndDirectoriesPromise)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLInputElement,
@@ -1040,7 +1061,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLInputElement,
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mControllers)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFilesOrDirectories)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFileList)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFilesAndDirectoriesPromise)
   if (tmp->IsSingleLineTextControl(false)) {
     tmp->mInputData.mState->Unlink();
   }
@@ -2661,9 +2681,6 @@ HTMLInputElement::UpdateFileList()
       }
     }
   }
-
-  // Make sure we (lazily) create a new Promise for GetFilesAndDirectories:
-  mFilesAndDirectoriesPromise = nullptr;
 }
 
 nsresult
@@ -3392,7 +3409,8 @@ HTMLInputElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
       }
     } else if (aVisitor.mEvent->mMessage == eKeyUp) {
       WidgetKeyboardEvent* keyEvent = aVisitor.mEvent->AsKeyboardEvent();
-      if ((keyEvent->keyCode == NS_VK_UP || keyEvent->keyCode == NS_VK_DOWN) &&
+      if ((keyEvent->mKeyCode == NS_VK_UP ||
+           keyEvent->mKeyCode == NS_VK_DOWN) &&
           !(keyEvent->IsShift() || keyEvent->IsControl() ||
             keyEvent->IsAlt() || keyEvent->IsMeta() ||
             keyEvent->IsAltGraph() || keyEvent->IsFn() ||
@@ -3561,7 +3579,7 @@ HTMLInputElement::StartNumberControlSpinnerSpin()
 }
 
 void
-HTMLInputElement::StopNumberControlSpinnerSpin()
+HTMLInputElement::StopNumberControlSpinnerSpin(SpinnerStopState aState)
 {
   if (mNumberControlSpinnerIsSpinning) {
     if (nsIPresShell::GetCapturingContent() == this) {
@@ -3572,11 +3590,16 @@ HTMLInputElement::StopNumberControlSpinnerSpin()
 
     mNumberControlSpinnerIsSpinning = false;
 
-    FireChangeEventIfNeeded();
+    if (aState == eAllowDispatchingEvents) {
+      FireChangeEventIfNeeded();
+    }
 
     nsNumberControlFrame* numberControlFrame =
       do_QueryFrame(GetPrimaryFrame());
     if (numberControlFrame) {
+      MOZ_ASSERT(aState == eAllowDispatchingEvents,
+                 "Shouldn't have primary frame for the element when we're not "
+                 "allowed to dispatch events to it anymore.");
       numberControlFrame->SpinnerStateChanged();
     }
   }
@@ -3831,6 +3854,12 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
         DoSetChecked(originalCheckedValue, true, true);
       }
     } else {
+      // Fire input event and then change event.
+      nsContentUtils::DispatchTrustedEvent(OwnerDoc(),
+                                           static_cast<nsIDOMHTMLInputElement*>(this),
+                                           NS_LITERAL_STRING("input"), true,
+                                           false);
+
       nsContentUtils::DispatchTrustedEvent(OwnerDoc(),
                                            static_cast<nsIDOMHTMLInputElement*>(this),
                                            NS_LITERAL_STRING("change"), true,
@@ -3860,7 +3889,7 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
     if (mType ==  NS_FORM_INPUT_NUMBER &&
         keyEvent && keyEvent->mMessage == eKeyPress &&
         aVisitor.mEvent->IsTrusted() &&
-        (keyEvent->keyCode == NS_VK_UP || keyEvent->keyCode == NS_VK_DOWN) &&
+        (keyEvent->mKeyCode == NS_VK_UP || keyEvent->mKeyCode == NS_VK_DOWN) &&
         !(keyEvent->IsShift() || keyEvent->IsControl() ||
           keyEvent->IsAlt() || keyEvent->IsMeta() ||
           keyEvent->IsAltGraph() || keyEvent->IsFn() ||
@@ -3877,7 +3906,7 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
       // just ignore aVisitor.mEventStatus here and go ahead and handle the
       // event to increase/decrease the value of the number control.
       if (!aVisitor.mEvent->DefaultPreventedByContent() && IsMutable()) {
-        StepNumberControlForUserEvent(keyEvent->keyCode == NS_VK_UP ? 1 : -1);
+        StepNumberControlForUserEvent(keyEvent->mKeyCode == NS_VK_UP ? 1 : -1);
         aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
       }
     } else if (nsEventStatus_eIgnore == aVisitor.mEventStatus) {
@@ -3915,15 +3944,15 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
           // space or enter (bug 25300)
           WidgetKeyboardEvent* keyEvent = aVisitor.mEvent->AsKeyboardEvent();
           if ((aVisitor.mEvent->mMessage == eKeyPress &&
-               keyEvent->keyCode == NS_VK_RETURN) ||
+               keyEvent->mKeyCode == NS_VK_RETURN) ||
               (aVisitor.mEvent->mMessage == eKeyUp &&
-               keyEvent->keyCode == NS_VK_SPACE)) {
+               keyEvent->mKeyCode == NS_VK_SPACE)) {
             switch(mType) {
               case NS_FORM_INPUT_CHECKBOX:
               case NS_FORM_INPUT_RADIO:
               {
                 // Checkbox and Radio try to submit on Enter press
-                if (keyEvent->keyCode != NS_VK_SPACE) {
+                if (keyEvent->mKeyCode != NS_VK_SPACE) {
                   MaybeSubmitForm(aVisitor.mPresContext);
 
                   break;  // If we are submitting, do not send click event
@@ -3947,7 +3976,7 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
               mType == NS_FORM_INPUT_RADIO && !keyEvent->IsAlt() &&
               !keyEvent->IsControl() && !keyEvent->IsMeta()) {
             bool isMovingBack = false;
-            switch (keyEvent->keyCode) {
+            switch (keyEvent->mKeyCode) {
               case NS_VK_UP:
               case NS_VK_LEFT:
                 isMovingBack = true;
@@ -3990,7 +4019,7 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
            */
 
           if (aVisitor.mEvent->mMessage == eKeyPress &&
-              keyEvent->keyCode == NS_VK_RETURN &&
+              keyEvent->mKeyCode == NS_VK_RETURN &&
                (IsSingleLineTextControl(false, mType) ||
                 mType == NS_FORM_INPUT_NUMBER ||
                 IsExperimentalMobileType(mType))) {
@@ -4002,14 +4031,14 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
           if (aVisitor.mEvent->mMessage == eKeyPress &&
               mType == NS_FORM_INPUT_RANGE && !keyEvent->IsAlt() &&
               !keyEvent->IsControl() && !keyEvent->IsMeta() &&
-              (keyEvent->keyCode == NS_VK_LEFT ||
-               keyEvent->keyCode == NS_VK_RIGHT ||
-               keyEvent->keyCode == NS_VK_UP ||
-               keyEvent->keyCode == NS_VK_DOWN ||
-               keyEvent->keyCode == NS_VK_PAGE_UP ||
-               keyEvent->keyCode == NS_VK_PAGE_DOWN ||
-               keyEvent->keyCode == NS_VK_HOME ||
-               keyEvent->keyCode == NS_VK_END)) {
+              (keyEvent->mKeyCode == NS_VK_LEFT ||
+               keyEvent->mKeyCode == NS_VK_RIGHT ||
+               keyEvent->mKeyCode == NS_VK_UP ||
+               keyEvent->mKeyCode == NS_VK_DOWN ||
+               keyEvent->mKeyCode == NS_VK_PAGE_UP ||
+               keyEvent->mKeyCode == NS_VK_PAGE_DOWN ||
+               keyEvent->mKeyCode == NS_VK_HOME ||
+               keyEvent->mKeyCode == NS_VK_END)) {
             Decimal minimum = GetMinimum();
             Decimal maximum = GetMaximum();
             MOZ_ASSERT(minimum.isFinite() && maximum.isFinite());
@@ -4021,7 +4050,7 @@ HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor)
               }
               MOZ_ASSERT(value.isFinite() && step.isFinite());
               Decimal newValue;
-              switch (keyEvent->keyCode) {
+              switch (keyEvent->mKeyCode) {
                 case  NS_VK_LEFT:
                   newValue = value + (GetComputedDirectionality() == eDir_RTL
                                         ? step : -step);
@@ -4268,7 +4297,7 @@ HTMLInputElement::PostHandleEventForRangeThumb(EventChainPostVisitor& aVisitor)
 
     case eKeyPress:
       if (mIsDraggingRange &&
-          aVisitor.mEvent->AsKeyboardEvent()->keyCode == NS_VK_ESCAPE) {
+          aVisitor.mEvent->AsKeyboardEvent()->mKeyCode == NS_VK_ESCAPE) {
         CancelRangeThumbDrag();
       }
       break;
@@ -4320,7 +4349,7 @@ HTMLInputElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
       ClearBrokenState();
       RemoveStatesSilently(NS_EVENT_STATE_BROKEN);
       nsContentUtils::AddScriptRunner(
-        NS_NewRunnableMethod(this, &HTMLInputElement::MaybeLoadImage));
+        NewRunnableMethod(this, &HTMLInputElement::MaybeLoadImage));
     }
   }
 
@@ -4991,10 +5020,6 @@ HTMLInputElement::GetFilesAndDirectories(ErrorResult& aRv)
     return nullptr;
   }
 
-  if (mFilesAndDirectoriesPromise) {
-    return RefPtr<Promise>(mFilesAndDirectoriesPromise).forget();
-  }
-
   nsCOMPtr<nsIGlobalObject> global = OwnerDoc()->GetScopeObject();
   MOZ_ASSERT(global);
   if (!global) {
@@ -5035,12 +5060,6 @@ HTMLInputElement::GetFilesAndDirectories(ErrorResult& aRv)
   }
 
   p->MaybeResolve(filesAndDirsSeq);
-
-  // Cache the Promise so that repeat getFilesAndDirectories() calls return
-  // the same Promise and array of File and Directory objects until the user
-  // picks different files/directories:
-  mFilesAndDirectoriesPromise = p;
-
   return p.forget();
 }
 

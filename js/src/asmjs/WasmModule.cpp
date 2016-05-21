@@ -383,7 +383,7 @@ CodeRange::CodeRange(Kind kind, ProfilingOffsets offsets)
 
     MOZ_ASSERT(begin_ < profilingReturn_);
     MOZ_ASSERT(profilingReturn_ < end_);
-    MOZ_ASSERT(u.kind_ == ImportJitExit || u.kind_ == ImportInterpExit || u.kind_ == ErrorExit);
+    MOZ_ASSERT(u.kind_ == ImportJitExit || u.kind_ == ImportInterpExit);
 }
 
 CodeRange::CodeRange(uint32_t funcIndex, uint32_t funcLineOrBytecode, FuncOffsets offsets)
@@ -588,7 +588,7 @@ ModuleData::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const
            codeRanges.sizeOfExcludingThis(mallocSizeOf) +
            callSites.sizeOfExcludingThis(mallocSizeOf) +
            callThunks.sizeOfExcludingThis(mallocSizeOf) +
-           prettyFuncNames.sizeOfExcludingThis(mallocSizeOf) +
+           SizeOfVectorExcludingThis(prettyFuncNames, mallocSizeOf) +
            filename.sizeOfExcludingThis(mallocSizeOf);
 }
 
@@ -818,7 +818,7 @@ Module::setProfilingEnabled(JSContext* cx, bool enabled)
         for (size_t i = 0; i < table.numElems; i++) {
             const CodeRange* codeRange = lookupCodeRange(array[i]);
             // Don't update entries for the BadIndirectCall exit.
-            if (codeRange->isErrorExit())
+            if (codeRange->isInline())
                 continue;
             void* from = code() + codeRange->funcNonProfilingEntry();
             void* to = code() + codeRange->funcProfilingEntry();
@@ -1081,7 +1081,7 @@ Module::staticallyLink(ExclusiveContext* cx, const StaticLinkData& linkData)
         for (size_t i = 0; i < table.elemOffsets.length(); i++) {
             uint8_t* elem = code() + table.elemOffsets[i];
             const CodeRange* codeRange = lookupCodeRange(elem);
-            if (profilingEnabled_ && !codeRange->isErrorExit())
+            if (profilingEnabled_ && !codeRange->isInline())
                 elem = code() + codeRange->funcProfilingEntry();
             array[i] = elem;
         }
@@ -1341,6 +1341,20 @@ Module::callExport(JSContext* cx, uint32_t exportIndex, CallArgs args)
             if (!ToNumber(cx, v, (double*)&coercedArgs[i]))
                 return false;
             break;
+          case ValType::I8x16: {
+            SimdConstant simd;
+            if (!ToSimdConstant<Int8x16>(cx, v, &simd))
+                return false;
+            memcpy(&coercedArgs[i], simd.asInt8x16(), Simd128DataSize);
+            break;
+          }
+          case ValType::I16x8: {
+            SimdConstant simd;
+            if (!ToSimdConstant<Int16x8>(cx, v, &simd))
+                return false;
+            memcpy(&coercedArgs[i], simd.asInt16x8(), Simd128DataSize);
+            break;
+          }
           case ValType::I32x4: {
             SimdConstant simd;
             if (!ToSimdConstant<Int32x4>(cx, v, &simd))
@@ -1353,6 +1367,22 @@ Module::callExport(JSContext* cx, uint32_t exportIndex, CallArgs args)
             if (!ToSimdConstant<Float32x4>(cx, v, &simd))
                 return false;
             memcpy(&coercedArgs[i], simd.asFloat32x4(), Simd128DataSize);
+            break;
+          }
+          case ValType::B8x16: {
+            SimdConstant simd;
+            if (!ToSimdConstant<Bool8x16>(cx, v, &simd))
+                return false;
+            // Bool8x16 uses the same representation as Int8x16.
+            memcpy(&coercedArgs[i], simd.asInt8x16(), Simd128DataSize);
+            break;
+          }
+          case ValType::B16x8: {
+            SimdConstant simd;
+            if (!ToSimdConstant<Bool16x8>(cx, v, &simd))
+                return false;
+            // Bool16x8 uses the same representation as Int16x8.
+            memcpy(&coercedArgs[i], simd.asInt16x8(), Simd128DataSize);
             break;
           }
           case ValType::B32x4: {
@@ -1415,6 +1445,16 @@ Module::callExport(JSContext* cx, uint32_t exportIndex, CallArgs args)
       case ExprType::F64:
         args.rval().set(NumberValue(*(double*)retAddr));
         break;
+      case ExprType::I8x16:
+        retObj = CreateSimd<Int8x16>(cx, (int8_t*)retAddr);
+        if (!retObj)
+            return false;
+        break;
+      case ExprType::I16x8:
+        retObj = CreateSimd<Int16x8>(cx, (int16_t*)retAddr);
+        if (!retObj)
+            return false;
+        break;
       case ExprType::I32x4:
         retObj = CreateSimd<Int32x4>(cx, (int32_t*)retAddr);
         if (!retObj)
@@ -1422,6 +1462,16 @@ Module::callExport(JSContext* cx, uint32_t exportIndex, CallArgs args)
         break;
       case ExprType::F32x4:
         retObj = CreateSimd<Float32x4>(cx, (float*)retAddr);
+        if (!retObj)
+            return false;
+        break;
+      case ExprType::B8x16:
+        retObj = CreateSimd<Bool8x16>(cx, (int8_t*)retAddr);
+        if (!retObj)
+            return false;
+        break;
+      case ExprType::B16x8:
+        retObj = CreateSimd<Bool16x8>(cx, (int16_t*)retAddr);
         if (!retObj)
             return false;
         break;
@@ -1474,8 +1524,12 @@ Module::callImport(JSContext* cx, uint32_t importIndex, unsigned argc, const uin
             hasI64Arg = true;
             break;
           }
+          case ValType::I8x16:
+          case ValType::I16x8:
           case ValType::I32x4:
           case ValType::F32x4:
+          case ValType::B8x16:
+          case ValType::B16x8:
           case ValType::B32x4:
           case ValType::Limit:
             MOZ_CRASH("unhandled type in callImport");
@@ -1537,8 +1591,12 @@ Module::callImport(JSContext* cx, uint32_t importIndex, unsigned argc, const uin
           case ValType::I64:   MOZ_CRASH("can't happen because of above guard");
           case ValType::F32:   type = TypeSet::DoubleType(); break;
           case ValType::F64:   type = TypeSet::DoubleType(); break;
+          case ValType::I8x16: MOZ_CRASH("NYI");
+          case ValType::I16x8: MOZ_CRASH("NYI");
           case ValType::I32x4: MOZ_CRASH("NYI");
           case ValType::F32x4: MOZ_CRASH("NYI");
+          case ValType::B8x16: MOZ_CRASH("NYI");
+          case ValType::B16x8: MOZ_CRASH("NYI");
           case ValType::B32x4: MOZ_CRASH("NYI");
           case ValType::Limit: MOZ_CRASH("Limit");
         }

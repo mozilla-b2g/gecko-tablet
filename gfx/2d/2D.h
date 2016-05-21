@@ -1007,14 +1007,14 @@ public:
                          SourceSurface* aMask,
                          const Matrix& aMaskTransform,
                          const IntRect& aBounds = IntRect(),
-                         bool aCopyBackground = false) { MOZ_CRASH(); }
+                         bool aCopyBackground = false) { MOZ_CRASH("GFX: PushLayer"); }
 
   /**
    * This balances a call to PushLayer and proceeds to blend the layer back
    * onto the background. This blend will blend the temporary surface back
    * onto the target in device space using POINT sampling and operator over.
    */
-  virtual void PopLayer() { MOZ_CRASH(); }
+  virtual void PopLayer() { MOZ_CRASH("GFX: PopLayer"); }
 
   /**
    * Create a SourceSurface optimized for use with this DrawTarget from
@@ -1023,9 +1023,9 @@ public:
    * The SourceSurface does not take ownership of aData, and may be freed at any time.
    */
   virtual already_AddRefed<SourceSurface> CreateSourceSurfaceFromData(unsigned char *aData,
-                                                                  const IntSize &aSize,
-                                                                  int32_t aStride,
-                                                                  SurfaceFormat aFormat) const = 0;
+                                                                      const IntSize &aSize,
+                                                                      int32_t aStride,
+                                                                      SurfaceFormat aFormat) const = 0;
 
   /**
    * Create a SourceSurface optimized for use with this DrawTarget from an
@@ -1179,7 +1179,7 @@ public:
                                  const IntSize &aSize,
                                  SurfaceFormat aFormat)
   {
-    MOZ_CRASH();
+    MOZ_CRASH("GFX: InitWithGrContext");
   }
 #endif
 
@@ -1310,15 +1310,28 @@ public:
   static already_AddRefed<DataSourceSurface>
     CreateDataSourceSurfaceWithStride(const IntSize &aSize, SurfaceFormat aFormat, int32_t aStride, bool aZero = false);
 
+  typedef void (*SourceSurfaceDeallocator)(void* aClosure);
+
   /**
    * This creates a simple data source surface for some existing data. It will
-   * wrap this data and the data for this source surface. The caller is
-   * responsible for deallocating the memory only after destruction of the
-   * surface.
+   * wrap this data and the data for this source surface.
+   *
+   * We can provide a custom destroying function for |aData|. This will be
+   * called in the surface dtor using |aDeallocator| and the |aClosure|. If
+   * there are errors during construction(return a nullptr surface), the caller
+   * is responsible for the deallocation.
+   *
+   * If there is no destroying function, the caller is responsible for
+   * deallocating the aData memory only after destruction of this
+   * DataSourceSurface.
    */
   static already_AddRefed<DataSourceSurface>
-    CreateWrappingDataSourceSurface(uint8_t *aData, int32_t aStride,
-                                    const IntSize &aSize, SurfaceFormat aFormat);
+    CreateWrappingDataSourceSurface(uint8_t *aData,
+                                    int32_t aStride,
+                                    const IntSize &aSize,
+                                    SurfaceFormat aFormat,
+                                    SourceSurfaceDeallocator aDeallocator = nullptr,
+                                    void* aClosure = nullptr);
 
   static void
     CopyDataSourceSurface(DataSourceSurface* aSource,
