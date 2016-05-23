@@ -63,6 +63,12 @@ static RedirEntry kRedirMap[] = {
     nsIAboutModule::ALLOW_SCRIPT
   },
 #endif
+#ifdef MOZ_B2G
+  {
+    "home", "chrome://b2g/content/homescreen/index.html",
+    nsIAboutModule::ALLOW_SCRIPT
+  },
+#endif
   {
     "license", "chrome://global/content/license.html",
     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT
