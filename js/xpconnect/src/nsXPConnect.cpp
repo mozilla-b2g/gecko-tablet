@@ -442,26 +442,14 @@ InitGlobalObjectOptions(JS::CompartmentOptions& aOptions,
     if (isSystem) {
         // Make sure [SecureContext] APIs are visible:
         aOptions.creationOptions().setSecureContext(true);
-    }
 
-    short status = aPrincipal->GetAppStatus();
-
-    // Enable the ECMA-402 experimental formatToParts in certified apps.
-    uint32_t perm = nsIPermissionManager::DENY_ACTION;
-    nsCOMPtr<nsIPermissionManager> permissionManager = services::GetPermissionManager();
-    if (permissionManager) {
-        permissionManager->TestPermissionFromPrincipal(aPrincipal, "previously-certified-app", &perm);
-    }
-
-    if (perm == nsIPermissionManager::ALLOW_ACTION) {
+        // Enable the ECMA-402 experimental formatToParts in any chrome page
         aOptions.creationOptions()
                 .setExperimentalDateTimeFormatFormatToPartsEnabled(true);
     }
 
     if (shouldDiscardSystemSource) {
-        bool discardSource = isSystem ||
-                             (status == nsIPrincipal::APP_STATUS_PRIVILEGED ||
-                              status == nsIPrincipal::APP_STATUS_CERTIFIED);
+        bool discardSource = isSystem;
 
         aOptions.behaviors().setDiscardSource(discardSource);
     }
