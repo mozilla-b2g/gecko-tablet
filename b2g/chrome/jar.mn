@@ -77,17 +77,21 @@ chrome.jar:
   content/system/js/SystemToolbar.js          (content/system/js/SystemToolbar.js)
   content/system/js/WindowManager.js          (content/system/js/WindowManager.js)
 
-# Home Screen
-  content/homescreen/index.html               (content/homescreen/index.html)
-  content/homescreen/js/HomeScreen.js         (content/homescreen/js/HomeScreen.js)
-  content/homescreen/js/Tile.js               (content/homescreen/js/Tile.js)
-  content/homescreen/css/homescreen.css       (content/homescreen/css/homescreen.css)
-  content/homescreen/images/pin-light.png     (content/homescreen/images/pin-light.png)
-  content/homescreen/images/pin-dark.png      (content/homescreen/images/pin-dark.png)
+# Home
+  content/home/home.html                      (content/home/home.html)
+  content/home/js/HomeScreen.js               (content/home/js/HomeScreen.js)
+  content/home/css/homescreen.css             (content/home/css/homescreen.css)
+
+# New Tab
+  content/newtab/newtab.html                  (content/newtab/newtab.html)
+  content/newtab/js/NewTab.js                 (content/newtab/js/NewTab.js)
+  content/newtab/css/newtab.css               (content/newtab/css/newtab.css)
 
 # Shared
   content/shared/js/Places.js                 (content/shared/js/Places.js)
   content/shared/js/Site.js                   (content/shared/js/Site.js)
+  content/shared/js/Tile.js                   (content/shared/js/Tile.js)
+  content/shared/css/tile.css                 (content/shared/css/tile.css)
   content/shared/defaults/sites.json          (content/shared/defaults/sites.json)
   content/shared/defaults/icons/amazon.png    (content/shared/defaults/icons/amazon.png)
   content/shared/defaults/icons/slither.png   (content/shared/defaults/icons/slither.png)
@@ -103,3 +107,5 @@ chrome.jar:
   content/shared/defaults/icons/twitter.png   (content/shared/defaults/icons/twitter.png)
   content/shared/defaults/icons/wikipedia.png (content/shared/defaults/icons/wikipedia.png)
   content/shared/defaults/icons/youtube.png   (content/shared/defaults/icons/youtube.png)
+  content/shared/images/pin-light.png         (content/shared/images/pin-light.png)
+  content/shared/images/pin-dark.png          (content/shared/images/pin-dark.png)
