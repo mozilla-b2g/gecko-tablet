@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this file,
+   - You can obtain one at http://mozilla.org/MPL/2.0/.  -->
+
+<html>
+  <head>
+    <title>New Tab</title>
+    <script type="text/javascript" src="chrome://b2g/content/shared/js/Places.js"></script>
+    <script type="text/javascript" src="chrome://b2g/content/shared/js/Site.js"></script>
+    <script type="text/javascript" src="chrome://b2g/content/shared/js/Tile.js"></script>
+    <script type="text/javascript" src="chrome://b2g/content/newtab/js/NewTab.js"></script>
+    <link rel="stylesheet" href="chrome://b2g/content/newtab/css/newtab.css" type="text/css" />
+    <link rel="stylesheet" href="chrome://b2g/content/shared/css/tile.css" type="text/css" />
+  </head>
+  <body>
+    <ul id="tabs">
+      <li class="active tab" data-panel="top-sites">Top Sites</li>
+      <li class="tab" data-panel="bookmarks">Bookmarks</li>
+      <li class="tab" data-panel="history">History</li>
+      <li class="tab" data-panel="nearby">Nearby</li>
+    </ul>
+    <section id="top-sites" class="active tab-panel">
+      <ul id="top-sites-list"></ul>
+    </section>
+    <section id="bookmarks" class="tab-panel">No bookmarks.</section>
+    <section id="history" class="tab-panel">No history.</section>
+    <section id="nearby" class="tab-panel">Nothing nearby.</section>
+  </body>
+</html>
