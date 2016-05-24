@@ -14,7 +14,7 @@ var HomeScreen = {
    * Start the home screen.
    */
   start: function() {
-    this.topSites = document.getElementById('top-sites');
+    this.topSites = document.getElementById('top-sites-list');
     // Start the Places database
     Places.start().then((function() {
       this.showTopSites();
@@ -36,7 +36,7 @@ var HomeScreen = {
     Places.getPinnedSites().then(function(pinnedSites) {
       pinnedSites.forEach(function(siteObject) {
         pinnedSiteIds.push(siteObject.id);
-        var tile = new Tile(siteObject, true);
+        var tile = new Tile(siteObject, '_blank', true);
       }, this);
     });
     
@@ -44,7 +44,7 @@ var HomeScreen = {
     Places.getTopSites().then((function(topSites) {
       topSites.forEach(function(siteObject) {
         if (pinnedSiteIds.indexOf(siteObject.id) == -1) {
-          var tile = new Tile(siteObject);
+          var tile = new Tile(siteObject, '_blank');
         }
       }, this);
     }).bind(this));

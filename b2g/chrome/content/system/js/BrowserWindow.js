@@ -67,6 +67,8 @@ BrowserWindow.prototype.render = function(url) {
  // Navigate to URL
  if (url) {
   this.frame.src = url;
+ } else {
+  this.frame.src="about:newtab";
  }
 };
 
@@ -110,7 +112,7 @@ BrowserWindow.prototype.destroy = function() {
  */
 BrowserWindow.prototype.handleLocationChange = function(e) {
   var url = e.detail;
-  if (url == 'about:blank') {
+  if (url == 'about:blank' || url =='about:newtab') {
      this.urlBar.focus();
      return;
   }

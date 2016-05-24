@@ -1,0 +1,60 @@
+html {
+  font-size: 10px;
+  height: 100%;
+}
+
+body {
+  background-color: #666;
+  color: #fff;
+  margin: 0;
+  padding:0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+#tabs {
+  display: flex;
+  justify-content: space-between;
+  list-style-type: none;
+  padding: 0 4rem;
+  margin: 0 0 1.5rem 0;
+  border-bottom: solid 0.1rem #444;
+}
+
+#tabs li {
+  font-size: 1.3rem;
+  text-transform: uppercase;
+  display: inline;
+  margin-bottom: -0.1rem;
+  padding: 1rem 1rem 0.5rem 1rem;
+  color: #ccc;
+}
+
+#tabs li.active {
+  border-bottom: solid 0.2rem #ff6600;
+  color: #fff;
+}
+
+section {
+  display: none;
+  font-size: 1.3rem;
+  text-align: center;
+  padding: 1rem;
+  overflow: scroll;
+  flex: 1;
+}
+
+section.active {
+  display: block;
+}
+
+section#top-sites {
+  padding: 0;
+}
+
+#top-sites-list {
+  list-style-type: none;
+  padding: 0 1rem 0 2rem;
+  margin: 0;
+}

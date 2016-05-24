@@ -1,0 +1,11 @@
+html, body {
+  font-size: 10px;
+  padding: 0;
+  margin: 0;
+}
+
+#top-sites-list {
+  list-style-type: none;
+  padding: 0 1rem 0 2rem;
+  margin: 0;
+}

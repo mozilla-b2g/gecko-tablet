@@ -8,12 +8,13 @@
  * Tile Constructor.
  *
  * @param {Object} siteObject A SiteObject representing a site.
+ * @param {String} target Open in current window (_self) or a new one (_blank).
  * @param {Boolean} pinned Whether or not the site is pinned.
  */
-var Tile = function(siteObject, pinned) {
-  this.container = document.getElementById('top-sites');
+var Tile = function(siteObject, target, pinned) {
+  this.container = document.getElementById('top-sites-list');
   this.siteObject = siteObject;
-  this.render(pinned);
+  this.render(target, pinned);
   return this;
 };
 
@@ -38,12 +39,17 @@ Tile.prototype.view = function() {
 /**
  * Render Tile.
  *
+ * @param {String} target Open in current window (_self) or a new one (_blank).
  * @param {Boolean} pinned Whether or not the site is pinned.
  */
-Tile.prototype.render = function(pinned) {
+Tile.prototype.render = function(target, pinned) {
   this.container.insertAdjacentHTML('beforeend', this.view());
   this.element = document.getElementById('tile-' + this.siteObject.id);
-  this.element.addEventListener('click', this.open.bind(this));
+  if (target && target == '_self') {
+    this.element.addEventListener('click', this.navigate.bind(this));
+  } else {
+    this.element.addEventListener('click', this.open.bind(this));
+  }
   if (pinned) {
     this.element.classList.add('pinned');
   }
@@ -55,6 +61,14 @@ Tile.prototype.render = function(pinned) {
 Tile.prototype.open = function() {
   window.open(this.siteObject.startUrl);
   console.log('opening window at ' + this.siteObject.startUrl);
+};
+
+/**
+ * Navigate to site in current window.
+ */
+Tile.prototype.navigate = function() {
+  window.location.href = this.siteObject.startUrl;
+  console.log('navigating to ' + this.siteObject.startUrl);
 };
 
 /**
