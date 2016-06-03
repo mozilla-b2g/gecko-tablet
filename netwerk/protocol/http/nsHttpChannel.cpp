@@ -5205,8 +5205,7 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
 
     LOG(("nsHttpChannel::AsyncOpen [this=%p]\n", this));
 
-    // FIXME: re-enable that assertion
-    // NS_CompareLoadInfoAndLoadContext(this);
+    NS_CompareLoadInfoAndLoadContext(this);
 
     NS_ENSURE_ARG_POINTER(listener);
     NS_ENSURE_TRUE(!mIsPending, NS_ERROR_IN_PROGRESS);

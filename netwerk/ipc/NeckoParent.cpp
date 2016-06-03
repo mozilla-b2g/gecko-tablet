@@ -142,9 +142,7 @@ NeckoParent::GetValidatedAppInfo(const SerializedLoadContext& aSerialized,
   }
 
   if (contextArray.Length() != 0) {
-    // FIXME: bring back that check
-    // return "App does not have permission";
-    return nullptr;
+    return "App does not have permission";
   }
 
   if (!UsingNeckoIPCSecurity()) {
