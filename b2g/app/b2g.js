@@ -917,7 +917,7 @@ pref("gfx.gralloc.fence-with-readpixels", true);
 pref("gfx.screen-mirroring.enabled", true);
 
 // The url of the page used to display network error details.
-pref("b2g.neterror.url", "net_error.html");
+pref("b2g.neterror.url", "chrome://b2g/content/system/net_error.html");
 
 // The origin used for the shared themes uri space.
 pref("b2g.theme.origin", "app://theme.gaiamobile.org");
@@ -1068,7 +1068,7 @@ pref("layers.compositor-lru-size", 10);
 pref("dom.vr.cardboard.enabled", true);
 
 // In B2G by deafult any AudioChannelAgent is muted when created.
-pref("dom.audiochannel.mutedByDefault", true);
+pref("dom.audiochannel.mutedByDefault", false);
 
 // The app origin of bluetooth app, which is responsible for listening pairing
 // requests.
@@ -1097,3 +1097,6 @@ pref("extensions.blocklist.detailsURL", "https://www.mozilla.com/%LOCALE%/blockl
 #ifdef MOZ_GRAPHENE
 #include ../graphene/graphene.js
 #endif
+
+// Project tablet specific!!!
+pref("b2g.system_startup_url", "chrome://b2g/content/system/index.html");
