@@ -31,7 +31,7 @@ BrowserWindow.prototype.view = function() {
     '<button class="menu-button">' +
     '<button id="close-button-' + this.id + '" class="close-button">' +
     '</menu>' +
-    '<iframe id="window-frame-' + this.id + '" mozbrowser remote></iframe>' +
+    '<iframe id="window-frame-' + this.id + '" mozbrowser="true" remote="true"></iframe>' +
     '<div id="window-scrim-' + this.id + '" class="window-scrim"></div>' +
     '</div>';
 };

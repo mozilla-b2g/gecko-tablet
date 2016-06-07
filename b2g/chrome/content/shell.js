@@ -244,10 +244,6 @@ var shell = {
     return Services.prefs.getCharPref('b2g.system_startup_url');
   },
 
-  get manifestURL() {
-    return Services.prefs.getCharPref('b2g.system_manifest_url');
-  },
-
   _started: false,
   hasStarted: function shell_hasStarted() {
     return this._started;
@@ -355,7 +351,6 @@ var shell = {
       return;
     }
 
-    let manifestURL = this.manifestURL;
     // <html:iframe id="systemapp"
     //              mozbrowser="true" allowfullscreen="true"
     //              style="overflow: hidden; height: 100%; width: 100%; border: none;"
@@ -364,7 +359,6 @@ var shell = {
       document.createElementNS('http://www.w3.org/1999/xhtml', 'html:iframe');
     systemAppFrame.setAttribute('id', 'systemapp');
     systemAppFrame.setAttribute('mozbrowser', 'true');
-    systemAppFrame.setAttribute('mozapp', manifestURL);
     systemAppFrame.setAttribute('allowfullscreen', 'true');
     systemAppFrame.setAttribute('src', 'blank.html');
     let container = document.getElementById('container');
