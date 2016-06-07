@@ -5,14 +5,18 @@
 
 <html>
   <head>
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1">
     <meta charset="utf-8">
     <title>B2G System</title>
     <link rel="stylesheet" href="css/shell.css" type="text/css" />
     <script type="text/javascript" src="js/System.js"></script>
     <script type="text/javascript" src="js/StatusBar.js"></script>
+    <script type="text/javascript" src="js/HwButtons.js"></script>
+    <script type="text/javascript" src="js/PowerManager.js"></script>
     <script type="text/javascript" src="js/SystemToolbar.js"></script>
     <script type="text/javascript" src="js/HomeScreen.js"></script>
     <script type="text/javascript" src="js/WindowManager.js"></script>
+    <script type="text/javascript" src="js/SoundManager.js"></script>
     <script type="text/javascript" src="js/BrowserWindow.js"></script>
     <script type="text/javascript" src="../shared/js/Site.js"></script>
     <script type="text/javascript" src="../shared/js/Places.js"></script>
@@ -23,7 +27,7 @@
     </menu>
     <div id="home-screen">
       <input id="search-bar" type="text" placeholder="Search or enter address"></input>
-      <iframe id="home-screen-frame" mozbrowser src="about:home"></iframe>
+      <iframe id="home-screen-frame" mozbrowser="true" remote="true" transparent="true"></iframe>
     </div>
     <div id="windows" class="hidden no-windows">
       <p id="no-windows-message">No open windows</p>

@@ -16,8 +16,8 @@ var StatusBar = {
     this.clock = document.getElementById('clock');
 
     // Set the clock going
-    this.updateClock();
-    window.setInterval(this.updateClock.bind(this), 1000);
+    this.updateClock(true);
+    window.setInterval(this.updateClock.bind(this, false), 1000);
 
     return this;
   },
@@ -25,18 +25,24 @@ var StatusBar = {
   /**
    * Update Clock.
    */
-  updateClock: function() {
+  updateClock: function(initial) {
     var date = new Date(),
-    hours = date.getHours() + '', // get hours as string
-    minutes = date.getMinutes() + ''; // get minutes as string
+        hours = date.getHours() + '', // get hours as string
+        minutes = date.getMinutes() + '', // get minutes as string
+        seconds = date.getSeconds();
 
     // pad with zero if needed
-    if (hours.length < 2)
+    if (hours.length < 2) {
       hours = '0' + hours;
-    if (minutes.length < 2)
+    }
+    if (minutes.length < 2) {
       minutes = '0' + minutes;
+    }
 
-    this.clock.textContent = hours + ':' + minutes;
+    // Only update display when it should change
+    if (initial || seconds === 0) {
+      this.clock.textContent = hours + ':' + minutes;
+    }
   }
 
 };
