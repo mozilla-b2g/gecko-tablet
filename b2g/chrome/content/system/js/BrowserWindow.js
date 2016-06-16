@@ -57,6 +57,9 @@ BrowserWindow.prototype.render = function(url) {
     this.handleLocationChange.bind(this));
  this.frame.addEventListener('mozbrowseropenwindow',
     this.handleOpenWindow.bind(this));
+ this.frame.addEventListener('mozbrowserloadstart',
+    this.handleLoadStart.bind(this));
+ window.addEventListener('_setvolume', this.setVolume.bind(this));
  this.urlBar.addEventListener('focus', this.handleUrlBarFocus.bind(this));
  this.urlBar.addEventListener('blur', this.handleUrlBarBlur.bind(this));
  this.urlBarForm.addEventListener('submit',
@@ -135,6 +138,44 @@ BrowserWindow.prototype.handleOpenWindow = function(e) {
     'detail': e.detail
   }));
 };
+
+BrowserWindow.prototype.handleLoadStart = function(e) {
+  this._audioChannels = {};
+  if (navigator.mozAudioChannelManager) {
+    // navigator.mozAudioChannelManager.volumeControlChannel = 'normal';
+    navigator.mozAudioChannelManager.allowedAudioChannels.forEach(ch => {
+      console.debug("ALLOWED AUDIO CHANNEL: name=", ch.name);
+      ch.onactivestatechanged = ch_evt => {
+        console.debug("AudioChannel activestatechanged: ", ch_evt.name, ch.name);
+      };
+      this._audioChannels[ch.name] = ch;
+      ch.getVolume().then(v => {
+        console.debug("name=", ch.name, "volume=", v);
+        ch.getMuted().then(m => {
+          console.debug("name=", ch.name, "muted=", m);
+          // ch.setVolume(0.2);
+          // ch.setMuted(false);
+          ch.isActive().then(a => {
+            console.debug("name=", ch.name, "active=", a);
+          });
+        });
+      });
+    });
+  }
+};
+
+BrowserWindow.prototype.setVolume = function(e) {
+  if (!e.detail.level) {
+    console.debug('No valid volume level set');
+    return;
+  }
+
+  var level = parseFloat(e.detail.level);
+  Object.keys(this._audioChannels).forEach(ch => {
+    console.debug('Setting', ch, 'to', level);
+    this._audioChannels[ch].setVolume(level);
+  });
+}
 
 /**
  *  Handle focus of URL bar.
