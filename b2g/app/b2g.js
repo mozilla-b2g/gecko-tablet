@@ -1076,7 +1076,7 @@ pref("layers.compositor-lru-size", 10);
 pref("dom.vr.cardboard.enabled", true);
 
 // In B2G by deafult any AudioChannelAgent is muted when created.
-pref("dom.audiochannel.mutedByDefault", false);
+pref("dom.audiochannel.mutedByDefault", true);
 
 // The app origin of bluetooth app, which is responsible for listening pairing
 // requests.
