@@ -49,7 +49,7 @@ var HwButtons = {
 
       case 'volumeup':
       case 'volumedown':
-        if (evt.type === 'mozbrowserbeforekeydown') {
+        if (evt.type === 'mozbrowserbeforekeydown' || evt.type === 'keydown') {
           window.dispatchEvent(new CustomEvent('_' + key));
         }
         break;
