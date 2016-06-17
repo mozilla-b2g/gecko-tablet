@@ -197,6 +197,23 @@ body.task-manager-active .browser-window {
   background-color: #fff;
 }
 
+#keyboard {
+  transition: .3s ease-in-out;
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  bottom: 32px;
+  transform: translateY(100%);
+}
+
+#keyboard.active {
+  transform: translateY(0);
+}
+
+#keyboard iframe {
+  background-color: transparent;
+}
+
 .browser-window .window-scrim {
   display: none;
 }
