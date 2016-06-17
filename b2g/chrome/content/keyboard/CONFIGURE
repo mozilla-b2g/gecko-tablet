@@ -1,0 +1,35 @@
+The keyboard app uses large dictionary files for auto correction and
+word suggestions. If we include all the dictionaries we have, our
+builds become too large. So the keyboard is configured at build time to
+include only the IMEs, layouts, and dictionaries we need for a
+particular build.
+
+Dictionaries files currently only apply for the latin IME and live in
+js/imes/latin/dictionaries, along with the source files (in XML) in
+Android format. There is a Makefile present to convert the source files
+into Firefox OS dictionaries.
+
+At build time we only package the IMEs and dictionaries required by the
+specified keyboard layouts.
+
+We also configure the manifest.webapp file at build time, to add entry
+points for each layout.
+
+Configuration is done with the GAIA_KEYBOARD_LAYOUTS environment
+variable, and there is a default value defined in the Makefile.
+
+All dictionaries associated to layouts included in GAIA_KEYBOARD_LAYOUTS
+will be preloaded into the build. Additional layouts will not be made available
+in the build unless you set these layouts in GAIA_KEYBOARD_DOWNLOADABLE_LAYOUTS
+variable. Layout set in that variable will be offered as downloadable layouts
+in Settings > Built-in Keyboards.
+
+GAIA_KEYBOARD_DOWNLOADABLE_LAYOUTS is default to "noPreloadDictRequired", which
+is the special keyword match all the layout that can be downloaded, layout with
+no dictionary required. The other keyword is "*", which simply packages all of
+the layouts.
+
+The build happens in gaia/build_stage.
+The actual configuration code is in build/layout_configurator.js.
+
+The build tests can offer some clue on configuration and the resulting build.
