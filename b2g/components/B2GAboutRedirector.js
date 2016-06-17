@@ -11,14 +11,6 @@ function debug(msg) {
   //dump("B2GAboutRedirector: " + msg + "\n");
 }
 
-function netErrorURL() {
-  let systemManifestURL = Services.prefs.getCharPref("b2g.system_manifest_url");
-  systemManifestURL = Services.io.newURI(systemManifestURL, null, null);
-  let netErrorURL = Services.prefs.getCharPref("b2g.neterror.url");
-  netErrorURL = Services.io.newURI(netErrorURL, null, systemManifestURL);
-  return netErrorURL.spec;
-}
-
 var modules = {
   certerror: {
     uri: "chrome://b2g/content/aboutCertError.xhtml",
@@ -26,7 +18,7 @@ var modules = {
     hide: true
   },
   neterror: {
-    uri: netErrorURL(),
+    uri: "chrome://b2g/content/system/net_error.html",
     privileged: false,
     hide: true
   }
