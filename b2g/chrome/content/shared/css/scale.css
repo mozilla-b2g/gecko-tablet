@@ -1,0 +1,5 @@
+@media screen and (min-resolution: 1.5dppx) {
+  html, body {
+    font-size: 13.33px;
+  }
+}
