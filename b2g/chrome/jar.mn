@@ -62,6 +62,7 @@ chrome.jar:
 
 # System
   content/system/index.html                   (content/system/index.html)
+  content/system/net_error.html               (content/system/net_error.html)
   content/system/css/shell.css                (content/system/css/shell.css)
   content/system/images/firefox-os-background.png (content/system/images/firefox-os-background.png)
   content/system/images/back-light.png        (content/system/images/back-light.png)
