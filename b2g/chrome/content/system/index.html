@@ -18,6 +18,7 @@
     <script type="text/javascript" src="js/WindowManager.js"></script>
     <script type="text/javascript" src="js/SoundManager.js"></script>
     <script type="text/javascript" src="js/BrowserWindow.js"></script>
+    <script type="text/javascript" src="js/KeyboardManager.js"></script>
     <script type="text/javascript" src="../shared/js/Site.js"></script>
     <script type="text/javascript" src="../shared/js/Places.js"></script>
   </head>
@@ -31,6 +32,11 @@
     </div>
     <div id="windows" class="hidden no-windows">
       <p id="no-windows-message">No open windows</p>
+      <div class="browser-window" id="keyboard">
+        <iframe mozbrowser="true" mozpasspointerevents="true" ignoreuserfocus="true"
+          transparent="true" src="chrome://b2g/content/keyboard/index.html#en" class="browser">
+        </iframe>
+      </div>
     </div>
     <menu type="toolbar" id="system-toolbar">
       <button id="back-button"></button>

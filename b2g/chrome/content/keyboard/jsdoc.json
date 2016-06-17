@@ -1,0 +1,22 @@
+{
+  "name": "keyboard",
+  "tags": {
+    "dictionaries": ["jsdoc"]
+  },
+  "source": {
+    "include": [
+      "!apps/keyboard/js/imes/jspinyin/libpinyin.js",
+      "!apps/keyboard/js/imes/handwriting/hwr/emscripten_zinnia.js",
+      "apps/keyboard/js/**/*.js"
+    ]
+  },
+  "plugins": [
+    "plugins/markdown",
+    "plugins/summarize"
+  ],
+  "opts": {
+    "private": true,
+    "recurse": true,
+    "destination": "docs/keyboard"
+  }
+}
