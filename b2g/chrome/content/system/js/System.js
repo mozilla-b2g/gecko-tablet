@@ -17,6 +17,7 @@ var System = {
     this.homeScreen = HomeScreen.start();
     this.powerManager = PowerManager.start();
     this.hwButtons = HwButtons.start();
+    this.keyboardManager = KeyboardManager.start();
 
     Places.start().then(function() {
       console.log('Started the Places database');
@@ -37,14 +38,6 @@ function startup() {
   };
   window.dispatchEvent(new CustomEvent('mozContentEvent', readyEvent, true));
 }
-
-window.addEventListener('focus', function hasFocus(evt) {
-  console.debug('<<<< SYSTEM APP HAS RECEIVED FOCUS', evt);
-});
-
-window.addEventListener('blur', function hasBlur(evt) {
-  console.debug('>>>> SYSTEM APP HAS LOST FOCUS', evt);
-});
 
 /**
   * Start System on page load.
