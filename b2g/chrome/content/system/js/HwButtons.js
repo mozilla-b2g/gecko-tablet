@@ -47,10 +47,10 @@ var HwButtons = {
         break;
       }
 
-      case 'volumeup':
-      case 'volumedown':
+      case 'audiovolumeup':
+      case 'audiovolumedown':
         if (evt.type === 'mozbrowserbeforekeydown' || evt.type === 'keydown') {
-          window.dispatchEvent(new CustomEvent('_' + key));
+          window.dispatchEvent(new CustomEvent('_' + key.replace("audio", "")));
         }
         break;
 
