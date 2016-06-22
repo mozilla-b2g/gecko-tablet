@@ -87,10 +87,6 @@ function testSteps()
     { url: "http://localhost:82", dbName: "dbW",
       dbOptions: { version: 1, storage: "temporary" } },
 
-    // This one lives in storage/temporary/1007+f+app+++system.gaiamobile.org
-    { appId: 1007, inIsolatedMozBrowser: false, url: "app://system.gaiamobile.org",
-      dbName: "dbX", dbOptions: { version: 1, storage: "temporary" } },
-
     // This one lives in storage/temporary/1007+t+https+++developer.cdn.mozilla.net
     { appId: 1007, inIsolatedMozBrowser: true, url: "https://developer.cdn.mozilla.net",
       dbName: "dbY", dbOptions: { version: 1, storage: "temporary" } },
