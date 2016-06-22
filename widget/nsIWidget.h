@@ -131,6 +131,7 @@ typedef void* nsNativeWidget;
 #endif
 #ifdef MOZ_WIDGET_ANDROID
 #define NS_NATIVE_NEW_EGL_SURFACE      100
+#define NS_JAVA_SURFACE                101
 #endif
 
 #define NS_IWIDGET_IID \
@@ -1960,6 +1961,22 @@ public:
     virtual nsresult OnWindowedPluginKeyEvent(
                        const mozilla::NativeEventData& aKeyEventData,
                        nsIKeyEventInPluginCallback* aCallback);
+
+
+    /**
+     * LookUpDictionary shows the dictionary for the word around current point.
+     *
+     * @param aText            the word to look up dictiorary.
+     * @param aFontRangeArray  text decoration of aText
+     * @param aIsVertical      true if the word is vertical layout
+     * @param aPoint           top-left point of aText
+     */
+    virtual void LookUpDictionary(
+                   const nsAString& aText,
+                   const nsTArray<mozilla::FontRange>& aFontRangeArray,
+                   const bool aIsVertical,
+                   const LayoutDeviceIntPoint& aPoint)
+    { }
 
 protected:
     /**

@@ -373,7 +373,8 @@ static bool
 HasValidOffsets(const nsTArray<Keyframe>& aKeyframes);
 
 static void
-BuildSegmentsFromValueEntries(nsTArray<KeyframeValueEntry>& aEntries,
+BuildSegmentsFromValueEntries(nsStyleContext* aStyleContext,
+                              nsTArray<KeyframeValueEntry>& aEntries,
                               nsTArray<AnimationProperty>& aResult);
 
 static void
@@ -550,7 +551,7 @@ KeyframeUtils::GetAnimationPropertiesFromKeyframes(
   }
 
   nsTArray<AnimationProperty> result;
-  BuildSegmentsFromValueEntries(entries, result);
+  BuildSegmentsFromValueEntries(aStyleContext, entries, result);
 
   return result;
 }
@@ -908,12 +909,43 @@ HasValidOffsets(const nsTArray<Keyframe>& aKeyframes)
   return true;
 }
 
+static already_AddRefed<nsStyleContext>
+CreateStyleContextForAnimationValue(nsCSSProperty aProperty,
+                                    StyleAnimationValue aValue,
+                                    nsStyleContext* aBaseStyleContext)
+{
+  MOZ_ASSERT(aBaseStyleContext,
+             "CreateStyleContextForAnimationValue needs to be called "
+             "with a valid nsStyleContext");
+
+  RefPtr<AnimValuesStyleRule> styleRule = new AnimValuesStyleRule();
+  styleRule->AddValue(aProperty, aValue);
+
+  nsCOMArray<nsIStyleRule> rules;
+  rules.AppendObject(styleRule);
+
+  MOZ_ASSERT(aBaseStyleContext->PresContext()->StyleSet()->IsGecko(),
+             "ServoStyleSet should not use StyleAnimationValue for animations");
+  nsStyleSet* styleSet =
+    aBaseStyleContext->PresContext()->StyleSet()->AsGecko();
+
+  RefPtr<nsStyleContext> styleContext =
+    styleSet->ResolveStyleByAddingRules(aBaseStyleContext, rules);
+
+  // We need to call StyleData to generate cached data for the style context.
+  // Otherwise CalcStyleDifference returns no meaningful result.
+  styleContext->StyleData(nsCSSProps::kSIDTable[aProperty]);
+
+  return styleContext.forget();
+}
+
 /**
  * Builds an array of AnimationProperty objects to represent the keyframe
  * animation segments in aEntries.
  */
 static void
-BuildSegmentsFromValueEntries(nsTArray<KeyframeValueEntry>& aEntries,
+BuildSegmentsFromValueEntries(nsStyleContext* aStyleContext,
+                              nsTArray<KeyframeValueEntry>& aEntries,
                               nsTArray<AnimationProperty>& aResult)
 {
   if (aEntries.IsEmpty()) {
@@ -924,9 +956,6 @@ BuildSegmentsFromValueEntries(nsTArray<KeyframeValueEntry>& aEntries,
   // property are together, and the entries are sorted by offset otherwise.
   std::stable_sort(aEntries.begin(), aEntries.end(),
                    &KeyframeValueEntry::PropertyOffsetComparator::LessThan);
-
-  MOZ_ASSERT(aEntries[0].mOffset == 0.0f);
-  MOZ_ASSERT(aEntries.LastElement().mOffset == 1.0f);
 
   // For a given index i, we want to generate a segment from aEntries[i]
   // to aEntries[j], if:
@@ -942,13 +971,56 @@ BuildSegmentsFromValueEntries(nsTArray<KeyframeValueEntry>& aEntries,
   // offset 1, if we have multiple values for a given property at that offset,
   // since we need to retain the very first and very last value so they can
   // be used for reverse and forward filling.
+  //
+  // Typically, for each property in |aEntries|, we expect there to be at least
+  // one KeyframeValueEntry with offset 0.0, and at least one with offset 1.0.
+  // However, since it is possible that when building |aEntries|, the call to
+  // StyleAnimationValue::ComputeValues might fail, this can't be guaranteed.
+  // Furthermore, since we don't yet implement additive animation and hence
+  // don't have sensible fallback behavior when these values are missing, the
+  // following loop takes care to identify properties that lack a value at
+  // offset 0.0/1.0 and drops those properties from |aResult|.
 
   nsCSSProperty lastProperty = eCSSProperty_UNKNOWN;
   AnimationProperty* animationProperty = nullptr;
 
   size_t i = 0, n = aEntries.Length();
 
-  while (i + 1 < n) {
+  while (i < n) {
+    // Check that the last property ends with an entry at offset 1.
+    if (i + 1 == n) {
+      if (aEntries[i].mOffset != 1.0f && animationProperty) {
+        aResult.RemoveElementAt(aResult.Length() - 1);
+        animationProperty = nullptr;
+      }
+      break;
+    }
+
+    MOZ_ASSERT(aEntries[i].mProperty != eCSSProperty_UNKNOWN &&
+               aEntries[i + 1].mProperty != eCSSProperty_UNKNOWN,
+               "Each entry should specify a valid property");
+
+    // Skip properties that don't have an entry with offset 0.
+    if (aEntries[i].mProperty != lastProperty &&
+        aEntries[i].mOffset != 0.0f) {
+      // Since the entries are sorted by offset for a given property, and
+      // since we don't update |lastProperty|, we will keep hitting this
+      // condition until we change property.
+      ++i;
+      continue;
+    }
+
+    // Drop properties that don't end with an entry with offset 1.
+    if (aEntries[i].mProperty != aEntries[i + 1].mProperty &&
+        aEntries[i].mOffset != 1.0f) {
+      if (animationProperty) {
+        aResult.RemoveElementAt(aResult.Length() - 1);
+        animationProperty = nullptr;
+      }
+      ++i;
+      continue;
+    }
+
     // Starting from i, determine the next [i, j] interval from which to
     // generate a segment.
     size_t j;
@@ -956,23 +1028,24 @@ BuildSegmentsFromValueEntries(nsTArray<KeyframeValueEntry>& aEntries,
       // We need to generate an initial zero-length segment.
       MOZ_ASSERT(aEntries[i].mProperty == aEntries[i + 1].mProperty);
       j = i + 1;
-      while (aEntries[j + 1].mOffset == 0.0f) {
-        MOZ_ASSERT(aEntries[j].mProperty == aEntries[j + 1].mProperty);
+      while (aEntries[j + 1].mOffset == 0.0f &&
+             aEntries[j + 1].mProperty == aEntries[j].mProperty) {
         ++j;
       }
     } else if (aEntries[i].mOffset == 1.0f) {
-      if (aEntries[i + 1].mOffset == 1.0f) {
+      if (aEntries[i + 1].mOffset == 1.0f &&
+          aEntries[i + 1].mProperty == aEntries[i].mProperty) {
         // We need to generate a final zero-length segment.
-        MOZ_ASSERT(aEntries[i].mProperty == aEntries[i].mProperty);
         j = i + 1;
-        while (j + 1 < n && aEntries[j + 1].mOffset == 1.0f) {
-          MOZ_ASSERT(aEntries[j].mProperty == aEntries[j + 1].mProperty);
+        while (j + 1 < n &&
+               aEntries[j + 1].mOffset == 1.0f &&
+               aEntries[j + 1].mProperty == aEntries[j].mProperty) {
           ++j;
         }
       } else {
         // New property.
-        MOZ_ASSERT(aEntries[i + 1].mOffset == 0.0f);
         MOZ_ASSERT(aEntries[i].mProperty != aEntries[i + 1].mProperty);
+        animationProperty = nullptr;
         ++i;
         continue;
       }
@@ -988,6 +1061,7 @@ BuildSegmentsFromValueEntries(nsTArray<KeyframeValueEntry>& aEntries,
     // to insert segments into.
     if (aEntries[i].mProperty != lastProperty) {
       MOZ_ASSERT(aEntries[i].mOffset == 0.0f);
+      MOZ_ASSERT(!animationProperty);
       animationProperty = aResult.AppendElement();
       animationProperty->mProperty = aEntries[i].mProperty;
       lastProperty = aEntries[i].mProperty;
@@ -1003,6 +1077,22 @@ BuildSegmentsFromValueEntries(nsTArray<KeyframeValueEntry>& aEntries,
     segment->mFromValue = aEntries[i].mValue;
     segment->mToValue   = aEntries[j].mValue;
     segment->mTimingFunction = aEntries[i].mTimingFunction;
+
+    RefPtr<nsStyleContext> fromContext =
+      CreateStyleContextForAnimationValue(animationProperty->mProperty,
+                                          segment->mFromValue, aStyleContext);
+
+    RefPtr<nsStyleContext> toContext =
+      CreateStyleContextForAnimationValue(animationProperty->mProperty,
+                                          segment->mToValue, aStyleContext);
+
+    uint32_t equalStructs = 0;
+    uint32_t samePointerStructs = 0;
+    segment->mChangeHint =
+        fromContext->CalcStyleDifference(toContext,
+          nsChangeHint(0),
+          &equalStructs,
+          &samePointerStructs);
 
     i = j;
   }

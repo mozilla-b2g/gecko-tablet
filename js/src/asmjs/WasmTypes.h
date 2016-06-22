@@ -23,6 +23,8 @@
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Move.h"
+#include "mozilla/RefCounted.h"
+#include "mozilla/RefPtr.h"
 
 #include "NamespaceImports.h"
 
@@ -36,6 +38,7 @@
 namespace js {
 
 class PropertyName;
+namespace jit { struct BaselineScript; }
 
 namespace wasm {
 
@@ -44,8 +47,45 @@ using mozilla::EnumeratedArray;
 using mozilla::Maybe;
 using mozilla::Move;
 using mozilla::MallocSizeOf;
+using mozilla::PodZero;
+using mozilla::PodCopy;
+using mozilla::RefCounted;
 
 typedef Vector<uint32_t, 0, SystemAllocPolicy> Uint32Vector;
+
+// To call Vector::podResizeToFit, a type must specialize mozilla::IsPod
+// which is pretty verbose to do within js::wasm, so factor that process out
+// into a macro.
+
+#define WASM_DECLARE_POD_VECTOR(Type, VectorName)                               \
+} } namespace mozilla {                                                         \
+template <> struct IsPod<js::wasm::Type> : TrueType {};                         \
+} namespace js { namespace wasm {                                               \
+typedef Vector<Type, 0, SystemAllocPolicy> VectorName;
+
+// A wasm Module and everything it contains must support serialization and
+// deserialization. Some data can be simply copied as raw bytes and,
+// as a convention, is stored in an inline CacheablePod struct. Everything else
+// should implement the below methods which are called recusively by the
+// containing Module.
+
+#define WASM_DECLARE_SERIALIZABLE(Type)                                         \
+    size_t serializedSize() const;                                              \
+    uint8_t* serialize(uint8_t* cursor) const;                                  \
+    const uint8_t* deserialize(ExclusiveContext* cx, const uint8_t* cursor);    \
+    size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+
+#define WASM_DECLARE_SERIALIZABLE_VIRTUAL(Type)                                 \
+    virtual size_t serializedSize() const;                                      \
+    virtual uint8_t* serialize(uint8_t* cursor) const;                          \
+    virtual const uint8_t* deserialize(ExclusiveContext* cx, const uint8_t* cursor);\
+    virtual size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+
+#define WASM_DECLARE_SERIALIZABLE_OVERRIDE(Type)                                \
+    size_t serializedSize() const override;                                     \
+    uint8_t* serialize(uint8_t* cursor) const override;                         \
+    const uint8_t* deserialize(ExclusiveContext* cx, const uint8_t* cursor) override;\
+    size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const override;
 
 // ValType/ExprType utilities
 
@@ -269,7 +309,9 @@ class Val
         MOZ_ASSERT(type_ == ValType::I32x4 || type_ == ValType::B32x4);
         memcpy(u.i32x4_, i32x4, sizeof(u.i32x4_));
     }
-    explicit Val(const F32x4& f32x4) : type_(ValType::F32x4) { memcpy(u.f32x4_, f32x4, sizeof(u.f32x4_)); }
+    explicit Val(const F32x4& f32x4) : type_(ValType::F32x4) {
+        memcpy(u.f32x4_, f32x4, sizeof(u.f32x4_));
+    }
 
     ValType type() const { return type_; }
     bool isSimd() const { return IsSimdType(type()); }
@@ -278,6 +320,7 @@ class Val
     uint64_t i64() const { MOZ_ASSERT(type_ == ValType::I64); return u.i64_; }
     float f32() const { MOZ_ASSERT(type_ == ValType::F32); return u.f32_; }
     double f64() const { MOZ_ASSERT(type_ == ValType::F64); return u.f64_; }
+
     const I8x16& i8x16() const {
         MOZ_ASSERT(type_ == ValType::I8x16 || type_ == ValType::B8x16);
         return u.i8x16_;
@@ -290,7 +333,12 @@ class Val
         MOZ_ASSERT(type_ == ValType::I32x4 || type_ == ValType::B32x4);
         return u.i32x4_;
     }
-    const F32x4& f32x4() const { MOZ_ASSERT(type_ == ValType::F32x4); return u.f32x4_; }
+    const F32x4& f32x4() const {
+        MOZ_ASSERT(type_ == ValType::F32x4);
+        return u.f32x4_;
+    }
+
+    void writePayload(uint8_t* dst);
 };
 
 // The Sig class represents a WebAssembly function signature which takes a list
@@ -424,14 +472,21 @@ struct ProfilingOffsets : Offsets
 
 struct FuncOffsets : ProfilingOffsets
 {
-    MOZ_IMPLICIT FuncOffsets(uint32_t nonProfilingEntry = 0,
-                             uint32_t profilingJump = 0,
-                             uint32_t profilingEpilogue = 0)
+    MOZ_IMPLICIT FuncOffsets()
       : ProfilingOffsets(),
-        nonProfilingEntry(nonProfilingEntry),
-        profilingJump(profilingJump),
-        profilingEpilogue(profilingEpilogue)
+        tableEntry(0),
+        tableProfilingJump(0),
+        nonProfilingEntry(0),
+        profilingJump(0),
+        profilingEpilogue(0)
     {}
+
+    // Function CodeRanges have a table entry which takes an extra signature
+    // argument which is checked against the callee's signature before falling
+    // through to the normal prologue. When profiling is enabled, a nop on the
+    // fallthrough is patched to instead jump to the profiling epilogue.
+    uint32_t tableEntry;
+    uint32_t tableProfilingJump;
 
     // Function CodeRanges have an additional non-profiling entry that comes
     // after the profiling entry and a non-profiling epilogue that comes before
@@ -445,6 +500,8 @@ struct FuncOffsets : ProfilingOffsets
 
     void offsetBy(uint32_t offset) {
         ProfilingOffsets::offsetBy(offset);
+        tableEntry += offset;
+        tableProfilingJump += offset;
         nonProfilingEntry += offset;
         profilingJump += offset;
         profilingEpilogue += offset;
@@ -504,6 +561,8 @@ class CallSite : public CallSiteDesc
     uint32_t stackDepth() const { return stackDepth_; }
 };
 
+WASM_DECLARE_POD_VECTOR(CallSite, CallSiteVector)
+
 class CallSiteAndTarget : public CallSite
 {
     uint32_t targetIndex_;
@@ -519,17 +578,25 @@ class CallSiteAndTarget : public CallSite
     uint32_t targetIndex() const { MOZ_ASSERT(isInternal()); return targetIndex_; }
 };
 
-} // namespace wasm
-} // namespace js
-namespace mozilla {
-template <> struct IsPod<js::wasm::CallSite>          : TrueType {};
-template <> struct IsPod<js::wasm::CallSiteAndTarget> : TrueType {};
-}
-namespace js {
-namespace wasm {
-
-typedef Vector<CallSite, 0, SystemAllocPolicy> CallSiteVector;
 typedef Vector<CallSiteAndTarget, 0, SystemAllocPolicy> CallSiteAndTargetVector;
+
+// Metadata for a bounds check that may need patching later.
+
+class BoundsCheck
+{
+  public:
+    BoundsCheck() = default;
+
+    explicit BoundsCheck(uint32_t cmpOffset)
+      : cmpOffset_(cmpOffset)
+    { }
+
+    uint8_t* patchAt(uint8_t* code) const { return code + cmpOffset_; }
+    void offsetBy(uint32_t offset) { cmpOffset_ += offset; }
+
+  private:
+    uint32_t cmpOffset_; // absolute offset of the comparison
+};
 
 // Summarizes a heap access made by wasm code that needs to be patched later
 // and/or looked up by the wasm signal handlers. Different architectures need
@@ -537,108 +604,70 @@ typedef Vector<CallSiteAndTarget, 0, SystemAllocPolicy> CallSiteAndTargetVector;
 // heap length, x86: where to patch in heap length and base).
 
 #if defined(JS_CODEGEN_X86)
-class HeapAccess
+class MemoryAccess
 {
-    uint32_t insnOffset_;
-    uint8_t opLength_;  // the length of the load/store instruction
-    uint8_t cmpDelta_;  // the number of bytes from the cmp to the load/store instruction
+    uint32_t nextInsOffset_;
 
   public:
-    HeapAccess() = default;
-    static const uint32_t NoLengthCheck = UINT32_MAX;
+    MemoryAccess() = default;
 
-    // If 'cmp' equals 'insnOffset' or if it is not supplied then the
-    // cmpDelta_ is zero indicating that there is no length to patch.
-    HeapAccess(uint32_t insnOffset, uint32_t after, uint32_t cmp = NoLengthCheck) {
-        mozilla::PodZero(this);  // zero padding for Valgrind
-        insnOffset_ = insnOffset;
-        opLength_ = after - insnOffset;
-        cmpDelta_ = cmp == NoLengthCheck ? 0 : insnOffset - cmp;
-    }
+    explicit MemoryAccess(uint32_t nextInsOffset)
+      : nextInsOffset_(nextInsOffset)
+    { }
 
-    uint32_t insnOffset() const { return insnOffset_; }
-    void setInsnOffset(uint32_t insnOffset) { insnOffset_ = insnOffset; }
-    void offsetInsnOffsetBy(uint32_t offset) { insnOffset_ += offset; }
-    void* patchHeapPtrImmAt(uint8_t* code) const { return code + (insnOffset_ + opLength_); }
-    bool hasLengthCheck() const { return cmpDelta_ > 0; }
-    void* patchLengthAt(uint8_t* code) const {
-        MOZ_ASSERT(hasLengthCheck());
-        return code + (insnOffset_ - cmpDelta_);
-    }
+    void* patchHeapPtrImmAt(uint8_t* code) const { return code + nextInsOffset_; }
+    void offsetBy(uint32_t offset) { nextInsOffset_ += offset; }
 };
 #elif defined(JS_CODEGEN_X64)
-class HeapAccess
+class MemoryAccess
 {
-  public:
-    enum WhatToDoOnOOB {
-        CarryOn, // loads return undefined, stores do nothing.
-        Throw    // throw a RangeError
-    };
-
-  private:
     uint32_t insnOffset_;
     uint8_t offsetWithinWholeSimdVector_; // if is this e.g. the Z of an XYZ
     bool throwOnOOB_;                     // should we throw on OOB?
-    uint8_t cmpDelta_;                    // the number of bytes from the cmp to the load/store instruction
+    bool wrapOffset_;                     // should we wrap the offset on OOB?
 
   public:
-    HeapAccess() = default;
-    static const uint32_t NoLengthCheck = UINT32_MAX;
+    enum OutOfBoundsBehavior {
+        Throw,
+        CarryOn,
+    };
+    enum WrappingBehavior {
+        WrapOffset,
+        DontWrapOffset,
+    };
 
-    // If 'cmp' equals 'insnOffset' or if it is not supplied then the
-    // cmpDelta_ is zero indicating that there is no length to patch.
-    HeapAccess(uint32_t insnOffset, WhatToDoOnOOB oob,
-               uint32_t cmp = NoLengthCheck,
-               uint32_t offsetWithinWholeSimdVector = 0)
+    MemoryAccess() = default;
+
+    MemoryAccess(uint32_t insnOffset, OutOfBoundsBehavior onOOB, WrappingBehavior onWrap,
+                 uint32_t offsetWithinWholeSimdVector = 0)
+      : insnOffset_(insnOffset),
+        offsetWithinWholeSimdVector_(offsetWithinWholeSimdVector),
+        throwOnOOB_(onOOB == OutOfBoundsBehavior::Throw),
+        wrapOffset_(onWrap == WrappingBehavior::WrapOffset)
     {
-        mozilla::PodZero(this);  // zero padding for Valgrind
-        insnOffset_ = insnOffset;
-        offsetWithinWholeSimdVector_ = offsetWithinWholeSimdVector;
-        throwOnOOB_ = oob == Throw;
-        cmpDelta_ = cmp == NoLengthCheck ? 0 : insnOffset - cmp;
-        MOZ_ASSERT(offsetWithinWholeSimdVector_ == offsetWithinWholeSimdVector);
+        MOZ_ASSERT(offsetWithinWholeSimdVector_ == offsetWithinWholeSimdVector, "fits in uint8");
     }
 
     uint32_t insnOffset() const { return insnOffset_; }
-    void setInsnOffset(uint32_t insnOffset) { insnOffset_ = insnOffset; }
-    void offsetInsnOffsetBy(uint32_t offset) { insnOffset_ += offset; }
-    bool throwOnOOB() const { return throwOnOOB_; }
     uint32_t offsetWithinWholeSimdVector() const { return offsetWithinWholeSimdVector_; }
-    bool hasLengthCheck() const { return cmpDelta_ > 0; }
-    void* patchLengthAt(uint8_t* code) const {
-        MOZ_ASSERT(hasLengthCheck());
-        return code + (insnOffset_ - cmpDelta_);
-    }
+    bool throwOnOOB() const { return throwOnOOB_; }
+    bool wrapOffset() const { return wrapOffset_; }
+
+    void offsetBy(uint32_t offset) { insnOffset_ += offset; }
 };
 #elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
-      defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
-class HeapAccess
-{
-    uint32_t insnOffset_;
+      defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
+      defined(JS_CODEGEN_NONE)
+// Nothing! We just want bounds checks on these platforms.
+class MemoryAccess {
   public:
-    HeapAccess() = default;
-    explicit HeapAccess(uint32_t insnOffset) : insnOffset_(insnOffset) {}
-    uint32_t insnOffset() const { return insnOffset_; }
-    void setInsnOffset(uint32_t insnOffset) { insnOffset_ = insnOffset; }
-    void offsetInsnOffsetBy(uint32_t offset) { insnOffset_ += offset; }
-};
-#elif defined(JS_CODEGEN_NONE)
-class HeapAccess {
-  public:
-    void offsetInsnOffsetBy(uint32_t) { MOZ_CRASH(); }
+    void offsetBy(uint32_t) { MOZ_CRASH(); }
     uint32_t insnOffset() const { MOZ_CRASH(); }
 };
 #endif
 
-} // namespace wasm
-} // namespace js
-namespace mozilla {
-template <> struct IsPod<js::wasm::HeapAccess> : TrueType {};
-}
-namespace js {
-namespace wasm {
-
-typedef Vector<HeapAccess, 0, SystemAllocPolicy> HeapAccessVector;
+WASM_DECLARE_POD_VECTOR(MemoryAccess, MemoryAccessVector)
+WASM_DECLARE_POD_VECTOR(BoundsCheck, BoundsCheckVector)
 
 // A wasm::SymbolicAddress represents a pointer to a well-known function or
 // object that is embedded in wasm code. Since wasm code is serialized and
@@ -672,6 +701,10 @@ enum class SymbolicAddress
     CeilF,
     FloorD,
     FloorF,
+    TruncD,
+    TruncF,
+    NearbyIntD,
+    NearbyIntF,
     ExpD,
     LogD,
     PowD,
@@ -682,10 +715,10 @@ enum class SymbolicAddress
     ReportOverRecursed,
     HandleExecutionInterrupt,
     HandleTrap,
-    InvokeImport_Void,
-    InvokeImport_I32,
-    InvokeImport_I64,
-    InvokeImport_F64,
+    CallImport_Void,
+    CallImport_I32,
+    CallImport_I64,
+    CallImport_F64,
     CoerceInPlace_ToInt32,
     CoerceInPlace_ToNumber,
     Limit
@@ -693,10 +726,6 @@ enum class SymbolicAddress
 
 void*
 AddressOf(SymbolicAddress imm, ExclusiveContext* cx);
-
-// Extracts low and high from an int64 object {low: int32, high: int32}, for
-// testing purposes mainly.
-MOZ_MUST_USE bool ReadI64Object(JSContext* cx, HandleValue v, int64_t* val);
 
 // A wasm::Trap is a reason for why we reached a trap in executed code. Each
 // different trap is mapped to a different error message.
@@ -769,6 +798,29 @@ enum ModuleKind
     AsmJS
 };
 
+// ImportExit describes the region of wasm global memory allocated for an
+// import. This is accessed directly from JIT code and mutated by Instance as
+// exits become optimized and deoptimized.
+
+struct ImportExit
+{
+    void* code;
+    jit::BaselineScript* baselineScript;
+    GCPtrFunction fun;
+    static_assert(sizeof(GCPtrFunction) == sizeof(void*), "for JIT access");
+};
+
+// ExportArg holds the unboxed operands to the wasm entry trampoline which can
+// be called through an ExportFuncPtr.
+
+struct ExportArg
+{
+    uint64_t lo;
+    uint64_t hi;
+};
+
+typedef int32_t (*ExportFuncPtr)(ExportArg* args, uint8_t* global);
+
 // Constants:
 
 static const unsigned ActivationGlobalDataOffset = 0;
@@ -782,6 +834,7 @@ static const unsigned MaxFuncs                   =      512 * 1024;
 static const unsigned MaxLocals                  =       64 * 1024;
 static const unsigned MaxImports                 =       64 * 1024;
 static const unsigned MaxExports                 =       64 * 1024;
+static const unsigned MaxTables                  =        4 * 1024;
 static const unsigned MaxTableElems              =      128 * 1024;
 static const unsigned MaxArgsPerFunc             =        4 * 1024;
 static const unsigned MaxBrTableElems            = 4 * 1024 * 1024;

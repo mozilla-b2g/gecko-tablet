@@ -110,8 +110,6 @@ These should match what Safari and other Apple applications use on OS X Lion. --
 <!ENTITY fxaSignedIn.tooltip "Open &syncBrand.shortName.label; preferences">
 <!ENTITY fxaSignInError.label "Reconnect to &syncBrand.shortName.label;">
 <!ENTITY fxaUnverified.label "Verify Your Account">
-<!ENTITY syncStartPanel2.heading "&syncBrand.shortName.label; enabled">
-<!ENTITY syncStartPanel2.subTitle "&brandShortName; will begin syncing momentarily.">
 
 
 <!ENTITY fullScreenMinimize.tooltip "Minimize">
@@ -459,7 +457,7 @@ These should match what Safari and other Apple applications use on OS X Lion. --
 <!ENTITY openFrameCmd.label           "Open Frame in New Window">
 <!ENTITY openFrameCmd.accesskey       "W">
 <!ENTITY openLinkCmdInContainerTab.label "Open Link in New Container Tab">
-<!ENTITY openLinkCmdInContainerTab.accesskey "C">
+<!ENTITY openLinkCmdInContainerTab.accesskey "z">
 <!ENTITY showOnlyThisFrameCmd.label     "Show Only This Frame">
 <!ENTITY showOnlyThisFrameCmd.accesskey "S">
 <!ENTITY reloadCmd.commandkey         "r">
@@ -682,7 +680,7 @@ you can use these alternative items. Otherwise, their values should be empty.  -
 <!ENTITY identity.connectionSecure "Secure Connection">
 <!ENTITY identity.connectionNotSecure "Connection is Not Secure">
 <!ENTITY identity.connectionFile "This page is stored on your computer.">
-<!ENTITY identity.connectionVerified1 "You are securely connected to this site, run by:">
+<!ENTITY identity.connectionVerified2 "You are securely connected to this site, owned by:">
 <!ENTITY identity.connectionInternal "This is a secure &brandShortName; page.">
 <!ENTITY identity.insecureLoginForms2 "Logins entered on this page could be compromised.">
 

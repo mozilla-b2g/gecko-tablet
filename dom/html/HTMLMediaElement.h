@@ -6,6 +6,7 @@
 #ifndef mozilla_dom_HTMLMediaElement_h
 #define mozilla_dom_HTMLMediaElement_h
 
+#include "nsAutoPtr.h"
 #include "nsIDOMHTMLMediaElement.h"
 #include "nsGenericHTMLElement.h"
 #include "MediaDecoderOwner.h"
@@ -38,6 +39,7 @@
 typedef uint16_t nsMediaNetworkState;
 typedef uint16_t nsMediaReadyState;
 typedef uint32_t SuspendTypes;
+typedef uint32_t AudibleChangedReasons;
 
 namespace mozilla {
 class DecoderDoctorDiagnostics;
@@ -453,7 +455,7 @@ public:
   virtual void SetAudibleState(bool aAudible) final override;
 
   // Notify agent when the MediaElement changes its audible state.
-  void NotifyAudioPlaybackChanged();
+  void NotifyAudioPlaybackChanged(AudibleChangedReasons aReason);
 
   // XPCOM GetPreload() is OK
   void SetPreload(const nsAString& aValue, ErrorResult& aRv)
@@ -479,6 +481,8 @@ public:
   void SetCurrentTime(double aCurrentTime, ErrorResult& aRv);
 
   void FastSeek(double aTime, ErrorResult& aRv);
+
+  already_AddRefed<Promise> SeekToNextFrame(ErrorResult& aRv);
 
   double Duration() const;
 
@@ -692,9 +696,19 @@ public:
     }
   }
 
-  void AddCue(TextTrackCue& aCue) {
+  void NotifyCueAdded(TextTrackCue& aCue) {
     if (mTextTrackManager) {
-      mTextTrackManager->AddCue(aCue);
+      mTextTrackManager->NotifyCueAdded(aCue);
+    }
+  }
+  void NotifyCueRemoved(TextTrackCue& aCue) {
+    if (mTextTrackManager) {
+      mTextTrackManager->NotifyCueRemoved(aCue);
+    }
+  }
+  void NotifyCueUpdated(TextTrackCue *aCue) {
+    if (mTextTrackManager) {
+      mTextTrackManager->NotifyCueUpdated(aCue);
     }
   }
 
@@ -732,9 +746,6 @@ protected:
     MOZ_ASSERT(aDecoder); // Use ShutdownDecoder() to clear.
     mDecoder = aDecoder;
   }
-
-  virtual void GetItemValueText(DOMString& text) override;
-  virtual void SetItemValueText(const nsAString& text) override;
 
   class WakeLockBoolWrapper {
   public:
@@ -1114,7 +1125,7 @@ protected:
   // seek target, or PrevSyncPoint if a quicker but less precise seek is
   // desired, and we'll seek to the sync point (keyframe and/or start of the
   // next block of audio samples) preceeding seek target.
-  void Seek(double aTime, SeekTarget::Type aSeekType, ErrorResult& aRv);
+  already_AddRefed<Promise> Seek(double aTime, SeekTarget::Type aSeekType, ErrorResult& aRv);
 
   // A method to check if we are playing through the AudioChannel.
   bool IsPlayingThroughTheAudioChannel() const;
@@ -1175,6 +1186,8 @@ protected:
   void SetAudioChannelSuspended(SuspendTypes aSuspend);
 
   bool IsAllowedToPlay();
+
+  bool IsAudible() const;
 
   class nsAsyncEventRunner;
   using nsGenericHTMLElement::DispatchEvent;
@@ -1607,8 +1620,11 @@ private:
   // be seeked even before the media is loaded.
   double mDefaultPlaybackStartPosition;
 
-  // True if the audio track is producing audible sound.
+  // True if the audio track is not silent.
   bool mIsAudioTrackAudible;
+
+  // True if media element is audible for users.
+  bool mAudible;
 };
 
 } // namespace dom

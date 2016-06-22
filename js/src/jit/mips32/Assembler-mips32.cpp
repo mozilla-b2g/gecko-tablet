@@ -73,12 +73,6 @@ ABIArgGenerator::next(MIRType type)
     return current_;
 }
 
-const Register ABIArgGenerator::NonArgReturnReg0 = t0;
-const Register ABIArgGenerator::NonArgReturnReg1 = t1;
-const Register ABIArgGenerator::NonArg_VolatileReg = v0;
-const Register ABIArgGenerator::NonReturn_VolatileReg0 = a0;
-const Register ABIArgGenerator::NonReturn_VolatileReg1 = a1;
-
 uint32_t
 js::jit::RT(FloatRegister r)
 {
@@ -455,11 +449,12 @@ Assembler::ToggleCall(CodeLocationLabel inst_, bool enabled)
 }
 
 void
-Assembler::UpdateBoundsCheck(uint32_t heapSize, Instruction* inst)
+Assembler::UpdateBoundsCheck(uint8_t* patchAt, uint32_t heapLength)
 {
+    Instruction* inst = (Instruction*) patchAt;
     InstImm* i0 = (InstImm*) inst;
     InstImm* i1 = (InstImm*) i0->next();
 
     // Replace with new value
-    Assembler::UpdateLuiOriValue(i0, i1, heapSize);
+    Assembler::UpdateLuiOriValue(i0, i1, heapLength);
 }

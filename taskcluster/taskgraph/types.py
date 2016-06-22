@@ -29,7 +29,6 @@ class Task(object):
         self.task = task or {}
         self.extra = extra
 
-        self.optimization_key = None
         self.task_id = None
 
         if not (all(isinstance(x, basestring) for x in self.attributes.iterkeys()) and
@@ -53,6 +52,24 @@ class TaskGraph(object):
         assert set(tasks) == graph.nodes
         self.tasks = tasks
         self.graph = graph
+
+    def to_json(self):
+        "Return a JSON-able object representing the task graph, as documented"
+        named_links_dict = self.graph.named_links_dict()
+        # this dictionary may be keyed by label or by taskid, so let's just call it 'key'
+        tasks = {}
+        for key in self.graph.visit_postorder():
+            task = self.tasks[key]
+            task_json = {
+                'label': task.label,
+                'attributes': task.attributes,
+                'dependencies': named_links_dict.get(key, {}),
+                'task': task.task
+            }
+            if task.task_id:
+                task_json['task_id'] = task.task_id
+            tasks[key] = task_json
+        return tasks
 
     def __getitem__(self, label):
         "Get a task by label"

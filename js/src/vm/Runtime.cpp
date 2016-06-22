@@ -41,6 +41,7 @@
 #include "jswrapper.h"
 
 #include "asmjs/WasmSignalHandlers.h"
+#include "builtin/Promise.h"
 #include "jit/arm/Simulator-arm.h"
 #include "jit/arm64/vixl/Simulator-vixl.h"
 #include "jit/JitCompartment.h"
@@ -133,6 +134,9 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     jitActivation(nullptr),
     jitStackLimit_(0xbad),
     jitStackLimitNoInterrupt_(0xbad),
+#ifdef DEBUG
+    ionBailAfter_(0),
+#endif
     activation_(nullptr),
     profilingActivation_(nullptr),
     profilerSampleBufferGen_(0),
@@ -154,6 +158,8 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     interruptCallback(nullptr),
     enqueuePromiseJobCallback(nullptr),
     enqueuePromiseJobCallbackData(nullptr),
+    promiseRejectionTrackerCallback(nullptr),
+    promiseRejectionTrackerCallbackData(nullptr),
 #ifdef DEBUG
     exclusiveAccessOwner(nullptr),
     mainThreadHasExclusiveAccess(false),
@@ -169,7 +175,6 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     jitRuntime_(nullptr),
     selfHostingGlobal_(nullptr),
     nativeStackBase(GetNativeStackBase()),
-    cxCallback(nullptr),
     destroyCompartmentCallback(nullptr),
     sizeOfIncludingThisCompartmentCallback(nullptr),
     destroyZoneCallback(nullptr),
@@ -211,7 +216,7 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
     DOMcallbacks(nullptr),
     destroyPrincipals(nullptr),
     readPrincipals(nullptr),
-    errorReporter(nullptr),
+    warningReporter(nullptr),
     buildIdOp(nullptr),
     propertyRemovals(0),
 #if !EXPOSE_INTL_API
@@ -431,17 +436,14 @@ JSRuntime::~JSRuntime()
 
     MOZ_ASSERT(!exclusiveAccessOwner);
 
-    // Avoid bogus asserts during teardown.
     MOZ_ASSERT(!numExclusiveThreads);
-#ifdef DEBUG
-    mainThreadHasExclusiveAccess = true;
-#endif
+    AutoLockForExclusiveAccess lock(this);
 
     /*
      * Even though all objects in the compartment are dead, we may have keep
      * some filenames around because of gcKeepAtoms.
      */
-    FreeScriptData(this);
+    FreeScriptData(this, lock);
 
 #ifdef DEBUG
     /* Don't hurt everyone in leaky ol' Mozilla with a fatal MOZ_ASSERT! */
@@ -526,7 +528,7 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
 
     rtSizes->object += mallocSizeOf(this);
 
-    rtSizes->atomsTable += atoms().sizeOfIncludingThis(mallocSizeOf);
+    rtSizes->atomsTable += atoms(lock).sizeOfIncludingThis(mallocSizeOf);
 
     if (!parentRuntime) {
         rtSizes->atomsTable += mallocSizeOf(staticStrings);
@@ -550,8 +552,8 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
 
     rtSizes->uncompressedSourceCache += uncompressedSourceCache.sizeOfExcludingThis(mallocSizeOf);
 
-    rtSizes->scriptData += scriptDataTable().sizeOfExcludingThis(mallocSizeOf);
-    for (ScriptDataTable::Range r = scriptDataTable().all(); !r.empty(); r.popFront())
+    rtSizes->scriptData += scriptDataTable(lock).sizeOfExcludingThis(mallocSizeOf);
+    for (ScriptDataTable::Range r = scriptDataTable(lock).all(); !r.empty(); r.popFront())
         rtSizes->scriptData += mallocSizeOf(r.front());
 
     if (jitRuntime_) {
@@ -589,7 +591,10 @@ InvokeInterruptCallback(JSContext* cx)
         // invoke the onStep handler.
         if (cx->compartment()->isDebuggee()) {
             ScriptFrameIter iter(cx);
-            if (!iter.done() && iter.script()->stepModeEnabled()) {
+            if (!iter.done() &&
+                cx->compartment() == iter.compartment() &&
+                iter.script()->stepModeEnabled())
+            {
                 RootedValue rval(cx);
                 switch (Debugger::onSingleStep(cx, &rval)) {
                   case JSTRAP_ERROR:
@@ -771,13 +776,40 @@ FreeOp::~FreeOp()
 }
 
 bool
-JSRuntime::enqueuePromiseJob(JSContext* cx, HandleFunction job)
+JSRuntime::enqueuePromiseJob(JSContext* cx, HandleFunction job, HandleObject promise)
 {
     MOZ_ASSERT(cx->runtime()->enqueuePromiseJobCallback,
                "Must set a callback using JS_SetEnqeueuPromiseJobCallback before using Promises");
 
     void* data = cx->runtime()->enqueuePromiseJobCallbackData;
-    return cx->runtime()->enqueuePromiseJobCallback(cx, job, data);
+    RootedObject allocationSite(cx);
+    if (promise)
+        allocationSite = JS::GetPromiseAllocationSite(promise);
+    return cx->runtime()->enqueuePromiseJobCallback(cx, job, allocationSite, data);
+}
+
+void
+JSRuntime::addUnhandledRejectedPromise(JSContext* cx, js::HandleObject promise)
+{
+    MOZ_ASSERT(promise->is<PromiseObject>());
+    if (!cx->runtime()->promiseRejectionTrackerCallback)
+        return;
+
+    void* data = cx->runtime()->promiseRejectionTrackerCallbackData;
+    cx->runtime()->promiseRejectionTrackerCallback(cx, promise,
+                                                   PromiseRejectionHandlingState::Unhandled, data);
+}
+
+void
+JSRuntime::removeUnhandledRejectedPromise(JSContext* cx, js::HandleObject promise)
+{
+    MOZ_ASSERT(promise->is<PromiseObject>());
+    if (!cx->runtime()->promiseRejectionTrackerCallback)
+        return;
+
+    void* data = cx->runtime()->promiseRejectionTrackerCallbackData;
+    cx->runtime()->promiseRejectionTrackerCallback(cx, promise,
+                                                   PromiseRejectionHandlingState::Handled, data);
 }
 
 void

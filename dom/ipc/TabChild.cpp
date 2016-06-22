@@ -59,6 +59,7 @@
 #endif
 #include "nsFilePickerProxy.h"
 #include "mozilla/dom/Element.h"
+#include "nsGlobalWindow.h"
 #include "nsIBaseWindow.h"
 #include "nsIBrowserDOMWindow.h"
 #include "nsICachedFileDescriptorListener.h"
@@ -811,6 +812,8 @@ TabChild::Init()
   baseWindow->InitWindow(0, mPuppetWidget, 0, 0, 0, 0);
   baseWindow->Create();
 
+  // Set the tab context attributes then pass to docShell
+  SetPrivateBrowsingAttributes(mChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW);
   NotifyTabContextUpdated();
 
   // IPC uses a WebBrowser object for which DNS prefetching is turned off
@@ -850,6 +853,13 @@ TabChild::Init()
   nsCOMPtr<EventTarget> chromeHandler =
     do_QueryInterface(window->GetChromeEventHandler());
   docShell->SetChromeEventHandler(chromeHandler);
+
+  window->SetKeyboardIndicators(ShowAccelerators(), ShowFocusRings());
+
+  // Set prerender flag if necessary.
+  if (mIsPrerendered) {
+    docShell->SetIsPrerendered();
+  }
 
   nsContentUtils::SetScrollbarsVisibility(window->GetDocShell(),
     !!(mChromeFlags & nsIWebBrowserChrome::CHROME_SCROLLBARS));
@@ -1549,7 +1559,9 @@ TabChild::ApplyShowInfo(const ShowInfo& aInfo)
             NS_LITERAL_CSTRING("mozprivatebrowsing"),
             nullptr);
         } else {
-          context->SetUsePrivateBrowsing(true);
+          DocShellOriginAttributes attrs(nsDocShell::Cast(docShell)->GetOriginAttributes());
+          attrs.SyncAttributesWithPrivateBrowsing(true);
+          nsDocShell::Cast(docShell)->SetOriginAttributes(attrs);
         }
       }
     }
@@ -1687,7 +1699,7 @@ TabChild::RecvUpdateDimensions(const CSSRect& rect, const CSSSize& size,
     // size from the content viewer when it computes a new CSS viewport.
     nsCOMPtr<nsIBaseWindow> baseWin = do_QueryInterface(WebNavigation());
     baseWin->SetPositionAndSize(0, 0, screenSize.width, screenSize.height,
-                                true);
+                                nsIBaseWindow::eRepaint);
 
     mPuppetWidget->Resize(screenRect.x + clientOffset.x + chromeDisp.x,
                           screenRect.y + clientOffset.y + chromeDisp.y,
@@ -1850,6 +1862,16 @@ bool TabChild::RecvParentActivated(const bool& aActivated)
   return true;
 }
 
+bool TabChild::RecvSetKeyboardIndicators(const UIStateChangeType& aShowAccelerators,
+                                         const UIStateChangeType& aShowFocusRings)
+{
+  nsCOMPtr<nsPIDOMWindowOuter> window = do_GetInterface(WebNavigation());
+  NS_ENSURE_TRUE(window, true);
+
+  window->SetKeyboardIndicators(aShowAccelerators, aShowFocusRings);
+  return true;
+}
+
 bool
 TabChild::RecvStopIMEStateManagement()
 {
@@ -1899,6 +1921,18 @@ TabChild::RecvRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
                                    const ScrollableLayerGuid& aGuid,
                                    const uint64_t& aInputBlockId)
 {
+  // Mouse events like eMouseEnterIntoWidget, that are created in the parent
+  // process EventStateManager code, have an input block id which they get from
+  // the InputAPZContext in the parent process stack. However, they did not
+  // actually go through the APZ code and so their mHandledByAPZ flag is false.
+  // Since thos events didn't go through APZ, we don't need to send notifications
+  // for them.
+  if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
+    nsCOMPtr<nsIDocument> document(GetDocument());
+    APZCCallbackHelper::SendSetTargetAPZCNotification(
+      mPuppetWidget, document, aEvent, aGuid, aInputBlockId);
+  }
+
   nsEventStatus unused;
   InputAPZContext context(aGuid, aInputBlockId, unused);
 
@@ -1908,7 +1942,7 @@ TabChild::RecvRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
       mPuppetWidget->GetDefaultScale());
   APZCCallbackHelper::DispatchWidgetEvent(localEvent);
 
-  if (aEvent.mFlags.mHandledByAPZ) {
+  if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
     mAPZEventState->ProcessMouseEvent(aEvent, aGuid, aInputBlockId);
   }
   return true;
@@ -1919,7 +1953,7 @@ TabChild::RecvMouseWheelEvent(const WidgetWheelEvent& aEvent,
                               const ScrollableLayerGuid& aGuid,
                               const uint64_t& aInputBlockId)
 {
-  if (aEvent.mFlags.mHandledByAPZ) {
+  if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
     nsCOMPtr<nsIDocument> document(GetDocument());
     APZCCallbackHelper::SendSetTargetAPZCNotification(
       mPuppetWidget, document, aEvent, aGuid, aInputBlockId);
@@ -1935,7 +1969,7 @@ TabChild::RecvMouseWheelEvent(const WidgetWheelEvent& aEvent,
     SendRespondStartSwipeEvent(aInputBlockId, localEvent.TriggersSwipe());
   }
 
-  if (aEvent.mFlags.mHandledByAPZ) {
+  if (aInputBlockId && aEvent.mFlags.mHandledByAPZ) {
     mAPZEventState->ProcessWheelEvent(localEvent, aGuid, aInputBlockId);
   }
   return true;
@@ -2455,10 +2489,17 @@ TabChild::RecvSetUseGlobalHistory(const bool& aUse)
 }
 
 bool
-TabChild::RecvPrint(const PrintData& aPrintData)
+TabChild::RecvPrint(const uint64_t& aOuterWindowID, const PrintData& aPrintData)
 {
 #ifdef NS_PRINTING
-  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint = do_GetInterface(mWebNav);
+  nsGlobalWindow* outerWindow =
+    nsGlobalWindow::GetOuterWindowWithId(aOuterWindowID);
+  if (NS_WARN_IF(!outerWindow)) {
+    return true;
+  }
+
+  nsCOMPtr<nsIWebBrowserPrint> webBrowserPrint =
+    do_GetInterface(outerWindow->AsOuter());
   if (NS_WARN_IF(!webBrowserPrint)) {
     return true;
   }
@@ -2572,6 +2613,8 @@ TabChild::RecvSetUpdateHitRegion(const bool& aEnabled)
 bool
 TabChild::RecvSetDocShellIsActive(const bool& aIsActive, const bool& aIsHidden)
 {
+    // docshell is consider prerendered only if not active yet
+    mIsPrerendered &= !aIsActive;
     nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
     if (docShell) {
       if (aIsHidden) {
@@ -2883,7 +2926,6 @@ TabChild::EnableDisableCommands(const nsAString& aAction,
                                            aEnabledCommands, aDisabledCommands);
 }
 
-
 NS_IMETHODIMP
 TabChild::GetTabId(uint64_t* aId)
 {
@@ -3095,7 +3137,7 @@ TabChild::RecvUIResolutionChanged(const float& aDpi, const double& aScale)
 
     nsCOMPtr<nsIBaseWindow> baseWin = do_QueryInterface(WebNavigation());
     baseWin->SetPositionAndSize(0, 0, screenSize.width, screenSize.height,
-                                true);
+                                nsIBaseWindow::eRepaint);
   }
 
   return true;

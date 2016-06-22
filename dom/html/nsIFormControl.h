@@ -11,18 +11,17 @@
 
 class nsIDOMHTMLFormElement;
 class nsPresState;
-class nsFormSubmission;
 
 namespace mozilla {
 namespace dom {
 class Element;
 class HTMLFieldSetElement;
+class HTMLFormSubmission;
 } // namespace dom
 } // namespace mozilla
 
 enum FormControlsTypes {
   NS_FORM_FIELDSET = 1,
-  NS_FORM_LABEL,
   NS_FORM_OUTPUT,
   NS_FORM_SELECT,
   NS_FORM_TEXTAREA,
@@ -142,7 +141,8 @@ public:
    * @param aFormSubmission the form submission to notify of names/values/files
    *                       to submit
    */
-  NS_IMETHOD SubmitNamesValues(nsFormSubmission* aFormSubmission) = 0;
+  NS_IMETHOD
+  SubmitNamesValues(mozilla::dom::HTMLFormSubmission* aFormSubmission) = 0;
 
   /**
    * Save to presentation state.  The form control will determine whether it
@@ -287,7 +287,6 @@ nsIFormControl::AllowDraggableChildren() const
 {
   uint32_t type = GetType();
   return type == NS_FORM_OBJECT ||
-         type == NS_FORM_LABEL ||
          type == NS_FORM_FIELDSET ||
          type == NS_FORM_OUTPUT;
 }

@@ -222,11 +222,11 @@ defineLazyGetter(exports.modules, "CSS", () => {
   return sandbox.CSS;
 });
 
-defineLazyGetter(exports.modules, "URL", () => {
+defineLazyGetter(exports.modules, "FileReader", () => {
   let sandbox
     = Cu.Sandbox(CC("@mozilla.org/systemprincipal;1", "nsIPrincipal")(),
-                 {wantGlobalProperties: ["URL"]});
-  return sandbox.URL;
+                 {wantGlobalProperties: ["FileReader"]});
+  return sandbox.FileReader;
 });
 
 // List of all custom globals exposed to devtools modules.
@@ -287,3 +287,10 @@ defineLazyGetter(globals, "clearInterval", () => {
 defineLazyGetter(globals, "setInterval", () => {
   return Cu.import("resource://gre/modules/Timer.jsm", {}).setInterval;
 });
+defineLazyGetter(globals, "URL", () => {
+  let sandbox
+    = Cu.Sandbox(CC("@mozilla.org/systemprincipal;1", "nsIPrincipal")(),
+                 {wantGlobalProperties: ["URL"]});
+  return sandbox.URL;
+});
+defineLazyGetter(globals, "CSSRule", () => Ci.nsIDOMCSSRule);

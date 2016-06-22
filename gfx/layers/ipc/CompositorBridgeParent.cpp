@@ -588,7 +588,8 @@ CompositorBridgeParent::CompositorBridgeParent(widget::CompositorWidgetProxy* aW
                                                bool aUseAPZ,
                                                bool aUseExternalSurfaceSize,
                                                int aSurfaceWidth, int aSurfaceHeight)
-  : mWidgetProxy(aWidget)
+  : CompositorBridgeParentIPCAllocator("CompositorBridgeParent")
+  , mWidgetProxy(aWidget)
   , mIsTesting(false)
   , mPendingTransaction(0)
   , mPaused(false)
@@ -611,7 +612,6 @@ CompositorBridgeParent::CompositorBridgeParent(widget::CompositorWidgetProxy* aW
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(CompositorThread(),
              "The compositor thread must be Initialized before instanciating a CompositorBridgeParent.");
-  MOZ_COUNT_CTOR(CompositorBridgeParent);
 
   // Always run destructor on the main thread
   SetMessageLoopToPostDestructionTo(MessageLoop::current());
@@ -652,7 +652,6 @@ CompositorBridgeParent::RootLayerTreeId()
 CompositorBridgeParent::~CompositorBridgeParent()
 {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_COUNT_DTOR(CompositorBridgeParent);
 
   InfallibleTArray<PTextureParent*> textures;
   ManagedPTextureParent(textures);
@@ -1043,15 +1042,18 @@ CompositorBridgeParent::ScheduleTask(already_AddRefed<CancelableRunnable> task, 
 void
 CompositorBridgeParent::NotifyShadowTreeTransaction(uint64_t aId, bool aIsFirstPaint,
     bool aScheduleComposite, uint32_t aPaintSequenceNumber,
-    bool aIsRepeatTransaction)
+    bool aIsRepeatTransaction, bool aHitTestUpdate)
 {
   if (mApzcTreeManager &&
       !aIsRepeatTransaction &&
       mLayerManager &&
       mLayerManager->GetRoot()) {
     AutoResolveRefLayers resolve(mCompositionManager);
-    mApzcTreeManager->UpdateHitTestingTree(this, mLayerManager->GetRoot(),
-        aIsFirstPaint, aId, aPaintSequenceNumber);
+
+    if (aHitTestUpdate) {
+      mApzcTreeManager->UpdateHitTestingTree(this, mLayerManager->GetRoot(),
+          aIsFirstPaint, aId, aPaintSequenceNumber);
+    }
 
     mLayerManager->NotifyShadowTreeTransaction();
   }
@@ -1290,7 +1292,8 @@ CompositorBridgeParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
                                             bool aScheduleComposite,
                                             uint32_t aPaintSequenceNumber,
                                             bool aIsRepeatTransaction,
-                                            int32_t aPaintSyncId)
+                                            int32_t aPaintSyncId,
+                                            bool aHitTestUpdate)
 {
   ScheduleRotationOnCompositorThread(aTargetConfig, aIsFirstPaint);
 
@@ -1305,8 +1308,9 @@ CompositorBridgeParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
   Layer* root = aLayerTree->GetRoot();
   mLayerManager->SetRoot(root);
 
-  if (mApzcTreeManager && !aIsRepeatTransaction) {
+  if (mApzcTreeManager && !aIsRepeatTransaction && aHitTestUpdate) {
     AutoResolveRefLayers resolve(mCompositionManager);
+
     mApzcTreeManager->UpdateHitTestingTree(this, root, aIsFirstPaint,
         mRootLayerTreeID, aPaintSequenceNumber);
   }
@@ -1738,7 +1742,7 @@ CompositorBridgeParent::SetControllerForLayerTree(uint64_t aLayersId,
                                                  aController));
 }
 
-/*static*/ APZCTreeManager*
+/*static*/ already_AddRefed<APZCTreeManager>
 CompositorBridgeParent::GetAPZCTreeManager(uint64_t aLayersId)
 {
   EnsureLayerTreeMapReady();
@@ -1748,7 +1752,11 @@ CompositorBridgeParent::GetAPZCTreeManager(uint64_t aLayersId)
     return nullptr;
   }
   LayerTreeState* lts = &cit->second;
-  return (lts->mParent ? lts->mParent->mApzcTreeManager.get() : nullptr);
+
+  RefPtr<APZCTreeManager> apzctm = lts->mParent
+                                   ? lts->mParent->mApzcTreeManager.get()
+                                   : nullptr;
+  return apzctm.forget();
 }
 
 float
@@ -1806,14 +1814,15 @@ CompositorBridgeParent::RequestNotifyLayerTreeCleared(uint64_t aLayersId, Compos
  */
 class CrossProcessCompositorBridgeParent final : public PCompositorBridgeParent,
                                                  public ShadowLayersManager,
-                                                 public HostIPCAllocator,
+                                                 public CompositorBridgeParentIPCAllocator,
                                                  public ShmemAllocator
 {
   friend class CompositorBridgeParent;
 
 public:
   explicit CrossProcessCompositorBridgeParent(Transport* aTransport)
-    : mTransport(aTransport)
+    : CompositorBridgeParentIPCAllocator("CrossProcessCompositorBridgeParent")
+    , mTransport(aTransport)
     , mSubprocess(nullptr)
     , mNotifyAfterRemotePaint(false)
     , mDestroyCalled(false)
@@ -1920,7 +1929,8 @@ public:
                                    bool aScheduleComposite,
                                    uint32_t aPaintSequenceNumber,
                                    bool aIsRepeatTransaction,
-                                   int32_t /*aPaintSyncId: unused*/) override;
+                                   int32_t /*aPaintSyncId: unused*/,
+                                   bool aHitTestUpdate) override;
   virtual void ForceComposite(LayerTransactionParent* aLayerTree) override;
   virtual void NotifyClearCachedResources(LayerTransactionParent* aLayerTree) override;
   virtual bool SetTestSampleTime(LayerTransactionParent* aLayerTree,
@@ -1946,7 +1956,8 @@ public:
   virtual PTextureParent* AllocPTextureParent(const SurfaceDescriptor& aSharedData,
                                               const LayersBackend& aLayersBackend,
                                               const TextureFlags& aFlags,
-                                              const uint64_t& aId) override;
+                                              const uint64_t& aId,
+                                              const uint64_t& aSerial) override;
 
   virtual bool DeallocPTextureParent(PTextureParent* actor) override;
 
@@ -1968,6 +1979,13 @@ public:
   {
     return OtherPid();
   }
+
+  virtual void SendAsyncMessage(const InfallibleTArray<AsyncParentMessageData>& aMessage) override
+  {
+    Unused << SendParentAsyncMessages(aMessage);
+  }
+
+  virtual CompositorBridgeParentIPCAllocator* AsCompositorBridgeParentIPCAllocator() override { return this; }
 
 protected:
   void OnChannelConnected(int32_t pid) override {
@@ -2188,9 +2206,10 @@ PTextureParent*
 CompositorBridgeParent::AllocPTextureParent(const SurfaceDescriptor& aSharedData,
                                             const LayersBackend& aLayersBackend,
                                             const TextureFlags& aFlags,
-                                            const uint64_t& aId)
+                                            const uint64_t& aId,
+                                            const uint64_t& aSerial)
 {
-  return TextureHost::CreateIPDLActor(this, aSharedData, aLayersBackend, aFlags);
+  return TextureHost::CreateIPDLActor(this, aSharedData, aLayersBackend, aFlags, aSerial);
 }
 
 bool
@@ -2219,6 +2238,12 @@ void
 CompositorBridgeParent::DeallocShmem(ipc::Shmem& aShmem)
 {
   PCompositorBridgeParent::DeallocShmem(aShmem);
+}
+
+void
+CompositorBridgeParent::SendAsyncMessage(const InfallibleTArray<AsyncParentMessageData>& aMessage)
+{
+  Unused << SendParentAsyncMessages(aMessage);
 }
 
 bool
@@ -2338,7 +2363,8 @@ CrossProcessCompositorBridgeParent::ShadowLayersUpdated(
   bool aScheduleComposite,
   uint32_t aPaintSequenceNumber,
   bool aIsRepeatTransaction,
-  int32_t /*aPaintSyncId: unused*/)
+  int32_t /*aPaintSyncId: unused*/,
+  bool aHitTestUpdate)
 {
   uint64_t id = aLayerTree->GetId();
 
@@ -2363,7 +2389,7 @@ CrossProcessCompositorBridgeParent::ShadowLayersUpdated(
   state->mUpdatedPluginDataAvailable = true;
 
   state->mParent->NotifyShadowTreeTransaction(id, aIsFirstPaint, aScheduleComposite,
-      aPaintSequenceNumber, aIsRepeatTransaction);
+      aPaintSequenceNumber, aIsRepeatTransaction, aHitTestUpdate);
 
   // Send the 'remote paint ready' message to the content thread if it has already asked.
   if(mNotifyAfterRemotePaint)  {
@@ -2752,7 +2778,8 @@ PTextureParent*
 CrossProcessCompositorBridgeParent::AllocPTextureParent(const SurfaceDescriptor& aSharedData,
                                                         const LayersBackend& aLayersBackend,
                                                         const TextureFlags& aFlags,
-                                                        const uint64_t& aId)
+                                                        const uint64_t& aId,
+                                                        const uint64_t& aSerial)
 {
   CompositorBridgeParent::LayerTreeState* state = nullptr;
 
@@ -2775,7 +2802,7 @@ CrossProcessCompositorBridgeParent::AllocPTextureParent(const SurfaceDescriptor&
     gfxDevCrash(gfx::LogReason::PAllocTextureBackendMismatch) << "Texture backend is wrong";
   }
 
-  return TextureHost::CreateIPDLActor(this, aSharedData, aLayersBackend, aFlags);
+  return TextureHost::CreateIPDLActor(this, aSharedData, aLayersBackend, aFlags, aSerial);
 }
 
 bool

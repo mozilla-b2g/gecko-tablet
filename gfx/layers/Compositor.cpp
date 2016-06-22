@@ -7,6 +7,8 @@
 #include "base/message_loop.h"          // for MessageLoop
 #include "mozilla/layers/CompositorBridgeParent.h"  // for CompositorBridgeParent
 #include "mozilla/layers/Effects.h"     // for Effect, EffectChain, etc
+#include "mozilla/layers/TextureClient.h"
+#include "mozilla/layers/TextureHost.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/mozalloc.h"           // for operator delete, etc
 #include "gfx2DGlue.h"
@@ -22,6 +24,60 @@
 namespace mozilla {
 
 namespace layers {
+
+Compositor::Compositor(widget::CompositorWidgetProxy* aWidget,
+                      CompositorBridgeParent* aParent)
+  : mCompositorID(0)
+  , mDiagnosticTypes(DiagnosticTypes::NO_DIAGNOSTIC)
+  , mParent(aParent)
+  , mPixelsPerFrame(0)
+  , mPixelsFilled(0)
+  , mScreenRotation(ROTATION_0)
+  , mWidget(aWidget)
+  , mIsDestroyed(false)
+{
+}
+
+Compositor::~Compositor()
+{
+  for (auto& lock : mUnlockAfterComposition) {
+    lock->ReadUnlock();
+  }
+  mUnlockAfterComposition.Clear();
+}
+
+void
+Compositor::Destroy()
+{
+  FlushPendingNotifyNotUsed();
+  mIsDestroyed = true;
+}
+
+void
+Compositor::EndFrame()
+{
+  for (auto& lock : mUnlockAfterComposition) {
+    lock->ReadUnlock();
+  }
+  mUnlockAfterComposition.Clear();
+}
+
+void
+Compositor::NotifyNotUsedAfterComposition(TextureHost* aTextureHost)
+{
+  MOZ_ASSERT(!mIsDestroyed);
+
+  mNotifyNotUsedAfterComposition.AppendElement(aTextureHost);
+}
+
+void
+Compositor::FlushPendingNotifyNotUsed()
+{
+  for (auto& textureHost : mNotifyNotUsedAfterComposition) {
+    textureHost->CallNotifyNotUsed();
+  }
+  mNotifyNotUsedAfterComposition.Clear();
+}
 
 /* static */ void
 Compositor::AssertOnCompositorThread()

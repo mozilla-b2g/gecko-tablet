@@ -148,6 +148,7 @@ class BaseContext {
     this.contextId = ++gContextId;
     this.unloaded = false;
     this.extensionId = extensionId;
+    this.jsonSandbox = null;
   }
 
   get cloneScope() {
@@ -196,6 +197,24 @@ class BaseContext {
     return true;
   }
 
+  /**
+   * Safely call JSON.stringify() on an object that comes from an
+   * extension.
+   *
+   * @param {array<any>} args Arguments for JSON.stringify()
+   * @returns {string} The stringified representation of obj
+   */
+  jsonStringify(...args) {
+    if (!this.jsonSandbox) {
+      this.jsonSandbox = Cu.Sandbox(this.principal, {
+        sameZoneAs: this.cloneScope,
+        wantXrays: false,
+      });
+    }
+
+    return Cu.waiveXrays(this.jsonSandbox.JSON).stringify(...args);
+  }
+
   callOnClose(obj) {
     this.onClose.add(obj);
   }
@@ -208,6 +227,15 @@ class BaseContext {
    * A wrapper around MessageChannel.sendMessage which adds the extension ID
    * to the recipient object, and ensures replies are not processed after the
    * context has been unloaded.
+   *
+   * @param {nsIMessageManager} target
+   * @param {string} messageName
+   * @param {object} data
+   * @param {object} [options]
+   * @param {object} [options.sender]
+   * @param {object} [options.recipient]
+   *
+   * @returns {Promise}
    */
   sendMessage(target, messageName, data, options = {}) {
     options.recipient = options.recipient || {};
@@ -238,6 +266,9 @@ class BaseContext {
    * scope. If it is an Error object which does *not* belong to the
    * clone scope, it is reported, and converted to an unexpected
    * exception error.
+   *
+   * @param {Error|object} error
+   * @returns {Error}
    */
   normalizeError(error) {
     if (error instanceof this.cloneScope.Error) {
@@ -1137,6 +1168,10 @@ class ChildAPIManager {
     return this.namespaces.includes(namespace);
   }
 
+  hasPermission(permission) {
+    return this.context.extension.permissions.has(permission);
+  }
+
   getProperty(path, name) {
     throw new Error("Not implemented");
   }
@@ -1188,22 +1223,21 @@ class ChildAPIManager {
 }
 
 /**
- * Returns a number which represents the number of milliseconds since the epoch
- * for either a startDate or an endDate. Accepts several formats:
+ * Convert any of several different representations of a date/time to a Date object.
+ * Accepts several formats:
  * a Date object, an ISO8601 string, or a number of milliseconds since the epoch as
  * either a number or a string.
  *
- * @param date: (Date) or (String) or (Number)
+ * @param {Date|string|number} date
  *      The date to convert.
- * @returns (Number)
- *      The number of milliseconds since the epoch for the date
+ * @returns {Date}
+ *      A Date object
  */
 function normalizeTime(date) {
   // Of all the formats we accept the "number of milliseconds since the epoch as a string"
   // is an outlier, everything else can just be passed directly to the Date constructor.
-  const result = new Date((typeof date == "string" && /^\d+$/.test(date))
+  return new Date((typeof date == "string" && /^\d+$/.test(date))
                         ? parseInt(date, 10) : date);
-  return result.valueOf();
 }
 
 this.ExtensionUtils = {

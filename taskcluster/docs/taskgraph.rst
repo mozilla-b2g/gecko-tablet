@@ -63,11 +63,10 @@ Decision Task
 The decision task is the first task created when a new graph begins.  It is
 responsible for creating the rest of the task graph.
 
-The decision task for pushes is defined in-tree, currently at
-``testing/taskcluster/tasks/decision``.  The task description invokes ``mach
-taskcluster decision`` with some metadata about the push.  That mach command
-determines the optimized task graph, then calls the TaskCluster API to create
-the tasks.
+The decision task for pushes is defined in-tree, in ``.taskcluster.yml``.  The
+task description invokes ``mach taskcluster decision`` with some metadata about
+the push.  That mach command determines the optimized task graph, then calls
+the TaskCluster API to create the tasks.
 
 Graph Generation
 ----------------
@@ -86,6 +85,33 @@ Graph generation, as run via ``mach taskgraph decision``, proceeds as follows:
    The result is the "optimized task graph" with fewer nodes than the target
    task graph.
 #. Create tasks for all tasks in the optimized task graph.
+
+Optimization
+------------
+
+The objective of optimization to remove as many tasks from the graph as
+possible, as efficiently as possible, thereby delivering useful results as
+quickly as possible.  For example, ideally if only a test script is modified in
+a push, then the resulting graph contains only the corresponding test suite
+task.
+
+A task is said to be "optimized" when it is either replaced with an equivalent,
+already-existing task, or dropped from the graph entirely.
+
+A task can be optimized if all of its dependencies can be optimized and none of
+its inputs have changed.  For a task on which no other tasks depend (a "leaf
+task"), the optimizer can determine what has changed by looking at the
+version-control history of the push: if the relevant files are not modified in
+the push, then it considers the inputs unchanged.  For tasks on which other
+tasks depend ("non-leaf tasks"), the optimizer must replace the task with
+another, equivalent task, so it generates a hash of all of the inputs and uses
+that to search for a matching, existing task.
+
+In some cases, such as try pushes, tasks in the target task set have been
+explicitly requested and are thus excluded from optimization. In other cases,
+the target task set is almost the entire task graph, so targetted tasks are
+considered for optimization.  This behavior is controlled with the
+``optimize_target_tasks`` parameter.
 
 Mach commands
 -------------
@@ -120,3 +146,50 @@ Finally, the ``mach taskgraph decision`` subcommand performs the entire
 task-graph generation process, then creates the tasks.  This command should
 only be used within a decision task, as it assumes it is running in that
 context.
+
+Taskgraph JSON Format
+---------------------
+
+Each task in the graph is represented as a JSON object.  The output is suitable
+for processing with the `jq <https://stedolan.github.io/jq/>`_ utility.
+
+Each task has the following properties:
+
+``task_id``
+   The task's taskId (only for optimized task graphs)
+
+``label``
+   The task's label
+
+``attributes``
+   The task's attributes
+
+``dependencies``
+   The task's in-graph dependencies, represented as an object mapping
+   dependency name to label (or to taskId for optimized task graphs)
+
+``task``
+   The task's TaskCluster task definition.
+
+The task definition may contain "task references" of the form
+``{"task-reference": "string containing <task-label>"}``.  These will be
+replaced during the optimization step, with the appropriate taskId substituted
+for ``<task-label>`` in the string.  Multiple labels may be substituted in a
+single string, and ``<<>`` can be used to escape a literal ``<``.
+
+The results from each command are in the same format, but with some differences
+in the content:
+
+* The ``tasks`` and ``target`` subcommands both return graphs with no edges.
+  That is, just collections of tasks without any dependencies indicated.
+
+* The ``optimized`` subcommand returns tasks that have been assigned taskIds.
+  The dependencies array, too, contains taskIds instead of labels, with
+  dependencies on optimized tasks omitted.  However, the ``task.dependencies``
+  array is populated with the full list of dependency taskIds.  All task
+  references are resolved in the optimized graph.
+
+The graph artifacts produced by the decision task are JSON objects, keyed by
+label (``full-task-graph.json`` and ``target-tasks``) or by taskId
+(``task-graph.json``).  For convenience, the decision task also writes out
+``label-to-taskid.json`` containing a mapping from label to taskId.

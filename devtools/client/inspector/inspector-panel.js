@@ -3,19 +3,25 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* Experimenting with 100 char long lines */
+/* eslint max-len: [2, 100, 2, {ignoreUrls: true, "ignorePattern": "\\s*require\\s*\\(|^\\s*loader\\.lazy|-\\*-"}] */ // eslint-disable-line
 
 "use strict";
 
-const {Cc, Ci, Cu} = require("chrome");
+const {Cc, Ci} = require("chrome");
 
 var Services = require("Services");
 var promise = require("promise");
 var EventEmitter = require("devtools/shared/event-emitter");
 var clipboard = require("sdk/clipboard");
-var {HostType} = require("devtools/client/framework/toolbox").Toolbox;
 const {executeSoon} = require("devtools/shared/DevToolsUtils");
 var {KeyShortcuts} = require("devtools/client/shared/key-shortcuts");
 var {Task} = require("devtools/shared/task");
+const {initCssProperties} = require("devtools/shared/fronts/css-properties");
+const nodeConstants = require("devtools/shared/dom-node-constants");
+
+const Menu = require("devtools/client/framework/menu");
+const MenuItem = require("devtools/client/framework/menu-item");
 
 loader.lazyRequireGetter(this, "CSS", "CSS");
 
@@ -39,7 +45,6 @@ loader.lazyGetter(this, "toolboxStrings", () => {
 loader.lazyGetter(this, "clipboardHelper", () => {
   return Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper);
 });
-
 
 /**
  * Represents an open instance of the Inspector for a tab.
@@ -88,8 +93,7 @@ function InspectorPanel(iframeWindow, toolbox) {
 
   this._onBeforeNavigate = this._onBeforeNavigate.bind(this);
   this.onNewRoot = this.onNewRoot.bind(this);
-  this._setupNodeMenu = this._setupNodeMenu.bind(this);
-  this._resetNodeMenu = this._resetNodeMenu.bind(this);
+  this._onContextMenu = this._onContextMenu.bind(this);
   this._updateSearchResultsLabel = this._updateSearchResultsLabel.bind(this);
   this.onNewSelection = this.onNewSelection.bind(this);
   this.onBeforeNewSelection = this.onBeforeNewSelection.bind(this);
@@ -97,7 +101,15 @@ function InspectorPanel(iframeWindow, toolbox) {
   this.onPaneToggleButtonClicked = this.onPaneToggleButtonClicked.bind(this);
   this._onMarkupFrameLoad = this._onMarkupFrameLoad.bind(this);
 
+  let doc = this.panelDoc;
+
+  // Handle 'Add Node' toolbar button.
+  this.addNode = this.addNode.bind(this);
+  this.addNodeButton = doc.getElementById("inspector-element-add-button");
+  this.addNodeButton.addEventListener("click", this.addNode);
+
   this._target.on("will-navigate", this._onBeforeNavigate);
+  this._detectingActorFeatures = this._detectActorFeatures();
 
   EventEmitter.decorate(this);
 }
@@ -108,15 +120,14 @@ InspectorPanel.prototype = {
   /**
    * open is effectively an asynchronous constructor
    */
-  open: function () {
-    return this.target.makeRemote().then(() => {
-      return this._getPageStyle();
-    }).then(() => {
-      return this._getDefaultNodeForSelection();
-    }).then(defaultSelection => {
-      return this._deferredOpen(defaultSelection);
-    }).then(null, console.error);
-  },
+  open: Task.async(function* () {
+    this._cssPropertiesLoaded = initCssProperties(this.toolbox);
+    yield this._cssPropertiesLoaded;
+    yield this.target.makeRemote();
+    yield this._getPageStyle();
+    let defaultSelection = yield this._getDefaultNodeForSelection();
+    return yield this._deferredOpen(defaultSelection);
+  }),
 
   get toolbox() {
     return this._toolbox;
@@ -154,15 +165,31 @@ InspectorPanel.prototype = {
     return this._target.client.traits.pasteHTML;
   },
 
+  /**
+   * Figure out what features the backend supports
+   */
+  _detectActorFeatures: function () {
+    this._supportsDuplicateNode = false;
+    this._supportsScrollIntoView = false;
+    this._supportsResolveRelativeURL = false;
+
+    return promise.all([
+      this._target.actorHasMethod("domwalker", "duplicateNode").then(value => {
+        this._supportsDuplicateNode = value;
+      }).catch(e => console.error(e)),
+      this._target.actorHasMethod("domnode", "scrollIntoView").then(value => {
+        this._supportsScrollIntoView = value;
+      }).catch(e => console.error(e)),
+      this._target.actorHasMethod("inspector", "resolveRelativeURL").then(value => {
+        this._supportsResolveRelativeURL = value;
+      }).catch(e => console.error(e)),
+    ]);
+  },
+
   _deferredOpen: function (defaultSelection) {
     let deferred = promise.defer();
 
     this.walker.on("new-root", this.onNewRoot);
-
-    this.nodemenu = this.panelDoc.getElementById("inspector-node-popup");
-    this.lastNodemenuItem = this.nodemenu.lastChild;
-    this.nodemenu.addEventListener("popupshowing", this._setupNodeMenu, true);
-    this.nodemenu.addEventListener("popuphiding", this._resetNodeMenu, true);
 
     this.selection.on("new-node-front", this.onNewSelection);
     this.selection.on("before-new-node-front", this.onBeforeNewSelection);
@@ -191,7 +218,6 @@ InspectorPanel.prototype = {
         if (notification && !this._toolbox.threadClient.paused) {
           notificationBox.removeNotification(notification);
         }
-
       };
       this.target.on("thread-paused", this.updateDebuggerPausedWarning);
       this.target.on("thread-resumed", this.updateDebuggerPausedWarning);
@@ -251,15 +277,16 @@ InspectorPanel.prototype = {
 
     // If available, set either the previously selected node or the body
     // as default selected, else set documentElement
-    return walker.getRootNode().then(aRootNode => {
+    return walker.getRootNode().then(node => {
       if (hasNavigated()) {
         return promise.reject("navigated; resolution of _defaultNode aborted");
       }
 
-      rootNode = aRootNode;
+      rootNode = node;
       if (this.selectionCssSelector) {
         return walker.querySelector(rootNode, this.selectionCssSelector);
       }
+      return null;
     }).then(front => {
       if (hasNavigated()) {
         return promise.reject("navigated; resolution of _defaultNode aborted");
@@ -383,7 +410,7 @@ InspectorPanel.prototype = {
     if (Services.prefs.getBoolPref("devtools.fontinspector.enabled") &&
         this.canGetUsedFontFaces) {
       this.fontInspector = new FontInspector(this, this.panelWin);
-      this.panelDoc.getElementById("sidebar-tab-fontinspector").hidden = false;
+      this.sidebar.toggleTab(true, "fontinspector");
     }
 
     this.layoutview = new LayoutView(this, this.panelWin);
@@ -391,7 +418,7 @@ InspectorPanel.prototype = {
     if (this.target.form.animationsActor) {
       this.sidebar.addTab("animationinspector",
                           "chrome://devtools/content/animationinspector/animation-inspector.xhtml",
-                          "animationinspector" == defaultTab);
+                          defaultTab == "animationinspector");
     }
 
     this.sidebar.show(defaultTab);
@@ -467,9 +494,8 @@ InspectorPanel.prototype = {
     if (this._selectionCssSelector &&
         this._selectionCssSelector.url === this._target.url) {
       return this._selectionCssSelector.selector;
-    } else {
-      return null;
     }
+    return null;
   },
 
   /**
@@ -650,12 +676,17 @@ InspectorPanel.prototype = {
       this.layoutview.destroy();
     }
 
+    let cssPropertiesDestroyer = this._cssPropertiesLoaded.then(({front}) => {
+      if (front) {
+        front.destroy();
+      }
+    });
+
     this.sidebar.off("select", this._setDefaultSidebar);
     let sidebarDestroyer = this.sidebar.destroy();
     this.sidebar = null;
 
-    this.nodemenu.removeEventListener("popupshowing", this._setupNodeMenu, true);
-    this.nodemenu.removeEventListener("popuphiding", this._resetNodeMenu, true);
+    this.addNodeButton.removeEventListener("click", this.addNode);
     this.breadcrumbs.destroy();
     this._paneToggleButton.removeEventListener("mousedown",
       this.onPaneToggleButtonClicked);
@@ -670,8 +701,6 @@ InspectorPanel.prototype = {
     this.panelDoc = null;
     this.panelWin = null;
     this.breadcrumbs = null;
-    this.lastNodemenuItem = null;
-    this.nodemenu = null;
     this._toolbox = null;
     this.search.destroy();
     this.search = null;
@@ -679,26 +708,11 @@ InspectorPanel.prototype = {
 
     this._panelDestroyer = promise.all([
       sidebarDestroyer,
-      markupDestroyer
+      markupDestroyer,
+      cssPropertiesDestroyer
     ]);
 
     return this._panelDestroyer;
-  },
-
-  /**
-   * Show the node menu.
-   */
-  showNodeMenu: function (aButton, aPosition, aExtraItems) {
-    if (aExtraItems) {
-      for (let item of aExtraItems) {
-        this.nodemenu.appendChild(item);
-      }
-    }
-    this.nodemenu.openPopup(aButton, aPosition, 0, 0, true, false);
-  },
-
-  hideNodeMenu: function () {
-    this.nodemenu.hidePopup();
   },
 
   /**
@@ -717,14 +731,21 @@ InspectorPanel.prototype = {
     return null;
   },
 
-  /**
-   * Update, enable, disable, hide, show any menu item depending on the current
-   * element.
-   */
-  _setupNodeMenu: function (event) {
+  _onContextMenu: function (e) {
+    e.preventDefault();
+    this._openMenu({
+      screenX: e.screenX,
+      screenY: e.screenY,
+      target: e.target,
+    });
+  },
+
+  _openMenu: function ({ target, screenX = 0, screenY = 0 } = { }) {
     let markupContainer = this.markup.getContainer(this.selection.nodeFront);
-    this.nodeMenuTriggerInfo =
-      markupContainer.editor.getInfoAtNode(event.target.triggerNode);
+
+    this.contextMenuTarget = target;
+    this.nodeMenuTriggerInfo = markupContainer &&
+      markupContainer.editor.getInfoAtNode(target);
 
     let isSelectionElement = this.selection.isElementNode() &&
                              !this.selection.isPseudoElementNode();
@@ -737,247 +758,324 @@ InspectorPanel.prototype = {
                            this.canGetUniqueSelector &&
                            this.selection.nodeFront.isTreeDisplayed;
 
+    let menu = new Menu();
+    menu.append(new MenuItem({
+      id: "node-menu-edithtml",
+      label: strings.GetStringFromName("inspectorHTMLEdit.label"),
+      accesskey: strings.GetStringFromName("inspectorHTMLEdit.accesskey"),
+      disabled: !isEditableElement || !this.isOuterHTMLEditable,
+      click: () => this.editHTML(),
+    }));
+    menu.append(new MenuItem({
+      id: "node-menu-add",
+      label: strings.GetStringFromName("inspectorAddNode.label"),
+      accesskey: strings.GetStringFromName("inspectorAddNode.accesskey"),
+      disabled: !this.canAddHTMLChild(),
+      click: () => this.addNode(),
+    }));
+    menu.append(new MenuItem({
+      id: "node-menu-duplicatenode",
+      label: strings.GetStringFromName("inspectorDuplicateNode.label"),
+      hidden: !this._supportsDuplicateNode,
+      disabled: !isDuplicatableElement,
+      click: () => this.duplicateNode(),
+    }));
+    menu.append(new MenuItem({
+      id: "node-menu-delete",
+      label: strings.GetStringFromName("inspectorHTMLDelete.label"),
+      accesskey: strings.GetStringFromName("inspectorHTMLDelete.accesskey"),
+      disabled: !isEditableElement,
+      click: () => this.deleteNode(),
+    }));
+
+    menu.append(new MenuItem({
+      label: strings.GetStringFromName("inspectorAttributesSubmenu.label"),
+      accesskey:
+        strings.GetStringFromName("inspectorAttributesSubmenu.accesskey"),
+      submenu: this._getAttributesSubmenu(isEditableElement),
+    }));
+
+    menu.append(new MenuItem({
+      type: "separator",
+    }));
+
     // Set the pseudo classes
     for (let name of ["hover", "active", "focus"]) {
-      let menu = this.panelDoc.getElementById("node-menu-pseudo-" + name);
+      let menuitem = new MenuItem({
+        id: "node-menu-pseudo-" + name,
+        label: name,
+        type: "checkbox",
+        click: this.togglePseudoClass.bind(this, ":" + name),
+      });
 
       if (isSelectionElement) {
         let checked = this.selection.nodeFront.hasPseudoClassLock(":" + name);
-        menu.setAttribute("checked", checked);
-        menu.removeAttribute("disabled");
+        menuitem.checked = checked;
       } else {
-        menu.setAttribute("disabled", "true");
+        menuitem.disabled = true;
       }
+
+      menu.append(menuitem);
     }
 
-    // Disable delete item if needed
-    let deleteNode = this.panelDoc.getElementById("node-menu-delete");
-    if (isEditableElement) {
-      deleteNode.removeAttribute("disabled");
-    } else {
-      deleteNode.setAttribute("disabled", "true");
+    menu.append(new MenuItem({
+      type: "separator",
+    }));
+
+    let copySubmenu = new Menu();
+    copySubmenu.append(new MenuItem({
+      id: "node-menu-copyinner",
+      label: strings.GetStringFromName("inspectorCopyInnerHTML.label"),
+      accesskey: strings.GetStringFromName("inspectorCopyInnerHTML.accesskey"),
+      disabled: !isSelectionElement,
+      click: () => this.copyInnerHTML(),
+    }));
+    copySubmenu.append(new MenuItem({
+      id: "node-menu-copyouter",
+      label: strings.GetStringFromName("inspectorCopyOuterHTML.label"),
+      accesskey: strings.GetStringFromName("inspectorCopyOuterHTML.accesskey"),
+      disabled: !isSelectionElement,
+      click: () => this.copyOuterHTML(),
+    }));
+    copySubmenu.append(new MenuItem({
+      id: "node-menu-copyuniqueselector",
+      label: strings.GetStringFromName("inspectorCopyCSSSelector.label"),
+      accesskey:
+        strings.GetStringFromName("inspectorCopyCSSSelector.accesskey"),
+      disabled: !isSelectionElement,
+      hidden: !this.canGetUniqueSelector,
+      click: () => this.copyUniqueSelector(),
+    }));
+    copySubmenu.append(new MenuItem({
+      id: "node-menu-copyimagedatauri",
+      label: strings.GetStringFromName("inspectorImageDataUri.label"),
+      disabled: !isSelectionElement || !markupContainer ||
+                !markupContainer.isPreviewable(),
+      click: () => this.copyImageDataUri(),
+    }));
+
+    menu.append(new MenuItem({
+      label: strings.GetStringFromName("inspectorCopyHTMLSubmenu.label"),
+      submenu: copySubmenu,
+    }));
+
+    menu.append(new MenuItem({
+      label: strings.GetStringFromName("inspectorPasteHTMLSubmenu.label"),
+      submenu: this._getPasteSubmenu(isEditableElement),
+    }));
+
+    menu.append(new MenuItem({
+      type: "separator",
+    }));
+
+    let isNodeWithChildren = this.selection.isNode() &&
+                             markupContainer.hasChildren;
+    menu.append(new MenuItem({
+      id: "node-menu-expand",
+      label: strings.GetStringFromName("inspectorExpandNode.label"),
+      disabled: !isNodeWithChildren || markupContainer.expanded,
+      click: () => this.expandNode(),
+    }));
+    menu.append(new MenuItem({
+      id: "node-menu-collapse",
+      label: strings.GetStringFromName("inspectorCollapseNode.label"),
+      disabled: !isNodeWithChildren || !markupContainer.expanded,
+      click: () => this.collapseNode(),
+    }));
+
+    menu.append(new MenuItem({
+      type: "separator",
+    }));
+
+    menu.append(new MenuItem({
+      id: "node-menu-scrollnodeintoview",
+      label: strings.GetStringFromName("inspectorScrollNodeIntoView.label"),
+      accesskey:
+        strings.GetStringFromName("inspectorScrollNodeIntoView.accesskey"),
+      hidden: !this._supportsScrollIntoView,
+      disabled: !isSelectionElement,
+      click: () => this.scrollNodeIntoView(),
+    }));
+    menu.append(new MenuItem({
+      id: "node-menu-screenshotnode",
+      label: strings.GetStringFromName("inspectorScreenshotNode.label"),
+      disabled: !isScreenshotable,
+      click: () => this.screenshotNode(),
+    }));
+    menu.append(new MenuItem({
+      id: "node-menu-useinconsole",
+      label: strings.GetStringFromName("inspectorUseInConsole.label"),
+      click: () => this.useInConsole(),
+    }));
+    menu.append(new MenuItem({
+      id: "node-menu-showdomproperties",
+      label: strings.GetStringFromName("inspectorShowDOMProperties.label"),
+      click: () => this.showDOMProperties(),
+    }));
+
+    let nodeLinkMenuItems = this._getNodeLinkMenuItems();
+    if (nodeLinkMenuItems.filter(item => item.visible).length > 0) {
+      menu.append(new MenuItem({
+        id: "node-menu-link-separator",
+        type: "separator",
+      }));
     }
 
-    // Disable add item if needed
-    let addNode = this.panelDoc.getElementById("node-menu-add");
-    if (this.canAddHTMLChild()) {
-      addNode.removeAttribute("disabled");
-    } else {
-      addNode.setAttribute("disabled", "true");
+    for (let menuitem of nodeLinkMenuItems) {
+      menu.append(menuitem);
     }
 
-    // Disable / enable "Copy Unique Selector", "Copy inner HTML",
-    // "Copy outer HTML", "Scroll Into View" & "Screenshot Node" as appropriate
-    let unique = this.panelDoc.getElementById("node-menu-copyuniqueselector");
-    let screenshot = this.panelDoc.getElementById("node-menu-screenshotnode");
-    let duplicateNode = this.panelDoc.getElementById("node-menu-duplicatenode");
-    let copyInnerHTML = this.panelDoc.getElementById("node-menu-copyinner");
-    let copyOuterHTML = this.panelDoc.getElementById("node-menu-copyouter");
-    let scrollIntoView = this.panelDoc.getElementById("node-menu-scrollnodeintoview");
-    let expandAll = this.panelDoc.getElementById("node-menu-expand");
-    let collapse = this.panelDoc.getElementById("node-menu-collapse");
-
-    expandAll.setAttribute("disabled", "true");
-    collapse.setAttribute("disabled", "true");
-
-    if (this.selection.isNode() && markupContainer.hasChildren) {
-      if (markupContainer.expanded) {
-        collapse.removeAttribute("disabled");
-      }
-      expandAll.removeAttribute("disabled");
-    }
-
-    this._target.actorHasMethod("domwalker", "duplicateNode").then(value => {
-      duplicateNode.hidden = !value;
-    });
-    this._target.actorHasMethod("domnode", "scrollIntoView").then(value => {
-      scrollIntoView.hidden = !value;
-    });
-
-    if (isDuplicatableElement) {
-      duplicateNode.removeAttribute("disabled");
-    }
-    else {
-      duplicateNode.setAttribute("disabled", "true");
-    }
-
-    if (isSelectionElement) {
-      unique.removeAttribute("disabled");
-      copyInnerHTML.removeAttribute("disabled");
-      copyOuterHTML.removeAttribute("disabled");
-      scrollIntoView.removeAttribute("disabled");
-    } else {
-      unique.setAttribute("disabled", "true");
-      copyInnerHTML.setAttribute("disabled", "true");
-      copyOuterHTML.setAttribute("disabled", "true");
-      scrollIntoView.setAttribute("disabled", "true");
-    }
-    if (!this.canGetUniqueSelector) {
-      unique.hidden = true;
-    }
-
-    if (isScreenshotable) {
-      screenshot.removeAttribute("disabled");
-    } else {
-      screenshot.setAttribute("disabled", "true");
-    }
-
-    // Enable/Disable the link open/copy items.
-    this._setupNodeLinkMenu();
-
-    // Enable the "edit HTML" item if the selection is an element and the root
-    // actor has the appropriate trait (isOuterHTMLEditable)
-    let editHTML = this.panelDoc.getElementById("node-menu-edithtml");
-    if (isEditableElement && this.isOuterHTMLEditable) {
-      editHTML.removeAttribute("disabled");
-    } else {
-      editHTML.setAttribute("disabled", "true");
-    }
-
-    let pasteOuterHTML = this.panelDoc.getElementById("node-menu-pasteouterhtml");
-    let pasteInnerHTML = this.panelDoc.getElementById("node-menu-pasteinnerhtml");
-    let pasteBefore = this.panelDoc.getElementById("node-menu-pastebefore");
-    let pasteAfter = this.panelDoc.getElementById("node-menu-pasteafter");
-    let pasteFirstChild = this.panelDoc.getElementById("node-menu-pastefirstchild");
-    let pasteLastChild = this.panelDoc.getElementById("node-menu-pastelastchild");
-
-    // Is the clipboard content appropriate? Is the element editable?
-    if (isEditableElement && this._getClipboardContentForPaste()) {
-      pasteInnerHTML.disabled = !this.canPasteInnerOrAdjacentHTML;
-      // Enable the "paste outer HTML" item if the selection is an element and
-      // the root actor has the appropriate trait (isOuterHTMLEditable).
-      pasteOuterHTML.disabled = !this.isOuterHTMLEditable;
-      // Don't paste before / after a root or a BODY or a HEAD element.
-      pasteBefore.disabled = pasteAfter.disabled =
-        !this.canPasteInnerOrAdjacentHTML || this.selection.isRoot() ||
-        this.selection.isBodyNode() || this.selection.isHeadNode();
-      // Don't paste as a first / last child of a HTML document element.
-      pasteFirstChild.disabled = pasteLastChild.disabled =
-        !this.canPasteInnerOrAdjacentHTML || (this.selection.isHTMLNode() &&
-        this.selection.isRoot());
-    } else {
-      pasteOuterHTML.disabled = true;
-      pasteInnerHTML.disabled = true;
-      pasteBefore.disabled = true;
-      pasteAfter.disabled = true;
-      pasteFirstChild.disabled = true;
-      pasteLastChild.disabled = true;
-    }
-
-    // Enable the "copy image data-uri" item if the selection is previewable
-    // which essentially checks if it's an image or canvas tag
-    let copyImageData = this.panelDoc.getElementById("node-menu-copyimagedatauri");
-    if (isSelectionElement && markupContainer && markupContainer.isPreviewable()) {
-      copyImageData.removeAttribute("disabled");
-    } else {
-      copyImageData.setAttribute("disabled", "true");
-    }
-
-    // Enable / disable "Add Attribute", "Edit Attribute"
-    // and "Remove Attribute" items
-    this._setupAttributeMenu(isEditableElement);
+    menu.popup(screenX, screenY, this._toolbox);
+    return menu;
   },
 
-  _setupAttributeMenu: function (isEditableElement) {
-    let addAttribute = this.panelDoc.getElementById("node-menu-add-attribute");
-    let editAttribute = this.panelDoc.getElementById("node-menu-edit-attribute");
-    let removeAttribute = this.panelDoc.getElementById("node-menu-remove-attribute");
+  _getPasteSubmenu: function (isEditableElement) {
+    let isPasteable = isEditableElement && this._getClipboardContentForPaste();
+    let disableAdjacentPaste = !isPasteable ||
+          !this.canPasteInnerOrAdjacentHTML || this.selection.isRoot() ||
+          this.selection.isBodyNode() || this.selection.isHeadNode();
+    let disableFirstLastPaste = !isPasteable ||
+          !this.canPasteInnerOrAdjacentHTML || (this.selection.isHTMLNode() &&
+          this.selection.isRoot());
+
+    let pasteSubmenu = new Menu();
+    pasteSubmenu.append(new MenuItem({
+      id: "node-menu-pasteinnerhtml",
+      label: strings.GetStringFromName("inspectorPasteInnerHTML.label"),
+      accesskey: strings.GetStringFromName("inspectorPasteInnerHTML.accesskey"),
+      disabled: !isPasteable || !this.canPasteInnerOrAdjacentHTML,
+      click: () => this.pasteInnerHTML(),
+    }));
+    pasteSubmenu.append(new MenuItem({
+      id: "node-menu-pasteouterhtml",
+      label: strings.GetStringFromName("inspectorPasteOuterHTML.label"),
+      accesskey: strings.GetStringFromName("inspectorPasteOuterHTML.accesskey"),
+      disabled: !isPasteable || !this.isOuterHTMLEditable,
+      click: () => this.pasteOuterHTML(),
+    }));
+    pasteSubmenu.append(new MenuItem({
+      id: "node-menu-pastebefore",
+      label: strings.GetStringFromName("inspectorHTMLPasteBefore.label"),
+      accesskey:
+        strings.GetStringFromName("inspectorHTMLPasteBefore.accesskey"),
+      disabled: disableAdjacentPaste,
+      click: () => this.pasteAdjacentHTML("beforeBegin"),
+    }));
+    pasteSubmenu.append(new MenuItem({
+      id: "node-menu-pasteafter",
+      label: strings.GetStringFromName("inspectorHTMLPasteAfter.label"),
+      accesskey:
+        strings.GetStringFromName("inspectorHTMLPasteAfter.accesskey"),
+      disabled: disableAdjacentPaste,
+      click: () => this.pasteAdjacentHTML("afterEnd"),
+    }));
+    pasteSubmenu.append(new MenuItem({
+      id: "node-menu-pastefirstchild",
+      label: strings.GetStringFromName("inspectorHTMLPasteFirstChild.label"),
+      accesskey:
+        strings.GetStringFromName("inspectorHTMLPasteFirstChild.accesskey"),
+      disabled: disableFirstLastPaste,
+      click: () => this.pasteAdjacentHTML("afterBegin"),
+    }));
+    pasteSubmenu.append(new MenuItem({
+      id: "node-menu-pastelastchild",
+      label: strings.GetStringFromName("inspectorHTMLPasteLastChild.label"),
+      accesskey:
+        strings.GetStringFromName("inspectorHTMLPasteLastChild.accesskey"),
+      disabled: disableFirstLastPaste,
+      click: () => this.pasteAdjacentHTML("beforeEnd"),
+    }));
+
+    return pasteSubmenu;
+  },
+
+  _getAttributesSubmenu: function (isEditableElement) {
+    let attributesSubmenu = new Menu();
     let nodeInfo = this.nodeMenuTriggerInfo;
+    let isAttributeClicked = isEditableElement && nodeInfo &&
+                              nodeInfo.type === "attribute";
 
-    // Enable "Add Attribute" for all editable elements
-    if (isEditableElement) {
-      addAttribute.removeAttribute("disabled");
-    } else {
-      addAttribute.setAttribute("disabled", "true");
-    }
+    attributesSubmenu.append(new MenuItem({
+      id: "node-menu-add-attribute",
+      label: strings.GetStringFromName("inspectorAddAttribute.label"),
+      accesskey: strings.GetStringFromName("inspectorAddAttribute.accesskey"),
+      disabled: !isEditableElement,
+      click: () => this.onAddAttribute(),
+    }));
+    attributesSubmenu.append(new MenuItem({
+      id: "node-menu-edit-attribute",
+      label: strings.formatStringFromName("inspectorEditAttribute.label",
+                 [isAttributeClicked ? `"${nodeInfo.name}"` : ""], 1),
+      accesskey: strings.GetStringFromName("inspectorEditAttribute.accesskey"),
+      disabled: !isAttributeClicked,
+      click: () => this.onEditAttribute(),
+    }));
 
-    // Enable "Edit Attribute" and "Remove Attribute" only on attribute click
-    if (isEditableElement && nodeInfo && nodeInfo.type === "attribute") {
-      editAttribute.removeAttribute("disabled");
-      editAttribute.setAttribute("label",
-        strings.formatStringFromName(
-          "inspector.menu.editAttribute.label", [`"${nodeInfo.name}"`], 1));
+    attributesSubmenu.append(new MenuItem({
+      id: "node-menu-remove-attribute",
+      label: strings.formatStringFromName("inspectorRemoveAttribute.label",
+                [isAttributeClicked ? `"${nodeInfo.name}"` : ""], 1),
+      accesskey:
+        strings.GetStringFromName("inspectorRemoveAttribute.accesskey"),
+      disabled: !isAttributeClicked,
+      click: () => this.onRemoveAttribute(),
+    }));
 
-      removeAttribute.removeAttribute("disabled");
-      removeAttribute.setAttribute("label",
-        strings.formatStringFromName(
-          "inspector.menu.removeAttribute.label", [`"${nodeInfo.name}"`], 1));
-    } else {
-      editAttribute.setAttribute("disabled", "true");
-      editAttribute.setAttribute("label",
-        strings.formatStringFromName(
-          "inspector.menu.editAttribute.label", [""], 1));
-
-      removeAttribute.setAttribute("disabled", "true");
-      removeAttribute.setAttribute("label",
-        strings.formatStringFromName(
-          "inspector.menu.removeAttribute.label", [""], 1));
-    }
-  },
-
-  _resetNodeMenu: function () {
-    // Remove any extra items
-    while (this.lastNodemenuItem.nextSibling) {
-      let toDelete = this.lastNodemenuItem.nextSibling;
-      toDelete.parentNode.removeChild(toDelete);
-    }
+    return attributesSubmenu;
   },
 
   /**
    * Link menu items can be shown or hidden depending on the context and
    * selected node, and their labels can vary.
+   *
+   * @return {Array} list of visible menu items related to links.
    */
-  _setupNodeLinkMenu: function () {
-    let linkSeparator = this.panelDoc.getElementById("node-menu-link-separator");
-    let linkFollow = this.panelDoc.getElementById("node-menu-link-follow");
-    let linkCopy = this.panelDoc.getElementById("node-menu-link-copy");
-
-    // Hide all by default.
-    linkSeparator.setAttribute("hidden", "true");
-    linkFollow.setAttribute("hidden", "true");
-    linkCopy.setAttribute("hidden", "true");
+  _getNodeLinkMenuItems: function () {
+    let linkFollow = new MenuItem({
+      id: "node-menu-link-follow",
+      visible: false,
+      click: () => this.onFollowLink(),
+    });
+    let linkCopy = new MenuItem({
+      id: "node-menu-link-copy",
+      visible: false,
+      click: () => this.onCopyLink(),
+    });
 
     // Get information about the right-clicked node.
-    let popupNode = this.panelDoc.popupNode;
+    let popupNode = this.contextMenuTarget;
     if (!popupNode || !popupNode.classList.contains("link")) {
-      return;
+      return [linkFollow, linkCopy];
     }
 
     let type = popupNode.dataset.type;
-    if (type === "uri" || type === "cssresource" || type === "jsresource") {
-      // First make sure the target can resolve relative URLs.
-      this.target.actorHasMethod("inspector", "resolveRelativeURL").then(canResolve => {
-        if (!canResolve) {
-          return;
-        }
+    if (this._supportsResolveRelativeURL &&
+        (type === "uri" || type === "cssresource" || type === "jsresource")) {
+      // Links can't be opened in new tabs in the browser toolbox.
+      if (type === "uri" && !this.target.chrome) {
+        linkFollow.visible = true;
+        linkFollow.label = strings.GetStringFromName(
+          "inspector.menu.openUrlInNewTab.label");
+      } else if (type === "cssresource") {
+        linkFollow.visible = true;
+        linkFollow.label = toolboxStrings.GetStringFromName(
+          "toolbox.viewCssSourceInStyleEditor.label");
+      } else if (type === "jsresource") {
+        linkFollow.visible = true;
+        linkFollow.label = toolboxStrings.GetStringFromName(
+          "toolbox.viewJsSourceInDebugger.label");
+      }
 
-        linkSeparator.removeAttribute("hidden");
-
-        // Links can't be opened in new tabs in the browser toolbox.
-        if (type === "uri" && !this.target.chrome) {
-          linkFollow.removeAttribute("hidden");
-          linkFollow.setAttribute("label", strings.GetStringFromName(
-            "inspector.menu.openUrlInNewTab.label"));
-        } else if (type === "cssresource") {
-          linkFollow.removeAttribute("hidden");
-          linkFollow.setAttribute("label", toolboxStrings.GetStringFromName(
-            "toolbox.viewCssSourceInStyleEditor.label"));
-        } else if (type === "jsresource") {
-          linkFollow.removeAttribute("hidden");
-          linkFollow.setAttribute("label", toolboxStrings.GetStringFromName(
-            "toolbox.viewJsSourceInDebugger.label"));
-        }
-
-        linkCopy.removeAttribute("hidden");
-        linkCopy.setAttribute("label", strings.GetStringFromName(
-          "inspector.menu.copyUrlToClipboard.label"));
-      }, console.error);
+      linkCopy.visible = true;
+      linkCopy.label = strings.GetStringFromName(
+        "inspector.menu.copyUrlToClipboard.label");
     } else if (type === "idref") {
-      linkSeparator.removeAttribute("hidden");
-      linkFollow.removeAttribute("hidden");
-      linkFollow.setAttribute("label", strings.formatStringFromName(
-        "inspector.menu.selectElement.label", [popupNode.dataset.link], 1));
+      linkFollow.visible = true;
+      linkFollow.label = strings.formatStringFromName(
+        "inspector.menu.selectElement.label", [popupNode.dataset.link], 1);
     }
+
+    return [linkFollow, linkCopy];
   },
 
   _initMarkup: function () {
@@ -989,7 +1087,7 @@ InspectorPanel.prototype = {
     this._markupFrame = doc.createElement("iframe");
     this._markupFrame.setAttribute("flex", "1");
     this._markupFrame.setAttribute("tooltip", "aHTMLTooltip");
-    this._markupFrame.setAttribute("context", "inspector-node-popup");
+    this._markupFrame.addEventListener("contextmenu", this._onContextMenu, true);
 
     // This is needed to enable tooltips inside the iframe document.
     this._markupFrame.addEventListener("load", this._onMarkupFrameLoad, true);
@@ -997,7 +1095,8 @@ InspectorPanel.prototype = {
     this._markupBox.setAttribute("collapsed", true);
     this._markupBox.appendChild(this._markupFrame);
     this._markupFrame.setAttribute("src", "chrome://devtools/content/inspector/markup/markup.xhtml");
-    this._markupFrame.setAttribute("aria-label", strings.GetStringFromName("inspector.panelLabel.markupView"));
+    this._markupFrame.setAttribute("aria-label",
+      strings.GetStringFromName("inspector.panelLabel.markupView"));
   },
 
   _onMarkupFrameLoad: function () {
@@ -1017,6 +1116,7 @@ InspectorPanel.prototype = {
 
     if (this._markupFrame) {
       this._markupFrame.removeEventListener("load", this._onMarkupFrameLoad, true);
+      this._markupFrame.removeEventListener("contextmenu", this._onContextMenu, true);
     }
 
     if (this.markup) {
@@ -1096,16 +1196,17 @@ InspectorPanel.prototype = {
   /**
    * Toggle a pseudo class.
    */
-  togglePseudoClass: function (aPseudo) {
+  togglePseudoClass: function (pseudo) {
     if (this.selection.isElementNode()) {
       let node = this.selection.nodeFront;
-      if (node.hasPseudoClassLock(aPseudo)) {
-        return this.walker.removePseudoClassLock(node, aPseudo, {parents: true});
+      if (node.hasPseudoClassLock(pseudo)) {
+        return this.walker.removePseudoClassLock(node, pseudo, {parents: true});
       }
 
-      let hierarchical = aPseudo == ":hover" || aPseudo == ":active";
-      return this.walker.addPseudoClassLock(node, aPseudo, {parents: hierarchical});
+      let hierarchical = pseudo == ":hover" || pseudo == ":active";
+      return this.walker.addPseudoClassLock(node, pseudo, {parents: hierarchical});
     }
+    return promise.resolve();
   },
 
   /**
@@ -1156,7 +1257,7 @@ InspectorPanel.prototype = {
    */
   clearPseudoClasses: function () {
     if (!this.walker) {
-      return;
+      return promise.resolve();
     }
     return this.walker.clearPseudoClassLocks().then(null, console.error);
   },
@@ -1178,8 +1279,9 @@ InspectorPanel.prototype = {
    */
   pasteOuterHTML: function () {
     let content = this._getClipboardContentForPaste();
-    if (!content)
+    if (!content) {
       return promise.reject("No clipboard content for paste");
+    }
 
     let node = this.selection.nodeFront;
     return this.markup.getNodeOuterHTML(node).then(oldContent => {
@@ -1192,8 +1294,9 @@ InspectorPanel.prototype = {
    */
   pasteInnerHTML: function () {
     let content = this._getClipboardContentForPaste();
-    if (!content)
+    if (!content) {
       return promise.reject("No clipboard content for paste");
+    }
 
     let node = this.selection.nodeFront;
     return this.markup.getNodeInnerHTML(node).then(oldContent => {
@@ -1208,8 +1311,9 @@ InspectorPanel.prototype = {
    */
   pasteAdjacentHTML: function (position) {
     let content = this._getClipboardContentForPaste();
-    if (!content)
+    if (!content) {
       return promise.reject("No clipboard content for paste");
+    }
 
     let node = this.selection.nodeFront;
     return this.markup.insertAdjacentHTMLToNode(node, position, content);
@@ -1235,15 +1339,15 @@ InspectorPanel.prototype = {
     let node = this.selection.nodeFront;
 
     switch (node.nodeType) {
-      case Ci.nsIDOMNode.ELEMENT_NODE :
+      case nodeConstants.ELEMENT_NODE :
         this._copyLongString(this.walker.outerHTML(node));
         break;
-      case Ci.nsIDOMNode.COMMENT_NODE :
+      case nodeConstants.COMMENT_NODE :
         this._getLongString(node.getNodeValue()).then(comment => {
           clipboardHelper.copyString("<!--" + comment + "-->");
         });
         break;
-      case Ci.nsIDOMNode.DOCUMENT_TYPE_NODE :
+      case nodeConstants.DOCUMENT_TYPE_NODE :
         clipboardHelper.copyString(node.doctypeString);
         break;
     }
@@ -1395,8 +1499,8 @@ InspectorPanel.prototype = {
    * in the inspector contextual-menu.
    */
   onFollowLink: function () {
-    let type = this.panelDoc.popupNode.dataset.type;
-    let link = this.panelDoc.popupNode.dataset.link;
+    let type = this.contextMenuTarget.dataset.type;
+    let link = this.contextMenuTarget.dataset.link;
 
     this.followAttributeLink(type, link);
   },
@@ -1413,18 +1517,20 @@ InspectorPanel.prototype = {
 
     if (type === "uri" || type === "cssresource" || type === "jsresource") {
       // Open link in a new tab.
-      // When the inspector menu was setup on click (see _setupNodeLinkMenu), we
+      // When the inspector menu was setup on click (see _getNodeLinkMenuItems), we
       // already checked that resolveRelativeURL existed.
-      this.inspector.resolveRelativeURL(link, this.selection.nodeFront).then(url => {
-        if (type === "uri") {
-          let browserWin = this.target.tab.ownerDocument.defaultView;
-          browserWin.openUILinkIn(url, "tab");
-        } else if (type === "cssresource") {
-          return this.toolbox.viewSourceInStyleEditor(url);
-        } else if (type === "jsresource") {
-          return this.toolbox.viewSourceInDebugger(url);
-        }
-      }).catch(e => console.error(e));
+      this.inspector.resolveRelativeURL(
+        link, this.selection.nodeFront).then(url => {
+          if (type === "uri") {
+            let browserWin = this.target.tab.ownerDocument.defaultView;
+            browserWin.openUILinkIn(url, "tab");
+          } else if (type === "cssresource") {
+            return this.toolbox.viewSourceInStyleEditor(url);
+          } else if (type === "jsresource") {
+            return this.toolbox.viewSourceInDebugger(url);
+          }
+          return null;
+        }).catch(e => console.error(e));
     } else if (type == "idref") {
       // Select the node in the same document.
       this.walker.document(this.selection.nodeFront).then(doc => {
@@ -1444,7 +1550,7 @@ InspectorPanel.prototype = {
    * in the inspector contextual-menu.
    */
   onCopyLink: function () {
-    let link = this.panelDoc.popupNode.dataset.link;
+    let link = this.contextMenuTarget.dataset.link;
 
     this.copyAttributeLink(link);
   },
@@ -1453,7 +1559,7 @@ InspectorPanel.prototype = {
    * This method is here for the benefit of copying links.
    */
   copyAttributeLink: function (link) {
-    // When the inspector menu was setup on click (see _setupNodeLinkMenu), we
+    // When the inspector menu was setup on click (see _getNodeLinkMenuItems), we
     // already checked that resolveRelativeURL existed.
     this.inspector.resolveRelativeURL(link, this.selection.nodeFront).then(url => {
       clipboardHelper.copyString(url);

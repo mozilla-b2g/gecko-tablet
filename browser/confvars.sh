@@ -8,6 +8,11 @@ MOZ_APP_VENDOR=Mozilla
 MOZ_UPDATER=1
 MOZ_PHOENIX=1
 
+if test "$OS_ARCH" = "WINNT" -o \
+        "$OS_ARCH" = "Linux"; then
+  MOZ_BUNDLED_FONTS=1
+fi
+
 if test "$OS_ARCH" = "WINNT"; then
   MOZ_MAINTENANCE_SERVICE=1
   if ! test "$HAVE_64BIT_BUILD"; then
@@ -53,6 +58,9 @@ MOZ_WEBGL_CONFORMANT=1
 MOZ_PAY=1
 MOZ_JSDOWNLOADS=1
 MOZ_RUST_MP4PARSE=1
+
+# Enable checking that add-ons are signed by the trusted root
+MOZ_ADDON_SIGNING=1
 
 # Include the DevTools client, not just the server (which is the default)
 MOZ_DEVTOOLS=all

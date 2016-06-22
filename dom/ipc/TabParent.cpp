@@ -25,12 +25,12 @@
 #include "mozilla/EventStateManager.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/DataSurfaceHelpers.h"
+#include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/Hal.h"
 #include "mozilla/IMEStateManager.h"
 #include "mozilla/ipc/DocumentRendererParent.h"
 #include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "mozilla/layers/AsyncDragMetrics.h"
-#include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layout/RenderFrameParent.h"
 #include "mozilla/LookAndFeel.h"
@@ -105,6 +105,7 @@ using namespace mozilla::layout;
 using namespace mozilla::services;
 using namespace mozilla::widget;
 using namespace mozilla::jsipc;
+using namespace mozilla::gfx;
 
 // The flags passed by the webProgress notifications are 16 bits shifted
 // from the ones registered by webProgressListeners.
@@ -337,6 +338,27 @@ void
 TabParent::CacheFrameLoader(nsFrameLoader* aFrameLoader)
 {
   mFrameLoader = aFrameLoader;
+}
+
+/**
+ * Will return nullptr if there is no outer window available for the
+ * document hosting the owner element of this TabParent. Also will return
+ * nullptr if that outer window is in the process of closing.
+ */
+already_AddRefed<nsPIDOMWindowOuter>
+TabParent::GetParentWindowOuter()
+{
+  nsCOMPtr<nsIContent> frame = do_QueryInterface(GetOwnerElement());
+  if (!frame) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsPIDOMWindowOuter> parent = frame->OwnerDoc()->GetWindow();
+  if (!parent || parent->Closed()) {
+    return nullptr;
+  }
+
+  return parent.forget();
 }
 
 void
@@ -877,7 +899,8 @@ TabParent::RecvSetDimensions(const uint32_t& aFlags,
 
   if (aFlags & nsIEmbeddingSiteWindow::DIM_FLAGS_POSITION &&
       aFlags & nsIEmbeddingSiteWindow::DIM_FLAGS_SIZE_OUTER) {
-    treeOwnerAsWin->SetPositionAndSize(x, y, cx, cy, true);
+    treeOwnerAsWin->SetPositionAndSize(x, y, cx, cy,
+                                       nsIBaseWindow::eRepaint);
     return true;
   }
 
@@ -1843,7 +1866,7 @@ TabParent::RecvNotifyIMEFocus(const ContentCache& aContentCache,
     return true;
   }
 
-  mContentCache.AssignContent(aContentCache, &aIMENotification);
+  mContentCache.AssignContent(aContentCache, widget, &aIMENotification);
   IMEStateManager::NotifyIME(aIMENotification, widget, true);
 
   if (aIMENotification.mMessage == NOTIFY_IME_OF_FOCUS) {
@@ -1869,7 +1892,7 @@ TabParent::RecvNotifyIMETextChange(const ContentCache& aContentCache,
     "The widget doesn't want text change notification caused by composition");
 #endif
 
-  mContentCache.AssignContent(aContentCache, &aIMENotification);
+  mContentCache.AssignContent(aContentCache, widget, &aIMENotification);
   mContentCache.MaybeNotifyIME(widget, aIMENotification);
   return true;
 }
@@ -1884,7 +1907,7 @@ TabParent::RecvNotifyIMECompositionUpdate(
     return true;
   }
 
-  mContentCache.AssignContent(aContentCache, &aIMENotification);
+  mContentCache.AssignContent(aContentCache, widget, &aIMENotification);
   mContentCache.MaybeNotifyIME(widget, aIMENotification);
   return true;
 }
@@ -1897,7 +1920,7 @@ TabParent::RecvNotifyIMESelection(const ContentCache& aContentCache,
   if (!widget)
     return true;
 
-  mContentCache.AssignContent(aContentCache, &aIMENotification);
+  mContentCache.AssignContent(aContentCache, widget, &aIMENotification);
   mContentCache.MaybeNotifyIME(widget, aIMENotification);
   return true;
 }
@@ -1910,7 +1933,7 @@ TabParent::RecvUpdateContentCache(const ContentCache& aContentCache)
     return true;
   }
 
-  mContentCache.AssignContent(aContentCache);
+  mContentCache.AssignContent(aContentCache, widget);
   return true;
 }
 
@@ -1939,7 +1962,7 @@ TabParent::RecvNotifyIMEPositionChange(const ContentCache& aContentCache,
     return true;
   }
 
-  mContentCache.AssignContent(aContentCache, &aIMENotification);
+  mContentCache.AssignContent(aContentCache, widget, &aIMENotification);
   mContentCache.MaybeNotifyIME(widget, aIMENotification);
   return true;
 }
@@ -2772,9 +2795,11 @@ TabParent::GetLoadContext()
   if (mLoadContext) {
     loadContext = mLoadContext;
   } else {
+    bool isPrivate = mChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW;
+    SetPrivateBrowsingAttributes(isPrivate);
     loadContext = new LoadContext(GetOwnerElement(),
                                   true /* aIsContent */,
-                                  mChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW,
+                                  isPrivate,
                                   mChromeFlags & nsIWebBrowserChrome::CHROME_REMOTE_WINDOW,
                                   OriginAttributesRef());
     mLoadContext = loadContext;
@@ -2858,6 +2883,8 @@ TabParent::GetUseAsyncPanZoom(bool* useAsyncPanZoom)
 NS_IMETHODIMP
 TabParent::SetDocShellIsActive(bool isActive)
 {
+  // docshell is consider prerendered only if not active yet
+  mIsPrerendered &= !isActive;
   mDocShellIsActive = isActive;
   Unused << SendSetDocShellIsActive(isActive, true);
   return NS_OK;
@@ -2871,8 +2898,17 @@ TabParent::GetDocShellIsActive(bool* aIsActive)
 }
 
 NS_IMETHODIMP
+TabParent::GetIsPrerendered(bool* aIsPrerendered)
+{
+  *aIsPrerendered = mIsPrerendered;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 TabParent::SetDocShellIsActiveAndForeground(bool isActive)
 {
+  // docshell is consider prerendered only if not active yet
+  mIsPrerendered &= !isActive;
   mDocShellIsActive = isActive;
   Unused << SendSetDocShellIsActive(isActive, false);
   return NS_OK;
@@ -2966,7 +3002,7 @@ TabParent::RequestNotifyLayerTreeReady()
   if (!frame || !frame->IsInitted()) {
     mNeedLayerTreeReadyNotification = true;
   } else {
-    CompositorBridgeParent::RequestNotifyLayerTreeReady(
+    GPUProcessManager::Get()->RequestNotifyLayerTreeReady(
       frame->GetLayersId(),
       mLayerUpdateObserver);
   }
@@ -2981,7 +3017,7 @@ TabParent::RequestNotifyLayerTreeCleared()
     return false;
   }
 
-  CompositorBridgeParent::RequestNotifyLayerTreeCleared(
+  GPUProcessManager::Get()->RequestNotifyLayerTreeCleared(
     frame->GetLayersId(),
     mLayerUpdateObserver);
   return true;
@@ -3022,10 +3058,10 @@ TabParent::SwapLayerTreeObservers(TabParent* aOther)
     return;
   }
 
-  // The swap that happens for the observers in CompositorBridgeParent has to
+  // The swap that happens for the observers in GPUProcessManager has to
   // happen in a lock so that an update being processed on the compositor thread
   // can't grab the layer update observer for the wrong tab parent.
-  CompositorBridgeParent::SwapLayerTreeObservers(
+  GPUProcessManager::Get()->SwapLayerTreeObservers(
     rfp->GetLayersId(),
     otherRfp->GetLayersId());
 
@@ -3173,6 +3209,7 @@ public:
   NS_IMETHOD GetOriginAttributes(JS::MutableHandleValue) NO_IMPL
   NS_IMETHOD GetUseRemoteTabs(bool*) NO_IMPL
   NS_IMETHOD SetRemoteTabs(bool) NO_IMPL
+  NS_IMETHOD IsTrackingProtectionOn(bool*) NO_IMPL
 #undef NO_IMPL
 
 protected:
@@ -3215,7 +3252,7 @@ TabParent::RecvAsyncAuthPrompt(const nsCString& aUri,
 bool
 TabParent::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
                                  const uint32_t& aAction,
-                                 const nsCString& aVisualDnDData,
+                                 const OptionalShmem& aVisualDnDData,
                                  const uint32_t& aWidth, const uint32_t& aHeight,
                                  const uint32_t& aStride, const uint8_t& aFormat,
                                  const int32_t& aDragAreaX, const int32_t& aDragAreaY)
@@ -3242,20 +3279,25 @@ TabParent::RecvInvokeDragSession(nsTArray<IPCDataTransfer>&& aTransfers,
     }
   }
 
-  if (aVisualDnDData.IsEmpty() ||
-      (aVisualDnDData.Length() < aHeight * aStride)) {
+  if (aVisualDnDData.type() == OptionalShmem::Tvoid_t ||
+      !aVisualDnDData.get_Shmem().IsReadable() ||
+      aVisualDnDData.get_Shmem().Size<char>() < aHeight * aStride) {
     mDnDVisualization = nullptr;
   } else {
     mDnDVisualization =
         gfx::CreateDataSourceSurfaceFromData(gfx::IntSize(aWidth, aHeight),
                                              static_cast<gfx::SurfaceFormat>(aFormat),
-                                             reinterpret_cast<const uint8_t*>(aVisualDnDData.BeginReading()),
+                                             aVisualDnDData.get_Shmem().get<uint8_t>(),
                                              aStride);
   }
   mDragAreaX = aDragAreaX;
   mDragAreaY = aDragAreaY;
 
   esm->BeginTrackingRemoteDragGesture(mFrameElement);
+
+  if (aVisualDnDData.type() == OptionalShmem::TShmem) {
+    Unused << DeallocShmem(aVisualDnDData);
+  }
 
   return true;
 }
@@ -3279,7 +3321,7 @@ TabParent::AddInitialDnDDataTo(DataTransfer* aDataTransfer)
         auto* parent = static_cast<BlobParent*>(item.data().get_PBlobParent());
         RefPtr<BlobImpl> impl = parent->GetBlobImpl();
         variant->SetAsISupports(impl);
-      } else if (item.data().type() == IPCDataTransferData::TnsCString) {
+      } else if (item.data().type() == IPCDataTransferData::TShmem) {
         if (nsContentUtils::IsFlavorImage(item.flavor())) {
           // An image! Get the imgIContainer for it and set it in the variant.
           nsCOMPtr<imgIContainer> imageContainer;
@@ -3291,8 +3333,11 @@ TabParent::AddInitialDnDDataTo(DataTransfer* aDataTransfer)
           }
           variant->SetAsISupports(imageContainer);
         } else {
-          variant->SetAsACString(item.data().get_nsCString());
+          Shmem data = item.data().get_Shmem();
+          variant->SetAsACString(nsDependentCString(data.get<char>(), data.Size<char>()));
         }
+
+        mozilla::Unused << DeallocShmem(item.data().get_Shmem());
       }
 
       // Using system principal here, since once the data is on parent process
@@ -3399,6 +3444,22 @@ TabParent::RecvGetTabCount(uint32_t* aValue)
   NS_ENSURE_SUCCESS(rv, true);
 
   *aValue = tabCount;
+  return true;
+}
+
+bool
+TabParent::RecvLookUpDictionary(const nsString& aText,
+                                nsTArray<FontRange>&& aFontRangeArray,
+                                const bool& aIsVertical,
+                                const LayoutDeviceIntPoint& aPoint)
+{
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return true;
+  }
+
+  widget->LookUpDictionary(aText, aFontRangeArray, aIsVertical,
+                           aPoint - GetChildProcessOffset());
   return true;
 }
 

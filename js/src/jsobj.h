@@ -98,7 +98,7 @@ bool SetImmutablePrototype(js::ExclusiveContext* cx, JS::HandleObject obj, bool*
 class JSObject : public js::gc::Cell
 {
   protected:
-    js::HeapPtrObjectGroup group_;
+    js::GCPtrObjectGroup group_;
 
   private:
     friend class js::Shape;
@@ -352,7 +352,7 @@ class JSObject : public js::gc::Cell
 
     inline js::ObjectGroup* getGroup(JSContext* cx);
 
-    const js::HeapPtrObjectGroup& groupFromGC() const {
+    const js::GCPtrObjectGroup& groupFromGC() const {
         /* Direct field access for use by GC. */
         return group_;
     }
@@ -562,7 +562,8 @@ class JSObject : public js::gc::Cell
     }
 
 #ifdef DEBUG
-    void dump();
+    void dump(FILE* fp) const;
+    void dump() const;
 #endif
 
     /* JIT Accessors */

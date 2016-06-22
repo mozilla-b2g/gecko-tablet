@@ -267,6 +267,8 @@ struct Cell
 
 #ifdef DEBUG
     inline bool isAligned() const;
+    void dump(FILE* fp) const;
+    void dump() const;
 #endif
 
   protected:
@@ -1012,7 +1014,7 @@ struct Chunk
 
   public:
     /* Unlink and return the freeArenasHead. */
-    inline Arena* fetchNextFreeArena(JSRuntime* rt);
+    Arena* fetchNextFreeArena(JSRuntime* rt);
 };
 
 static_assert(sizeof(Chunk) == ChunkSize,

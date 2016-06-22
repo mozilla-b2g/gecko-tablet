@@ -44,11 +44,14 @@
 #include "nsCOMArray.h"
 #include "mozilla/net/ChannelEventQueue.h"
 
-class nsPerformance;
 class nsISecurityConsoleMessage;
 class nsIPrincipal;
 
 namespace mozilla {
+
+namespace dom {
+class Performance;
+}
 
 class LogCollector;
 
@@ -92,7 +95,8 @@ public:
 
   virtual nsresult Init(nsIURI *aURI, uint32_t aCaps, nsProxyInfo *aProxyInfo,
                         uint32_t aProxyResolveFlags,
-                        nsIURI *aProxyURI);
+                        nsIURI *aProxyURI,
+                        const nsID& aChannelId);
 
   // nsIRequest
   NS_IMETHOD GetName(nsACString& aName) override;
@@ -179,6 +183,8 @@ public:
   NS_IMETHOD GetIsMainDocumentChannel(bool* aValue) override;
   NS_IMETHOD SetIsMainDocumentChannel(bool aValue) override;
   NS_IMETHOD GetProtocolVersion(nsACString & aProtocolVersion) override;
+  NS_IMETHOD GetChannelId(nsACString& aChannelId) override;
+  NS_IMETHOD SetChannelId(const nsACString& aChannelId) override;
 
   // nsIHttpChannelInternal
   NS_IMETHOD GetDocumentURI(nsIURI **aDocumentURI) override;
@@ -318,7 +324,7 @@ protected:
   // drop reference to listener, its callbacks, and the progress sink
   void ReleaseListeners();
 
-  nsPerformance* GetPerformance();
+  mozilla::dom::Performance* GetPerformance();
   nsIURI* GetReferringPage();
   nsPIDOMWindowInner* GetInnerDOMWindow();
 
@@ -515,6 +521,8 @@ protected:
   nsCOMPtr<nsIConsoleReportCollector> mReportCollector;
 
   bool mForceMainDocumentChannel;
+
+  nsID mChannelId;
 };
 
 // Share some code while working around C++'s absurd inability to handle casting

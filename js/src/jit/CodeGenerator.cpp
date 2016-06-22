@@ -3478,6 +3478,24 @@ CodeGenerator::visitOutOfLineCallPostWriteBarrier(OutOfLineCallPostWriteBarrier*
     masm.jump(ool->rejoin());
 }
 
+void
+CodeGenerator::maybeEmitGlobalBarrierCheck(const LAllocation* maybeGlobal, OutOfLineCode* ool)
+{
+    // Check whether an object is a global that we have already barriered before
+    // calling into the VM.
+
+    if (!maybeGlobal->isConstant())
+        return;
+
+    JSObject* obj = &maybeGlobal->toConstant()->toObject();
+    if (!obj->is<GlobalObject>())
+        return;
+
+    JSCompartment* comp = obj->compartment();
+    auto addr = AbsoluteAddress(&comp->globalWriteBarriered);
+    masm.branch32(Assembler::NotEqual, addr, Imm32(0), ool->rejoin());
+}
+
 template <class LPostBarrierType>
 void
 CodeGenerator::visitPostWriteBarrierCommonO(LPostBarrierType* lir, OutOfLineCode* ool)
@@ -3493,6 +3511,8 @@ CodeGenerator::visitPostWriteBarrierCommonO(LPostBarrierType* lir, OutOfLineCode
         masm.branchPtrInNurseryRange(Assembler::Equal, ToRegister(lir->object()), temp,
                                      ool->rejoin());
     }
+
+    maybeEmitGlobalBarrierCheck(lir->object(), ool);
 
     masm.branchPtrInNurseryRange(Assembler::Equal, ToRegister(lir->value()), temp, ool->entry());
 
@@ -3514,6 +3534,8 @@ CodeGenerator::visitPostWriteBarrierCommonV(LPostBarrierType* lir, OutOfLineCode
         masm.branchPtrInNurseryRange(Assembler::Equal, ToRegister(lir->object()), temp,
                                      ool->rejoin());
     }
+
+    maybeEmitGlobalBarrierCheck(lir->object(), ool);
 
     ValueOperand value = ToValue(lir, LPostBarrierType::Input);
     masm.branchValueIsNurseryObject(Assembler::Equal, value, temp, ool->entry());
@@ -4939,6 +4961,42 @@ CodeGenerator::emitDebugResultChecks(LInstruction* ins)
         break;
     }
 }
+
+void
+CodeGenerator::emitDebugForceBailing(LInstruction* lir)
+{
+    if (!lir->snapshot())
+        return;
+    if (lir->isStart())
+        return;
+    if (lir->isOsiPoint())
+        return;
+
+    const void* bailAfterAddr = GetJitContext()->runtime->addressOfIonBailAfter();
+
+    AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
+
+    Label done, notBail, bail;
+    masm.branch32(Assembler::Equal, AbsoluteAddress(bailAfterAddr), Imm32(0), &done);
+    {
+        Register temp = regs.takeAny();
+
+        masm.push(temp);
+        masm.load32(AbsoluteAddress(bailAfterAddr), temp);
+        masm.sub32(Imm32(1), temp);
+        masm.store32(temp, AbsoluteAddress(bailAfterAddr));
+
+        masm.branch32(Assembler::NotEqual, temp, Imm32(0), &notBail);
+        {
+            masm.pop(temp);
+            masm.jump(&bail);
+            bailoutFrom(&bail, lir->snapshot());
+        }
+        masm.bind(&notBail);
+        masm.pop(temp);
+    }
+    masm.bind(&done);
+}
 #endif
 
 bool
@@ -5026,6 +5084,10 @@ CodeGenerator::generateBody()
                         return false;
                 }
             }
+
+#ifdef DEBUG
+            emitDebugForceBailing(*iter);
+#endif
 
             iter->accept(this);
 
@@ -5887,15 +5949,46 @@ CodeGenerator::visitCreateArgumentsObject(LCreateArgumentsObject* lir)
     // This should be getting constructed in the first block only, and not any OSR entry blocks.
     MOZ_ASSERT(lir->mir()->block()->id() == 0);
 
-    const LAllocation* callObj = lir->getCallObject();
-    Register temp = ToRegister(lir->getTemp(0));
+    Register callObj = ToRegister(lir->getCallObject());
+    Register temp = ToRegister(lir->temp0());
+    Label done;
+
+    if (ArgumentsObject* templateObj = lir->mir()->templateObject()) {
+        Register objTemp = ToRegister(lir->temp1());
+        Register cxTemp = ToRegister(lir->temp2());
+
+        // Try to allocate an arguments object. This will leave the reserved
+        // slots uninitialized, so it's important we don't GC until we
+        // initialize these slots in ArgumentsObject::finishForIon.
+        Label failure;
+        masm.createGCObject(objTemp, temp, templateObj, gc::DefaultHeap, &failure,
+                            /* initContents = */ false);
+
+        masm.moveStackPtrTo(temp);
+        masm.addPtr(Imm32(frameSize()), temp);
+
+        masm.setupUnalignedABICall(cxTemp);
+        masm.loadJSContext(cxTemp);
+        masm.passABIArg(cxTemp);
+        masm.passABIArg(temp);
+        masm.passABIArg(callObj);
+        masm.passABIArg(objTemp);
+
+        masm.callWithABI(JS_FUNC_TO_DATA_PTR(void*, ArgumentsObject::finishForIon));
+        masm.branchTestPtr(Assembler::Zero, ReturnReg, ReturnReg, masm.exceptionLabel());
+        masm.jump(&done);
+
+        masm.bind(&failure);
+    }
 
     masm.moveStackPtrTo(temp);
     masm.addPtr(Imm32(frameSize()), temp);
 
-    pushArg(ToRegister(callObj));
+    pushArg(callObj);
     pushArg(temp);
     callVM(NewIonArgumentsObjectInfo, lir);
+
+    masm.bind(&done);
 }
 
 void
@@ -8748,11 +8841,11 @@ CodeGenerator::visitRest(LRest* lir)
 }
 
 bool
-CodeGenerator::generateAsmJS(wasm::FuncOffsets* offsets)
+CodeGenerator::generateWasm(uint32_t sigIndex, wasm::FuncOffsets* offsets)
 {
     JitSpew(JitSpew_Codegen, "# Emitting asm.js code");
 
-    wasm::GenerateFunctionPrologue(masm, frameSize(), offsets);
+    wasm::GenerateFunctionPrologue(masm, frameSize(), sigIndex, offsets);
 
     // Overflow checks are omitted by CodeGenerator in some cases (leaf
     // functions with small framePushed). Perform overflow-checking after

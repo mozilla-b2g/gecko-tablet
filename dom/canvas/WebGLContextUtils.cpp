@@ -684,7 +684,7 @@ WebGLContext::AssertCachedBindings()
         AssertUintParamCorrect(gl, LOCAL_GL_VERTEX_ARRAY_BINDING, bound);
     }
 
-    // Bound object state
+    // Framebuffers
     if (IsWebGL2()) {
         GLuint bound = mBoundDrawFramebuffer ? mBoundDrawFramebuffer->mGLName
                                              : 0;
@@ -699,6 +699,15 @@ WebGLContext::AssertCachedBindings()
         AssertUintParamCorrect(gl, LOCAL_GL_FRAMEBUFFER_BINDING, bound);
     }
 
+    GLint stencilBits = 0;
+    if (GetStencilBits(&stencilBits)) { // Depends on current draw framebuffer.
+        const GLuint stencilRefMask = (1 << stencilBits) - 1;
+
+        AssertMaskedUintParamCorrect(gl, LOCAL_GL_STENCIL_REF,      stencilRefMask, mStencilRefFront);
+        AssertMaskedUintParamCorrect(gl, LOCAL_GL_STENCIL_BACK_REF, stencilRefMask, mStencilRefBack);
+    }
+
+    // Program
     GLuint bound = mCurrentProgram ? mCurrentProgram->mGLName : 0;
     AssertUintParamCorrect(gl, LOCAL_GL_CURRENT_PROGRAM, bound);
 
@@ -730,7 +739,7 @@ WebGLContext::AssertCachedBindings()
 }
 
 void
-WebGLContext::AssertCachedState()
+WebGLContext::AssertCachedGlobalState()
 {
 #ifdef DEBUG
     MakeContextCurrent();
@@ -770,14 +779,6 @@ WebGLContext::AssertCachedState()
     MOZ_ASSERT(IsCacheCorrect(mDepthClearValue, depthClearValue));
 
     AssertUintParamCorrect(gl, LOCAL_GL_STENCIL_CLEAR_VALUE, mStencilClearValue);
-
-    GLint stencilBits = 0;
-    if (GetStencilBits(&stencilBits)) {
-        const GLuint stencilRefMask = (1 << stencilBits) - 1;
-
-        AssertMaskedUintParamCorrect(gl, LOCAL_GL_STENCIL_REF,      stencilRefMask, mStencilRefFront);
-        AssertMaskedUintParamCorrect(gl, LOCAL_GL_STENCIL_BACK_REF, stencilRefMask, mStencilRefBack);
-    }
 
     // GLES 3.0.4, $4.1.4, p177:
     //   [...] the front and back stencil mask are both set to the value `2^s - 1`, where
@@ -830,7 +831,7 @@ InfoFrom(WebGLTexImageFunc func, WebGLTexDimensions dims)
         case WebGLTexImageFunc::CompTexImage:    return "compressedTexImage2D";
         case WebGLTexImageFunc::CompTexSubImage: return "compressedTexSubImage2D";
         default:
-            MOZ_CRASH();
+            MOZ_CRASH("GFX: invalid 2D TexDimensions");
         }
     case WebGLTexDimensions::Tex3D:
         switch (func) {
@@ -839,10 +840,10 @@ InfoFrom(WebGLTexImageFunc func, WebGLTexDimensions dims)
         case WebGLTexImageFunc::CopyTexSubImage: return "copyTexSubImage3D";
         case WebGLTexImageFunc::CompTexSubImage: return "compressedTexSubImage3D";
         default:
-            MOZ_CRASH();
+            MOZ_CRASH("GFX: invalid 3D TexDimensions");
         }
     default:
-        MOZ_CRASH();
+        MOZ_CRASH("GFX: invalid TexDimensions");
     }
 }
 

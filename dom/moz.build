@@ -59,6 +59,7 @@ DIRS += [
     'fetch',
     'filehandle',
     'filesystem',
+    'flyweb',
     'fmradio',
     'geolocation',
     'html',
@@ -109,6 +110,8 @@ DIRS += [
     'vr',
     'newapps',
     'u2f',
+    'console',
+    'performance',
 ]
 
 if CONFIG['OS_ARCH'] == 'WINNT':

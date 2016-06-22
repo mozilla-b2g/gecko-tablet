@@ -9,7 +9,6 @@ include(libevent_path_prefix + '/libeventcommon.mozbuild')
 
 UNIFIED_SOURCES += [
     'src/base/at_exit.cc',
-    'src/base/buffer.cc',
     'src/base/command_line.cc',
     'src/base/file_path.cc',
     'src/base/file_util.cc',
@@ -136,6 +135,8 @@ if os_linux:
         ]
         DEFINES['ANDROID'] = True
         DEFINES['_POSIX_MONOTONIC_CLOCK'] = 0
+        if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
+            DEFINES['HAVE_ANDROID_OS'] = True
 
 if os_bsd or os_linux:
     if 'gtk' in CONFIG['MOZ_WIDGET_TOOLKIT']:

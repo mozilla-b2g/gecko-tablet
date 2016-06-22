@@ -11,6 +11,7 @@
 
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/ipc/GeckoChildProcessHost.h"
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
@@ -92,8 +93,6 @@
 #include "nsAppShellCID.h"
 #include "mozilla/scache/StartupCache.h"
 #include "gfxPrefs.h"
-
-#include "base/histogram.h"
 
 #include "mozilla/unused.h"
 
@@ -623,6 +622,22 @@ GetAndCleanTempDir()
     return nullptr;
   }
 
+  // If the NS_APP_CONTENT_PROCESS_TEMP_DIR is the real temp directory, don't
+  // attempt to delete it.
+  nsCOMPtr<nsIFile> realTempDir;
+  rv = NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(realTempDir));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return nullptr;
+  }
+  bool isRealTemp;
+  rv = tempDir->Equals(realTempDir, &isRealTemp);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return nullptr;
+  }
+  if (isRealTemp) {
+    return tempDir.forget();
+  }
+
   // Don't return an error if the directory doesn't exist.
   // Windows Remove() returns NS_ERROR_FILE_NOT_FOUND while
   // OS X returns NS_ERROR_FILE_TARGET_DOES_NOT_EXIST.
@@ -945,9 +960,11 @@ SYNC_ENUMS(DEFAULT, Default)
 SYNC_ENUMS(PLUGIN, Plugin)
 SYNC_ENUMS(CONTENT, Content)
 SYNC_ENUMS(IPDLUNITTEST, IPDLUnitTest)
+SYNC_ENUMS(GMPLUGIN, GMPlugin)
+SYNC_ENUMS(GPU, GPU)
 
 // .. and ensure that that is all of them:
-static_assert(GeckoProcessType_GMPlugin + 1 == GeckoProcessType_End,
+static_assert(GeckoProcessType_GPU + 1 == GeckoProcessType_End,
               "Did not find the final GeckoProcessType");
 
 NS_IMETHODIMP
@@ -4361,6 +4378,11 @@ XREMain::XRE_mainRun()
   }
 #endif /* MOZ_INSTRUMENT_EVENT_LOOP */
 
+#if defined(MOZ_SANDBOX) && defined(XP_LINUX) && !defined(ANDROID)
+  // If we're on Linux, we now have information about the OS capabilities
+  // available to us.
+  SandboxInfo::SubmitTelemetry();
+#endif
 #if (defined(XP_WIN) || defined(XP_MACOSX)) && defined(MOZ_CONTENT_SANDBOX)
   SetUpSandboxEnvironment();
 #endif
@@ -4564,12 +4586,9 @@ XRE_StopLateWriteChecks(void) {
 void
 XRE_CreateStatsObject()
 {
-  // A initializer to initialize histogram collection, a chromium
-  // thing used by Telemetry (and effectively a global; it's all static).
-  // Note: purposely leaked
-  base::StatisticsRecorder* statistics_recorder = new base::StatisticsRecorder();
-  MOZ_LSAN_INTENTIONALLY_LEAK_OBJECT(statistics_recorder);
-  Unused << statistics_recorder;
+  // Initialize global variables used by histogram collection
+  // machinery that is used by by Telemetry.  Note: is never de-initialised.
+  Telemetry::CreateStatisticsRecorder();
 }
 
 int
@@ -4698,9 +4717,9 @@ enum {
   kE10sDisabledForAddons = 7,
   kE10sForceDisabled = 8,
   kE10sDisabledForXPAcceleration = 9,
+  kE10sDisabledForOperatingSystem = 10,
 };
 
-#if defined(XP_WIN) || defined(XP_MACOSX)
 const char* kAccessibilityLastRunDatePref = "accessibility.lastLoadDate";
 const char* kAccessibilityLoadedLastSessionPref = "accessibility.loadedInLastSession";
 
@@ -4710,7 +4729,6 @@ PRTimeToSeconds(PRTime t_usec)
   PRTime usec_per_sec = PR_USEC_PER_SEC;
   return uint32_t(t_usec /= usec_per_sec);
 }
-#endif // XP_WIN || XP_MACOSX
 
 const char* kForceEnableE10sPref = "browser.tabs.remote.force-enable";
 const char* kForceDisableE10sPref = "browser.tabs.remote.force-disable";
@@ -4741,7 +4759,7 @@ MultiprocessBlockPolicy() {
   }
 
   bool disabledForA11y = false;
-#if defined(XP_WIN) || defined(XP_MACOSX)
+
   /**
    * Avoids enabling e10s if accessibility has recently loaded. Performs the
    * following checks:
@@ -4768,7 +4786,40 @@ MultiprocessBlockPolicy() {
       disabledForA11y = true;
     }
   }
-#endif // XP_WIN || XP_MACOSX
+
+  // For linux nightly and aurora builds skip accessibility
+  // checks.
+  bool doAccessibilityCheck = true;
+#if defined(MOZ_WIDGET_GTK) && !defined(RELEASE_BUILD)
+  doAccessibilityCheck = false;
+#endif
+
+  if (doAccessibilityCheck && disabledForA11y) {
+    gMultiprocessBlockPolicy = kE10sDisabledForAccessibility;
+    return gMultiprocessBlockPolicy;
+  }
+
+  /**
+   * Avoids enabling e10s for Windows XP users on the release channel.
+   */
+#if defined(XP_WIN)
+  if (Preferences::GetDefaultCString("app.update.channel").EqualsLiteral("release") &&
+      !IsVistaOrLater()) {
+    gMultiprocessBlockPolicy = kE10sDisabledForOperatingSystem;
+    return gMultiprocessBlockPolicy;
+  }
+#endif
+
+  /**
+   * Avoids enabling e10s for OS X 10.6 - 10.8 users (<= Mountain Lion) as these
+   * versions will be unsupported soon.
+   */
+#if defined(XP_MACOSX)
+  if (!nsCocoaFeatures::OnMavericksOrLater()) {
+    gMultiprocessBlockPolicy = kE10sDisabledForOperatingSystem;
+    return gMultiprocessBlockPolicy;
+  }
+#endif
 
 #if defined(XP_WIN)
   /**
@@ -4784,11 +4835,7 @@ MultiprocessBlockPolicy() {
   }
 #endif // XP_WIN
 
-  if (disabledForA11y) {
-    gMultiprocessBlockPolicy = kE10sDisabledForAccessibility;
-    return gMultiprocessBlockPolicy;
-  }
-
+#if defined(MOZ_WIDGET_GTK)
   /**
    * Avoids enabling e10s for certain locales that require bidi selection,
    * which currently doesn't work well with e10s.
@@ -4805,8 +4852,7 @@ MultiprocessBlockPolicy() {
     gMultiprocessBlockPolicy = kE10sDisabledForBidi;
     return gMultiprocessBlockPolicy;
   }
-
-
+#endif // MOZ_WIDGET_GTK
 
   /*
    * None of the blocking policies matched, so e10s is allowed to run.
@@ -4866,9 +4912,6 @@ mozilla::BrowserTabsRemoteAutostart()
   if (prefEnabled) {
     mozilla::Telemetry::Accumulate(mozilla::Telemetry::E10S_BLOCKED_FROM_RUNNING,
                                     !gBrowserTabsRemoteAutostart);
-  }
-  if (Preferences::HasUserValue("extensions.e10sBlockedByAddons")) {
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::E10S_ADDONS_BLOCKER_RAN, true);
   }
   return gBrowserTabsRemoteAutostart;
 }
@@ -4938,4 +4981,9 @@ OverrideDefaultLocaleIfNeeded() {
     // Otherwise fall back to the "C" locale, which is available on all platforms.
     setlocale(LC_ALL, "C.UTF-8") || setlocale(LC_ALL, "C");
   }
+}
+
+void
+XRE_EnableSameExecutableForContentProc() {
+  mozilla::ipc::GeckoChildProcessHost::EnableSameExecutableForContentProc();
 }

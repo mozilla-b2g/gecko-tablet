@@ -47,7 +47,7 @@ _SUBDIR_CONFIG_ARGS="$ac_configure_args"
 dnl Set the version number of the libs included with mozilla
 dnl ========================================================
 MOZJPEG=62
-MOZPNG=10621
+MOZPNG=10623
 NSPR_VERSION=4
 NSPR_MINVER=4.12
 NSS_VERSION=3
@@ -70,7 +70,7 @@ GNOMEUI_VERSION=2.2.0
 GCONF_VERSION=1.2.1
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.12.2
+SQLITE_VERSION=3.13.0
 FONTCONFIG_VERSION=2.7.0
 
 MSMANIFEST_TOOL=
@@ -95,6 +95,10 @@ DIST="$MOZ_BUILD_ROOT/dist"
 
 MOZ_DEFAULT_COMPILER
 
+if test "$COMPILE_ENVIRONMENT"; then
+    MOZ_ANDROID_NDK
+fi # COMPILE_ENVIRONMENT
+
 if test -n "$gonkdir" ; then
     dnl export for js/src/configure. We can't pass the option down normally,
     dnl because it's a `--enable-project=b2g`-only option.
@@ -107,11 +111,6 @@ if test -n "$gonkdir" ; then
     if test -n "${PLATFORM_SDK_VERSION}"; then
         ANDROID_VERSION="${PLATFORM_SDK_VERSION}"
     fi
-
-    if ! test -e "$gonkdir/ndk/sources/cxx-stl/stlport/src/iostream.cpp"; then
-        AC_MSG_ERROR([Couldn't find path to stlport sources in the gonk tree])
-    fi
-    STLPORT_CPPFLAGS="-I$_topsrcdir/build/stlport/stlport -I$gonkdir/ndk/sources/cxx-stl/system/include"
 
     case "$ANDROID_VERSION" in
     15)
@@ -183,13 +182,11 @@ if test -n "$gonkdir" ; then
         AC_MSG_ERROR([Unsupported platform version: $ANDROID_VERSION])
         ;;
     esac
-    CPPFLAGS="-DANDROID $TARGET_C_INCLUDES -I$gonkdir/system -I$gonkdir/system/core/include -isystem $gonkdir/bionic -I$gonkdir/hardware/libhardware/include -I$gonkdir/external/valgrind/fxos-include $GONK_INCLUDES $CPPFLAGS"
-    CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
-    CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions $CXXFLAGS $STLPORT_CPPFLAGS"
+
+    CPPFLAGS="-I$gonkdir/system -I$gonkdir/system/core/include -I$gonkdir/hardware/libhardware/include -I$gonkdir/external/valgrind/fxos-include $GONK_INCLUDES $CPPFLAGS"
+    LDFLAGS="-L$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib -Wl,-rpath-link=$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib $LDFLAGS"
     dnl Add -llog by default, since we use it all over the place.
     LIBS="$LIBS -llog"
-
-    LDFLAGS="-mandroid -L$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib -Wl,-rpath-link=$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib --sysroot=$gonkdir/out/target/product/$GONK_PRODUCT/obj/ $LDFLAGS"
 
     AC_DEFINE(ANDROID)
     AC_DEFINE_UNQUOTED(ANDROID_VERSION, $ANDROID_VERSION)
@@ -197,12 +194,8 @@ if test -n "$gonkdir" ; then
     AC_DEFINE(HAVE_SYS_UIO_H)
     AC_DEFINE(HAVE_PTHREADS)
     direct_nspr_config=1
-    android_cxx_stl=mozstlport
-else
-    if test "$COMPILE_ENVIRONMENT"; then
-        MOZ_ANDROID_NDK
-    fi # COMPILE_ENVIRONMENT
 
+else
     case "$target" in
     *-android*|*-linuxandroid*)
         ZLIB_DIR=yes
@@ -1090,6 +1083,24 @@ if test "$MOZ_PROFILING" -a -z "$STRIP_FLAGS"; then
 fi
 
 dnl ========================================================
+dnl = Enable Gecko integrated IPC fuzzer
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(ipc-fuzzer,
+[  --enable-ipc-fuzzer       Enable IPC fuzzer (default=no)],
+    MOZ_FAULTY=1,
+    MOZ_FAULTY= )
+AC_SUBST(MOZ_FAULTY)
+
+if test -n "$MOZ_FAULTY" && test "$OS_ARCH" = "WINNT"; then
+    AC_MSG_ERROR([--enable-ipc-fuzzer is not supported on this platform.])
+fi
+
+if test -n "$MOZ_FAULTY"; then
+    MOZ_FAULTY=1
+    AC_DEFINE(MOZ_FAULTY)
+fi
+
+dnl ========================================================
 dnl = Enable DMD
 dnl ========================================================
 
@@ -1186,6 +1197,7 @@ case "$target" in
     MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
     MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
     MOZ_OPTIMIZE_FLAGS="-O3"
+    CXXFLAGS="$CXXFLAGS -stdlib=libc++"
     DLL_SUFFIX=".dylib"
     DSO_LDOPTS=''
     STRIP_FLAGS="$STRIP_FLAGS -x -S"
@@ -1285,17 +1297,12 @@ case "$target" in
         CXXFLAGS="$CXXFLAGS -mieee"
     ;;
     esac
-
-    if test -z "$MC"; then
-        MC=mc.exe
-    fi
     ;;
 *-mingw*)
     DSO_CFLAGS=
     DSO_PIC_CFLAGS=
     DLL_SUFFIX=.dll
     RC=rc.exe
-    MC=mc.exe
     # certain versions of cygwin's makedepend barf on the
     # #include <string> vs -I./dist/include/string issue so don't use it
     if test -n "$GNU_CC" -o -n "$CLANG_CC"; then
@@ -1314,7 +1321,7 @@ case "$target" in
         # Use temp file for windres (bug 213281)
         RCFLAGS='-O coff --use-temp-file'
         # mingw doesn't require kernel32, user32, and advapi32 explicitly
-        LIBS="$LIBS -luuid -lgdi32 -lwinmm -lwsock32 -luserenv -lsecur32 -lnetapi32"
+        LIBS="$LIBS -luuid -lgdi32 -lwinmm -lwsock32 -luserenv -lsecur32"
         MOZ_FIX_LINK_PATHS=
         DLL_PREFIX=
         IMPORT_LIB_SUFFIX=a
@@ -1470,7 +1477,7 @@ case "$target" in
         # make 'foo == bar;' error out
         CFLAGS="$CFLAGS -we4553"
         CXXFLAGS="$CXXFLAGS -we4553"
-        LIBS="$LIBS kernel32.lib user32.lib gdi32.lib winmm.lib wsock32.lib advapi32.lib secur32.lib netapi32.lib"
+        LIBS="$LIBS kernel32.lib user32.lib gdi32.lib winmm.lib wsock32.lib advapi32.lib secur32.lib"
         MOZ_DEBUG_LDFLAGS='-DEBUG -DEBUGTYPE:CV'
         WARNINGS_AS_ERRORS='-WX'
         MOZ_OPTIMIZE_FLAGS='-O1 -Oi'
@@ -1524,7 +1531,7 @@ case "$target" in
 
     case "$target" in
     i*86-*)
-        if test "$HAVE_64BIT_BUILD"; then
+        if test "$HAVE_64BIT_BUILD" -a -n "$COMPILE_ENVIRONMENT"; then
             AC_MSG_ERROR([You are targeting i386 but using the 64-bit compiler.])
         fi
 
@@ -1540,7 +1547,7 @@ case "$target" in
         AC_DEFINE(_X86_)
         ;;
     x86_64-*)
-        if test -z "$HAVE_64BIT_BUILD"; then
+        if test -z "$HAVE_64BIT_BUILD" -a -n "$COMPILE_ENVIRONMENT"; then
             AC_MSG_ERROR([You are targeting 64-bit but using the 32-bit compiler.])
         fi
         if test -n "$_WIN32_MSVC"; then
@@ -1672,7 +1679,7 @@ if test "$GNU_CC" -a "$OS_TARGET" != WINNT; then
 fi         # GNU_CC
 
 case "${OS_TARGET}" in
-WINNT|Darwin|Android)
+Darwin)
   ;;
 *)
   STL_FLAGS="-I${DIST}/stl_wrappers"
@@ -2452,7 +2459,7 @@ MOZ_ARG_WITH_BOOL(system-nss,
     _USE_SYSTEM_NSS=1 )
 
 if test -n "$_USE_SYSTEM_NSS"; then
-    AM_PATH_NSS(3.23, [MOZ_SYSTEM_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
+    AM_PATH_NSS(3.25, [MOZ_SYSTEM_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
 fi
 
 if test -n "$MOZ_SYSTEM_NSS"; then
@@ -2630,7 +2637,6 @@ dnl ========================================================
 
 MOZ_ARG_HEADER(Application)
 
-ENABLE_TESTS=1
 ENABLE_SYSTEM_EXTENSION_DIRS=1
 MOZ_BRANDING_DIRECTORY=
 MOZ_OFFICIAL_BRANDING=
@@ -2775,18 +2781,6 @@ MOZ_ARG_WITH_STRING(adjust-sdk-keyfile,
   MOZ_INSTALL_TRACKING_ADJUST_SDK_APP_TOKEN=`cat $withval`)
 AC_SUBST(MOZ_INSTALL_TRACKING_ADJUST_SDK_APP_TOKEN)
 
-# Whether this APK is destined for resource constrained devices.
-# We want this in mobile/android/confvars.sh, so it goes early.
-MOZ_ARG_ENABLE_BOOL(android-resource-constrained,
-[  --enable-android-resource-constrained
-                          Exclude hi-res images and similar from the final APK],
-    MOZ_ANDROID_RESOURCE_CONSTRAINED=1)
-
-if test -n "$MOZ_ANDROID_RESOURCE_CONSTRAINED"; then
-    AC_DEFINE(MOZ_ANDROID_RESOURCE_CONSTRAINED)
-fi
-AC_SUBST(MOZ_ANDROID_RESOURCE_CONSTRAINED)
-
 # Optional Firefox for Android partner distribution directory.
 MOZ_ARG_WITH_STRING(android-distribution-directory,
 [  --with-android-distribution-directory=dir
@@ -2904,7 +2898,7 @@ dnl ========================================================
 if test -z "$gonkdir" ; then
     case "$MOZ_BUILD_APP" in
     mobile/android)
-        MOZ_ANDROID_SDK(23, 23.0.1)
+        MOZ_ANDROID_SDK(23, 23.0.3)
         ;;
     esac
 fi
@@ -2932,7 +2926,7 @@ cocoa)
     LDFLAGS="$LDFLAGS -framework Cocoa -lobjc"
     # Use -Wl as a trick to avoid -framework and framework names from
     # being separated by AC_SUBST_LIST.
-    TK_LIBS='-Wl,-framework,CoreLocation -Wl,-framework,QuartzCore -Wl,-framework,Carbon -Wl,-framework,CoreAudio -Wl,-framework,AudioToolbox -Wl,-framework,AudioUnit -Wl,-framework,AddressBook -Wl,-framework,OpenGL'
+    TK_LIBS='-Wl,-framework,CoreLocation -Wl,-framework,QuartzCore -Wl,-framework,Carbon -Wl,-framework,CoreAudio -Wl,-framework,AudioToolbox -Wl,-framework,AudioUnit -Wl,-framework,AddressBook -Wl,-framework,OpenGL -Wl,-framework,Security -Wl,-framework,ServiceManagement'
     TK_CFLAGS=""
     CFLAGS="$CFLAGS $TK_CFLAGS"
     CXXFLAGS="$CXXFLAGS $TK_CFLAGS"
@@ -4375,7 +4369,7 @@ if test -n "$MOZ_CRASHREPORTER"; then
   fi
 
   if test "$OS_ARCH" = "WINNT"; then
-    if test -z "$HAVE_64BIT_BUILD"; then
+    if test -z "$HAVE_64BIT_BUILD" -a -n "$COMPILE_ENVIRONMENT"; then
       MOZ_CRASHREPORTER_INJECTOR=1
       AC_DEFINE(MOZ_CRASHREPORTER_INJECTOR)
     fi
@@ -4781,32 +4775,6 @@ MOZ_ARG_DISABLE_BOOL(updater,
 
 if test -n "$MOZ_UPDATER"; then
     AC_DEFINE(MOZ_UPDATER)
-fi
-
-dnl ========================================================
-dnl build the tests by default
-dnl ========================================================
-MOZ_ARG_DISABLE_BOOL(tests,
-[  --disable-tests         Do not build test libraries & programs],
-    ENABLE_TESTS=,
-    ENABLE_TESTS=1 )
-
-if test -n "$ENABLE_TESTS"; then
-    GTEST_HAS_RTTI=0
-    AC_DEFINE(ENABLE_TESTS)
-    AC_DEFINE_UNQUOTED(GTEST_HAS_RTTI, 0)
-    AC_SUBST(GTEST_HAS_RTTI)
-    if test -n "$_WIN32_MSVC"; then
-          AC_DEFINE_UNQUOTED(_VARIADIC_MAX, 10)
-    fi
-    if test "${OS_TARGET}" = "Android"; then
-        AC_DEFINE(GTEST_OS_LINUX_ANDROID)
-        AC_DEFINE(GTEST_USE_OWN_TR1_TUPLE)
-        AC_DEFINE_UNQUOTED(GTEST_HAS_CLONE, 0)
-        AC_SUBST(GTEST_OS_LINUX_ANDROID)
-        AC_SUBST(GTEST_USE_OWN_TR1_TUPLE)
-        AC_SUBST(GTEST_HAS_CLONE)
-    fi
 fi
 
 dnl ========================================================
@@ -5306,31 +5274,6 @@ if test "$_ENABLE_LOGREFCNT" = "1"; then
     AC_DEFINE(FORCE_BUILD_REFCNT_LOGGING)
 elif test -z "$_ENABLE_LOGREFCNT"; then
     AC_DEFINE(NO_BUILD_REFCNT_LOGGING)
-fi
-
-dnl ========================================================
-dnl moz_aproximate_location
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(approximate_location,
-[ --enable-approximate-location    Enable approximate location ],
-    MOZ_APPROX_LOCATION=1,
-    MOZ_APPROX_LOCATION= )
-if test -n "$MOZ_APPROX_LOCATION"; then
-    AC_DEFINE(MOZ_APPROX_LOCATION)
-fi
-
-dnl ========================================================
-dnl moz_gps_debug
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(gps_debug,
-[ --enable-gps-debug    Enable gps specific debug messages ],
-    MOZ_GPS_DEBUG=1,
-    MOZ_GPS_DEBUG= )
-if test -n "$MOZ_GPS_DEBUG"; then
-    AC_DEFINE(MOZ_GPS_DEBUG)
-fi
-if test -n "$MOZ_DEBUG"; then
-    AC_DEFINE(MOZ_GPS_DEBUG)
 fi
 
 dnl ========================================================
@@ -6506,7 +6449,6 @@ AC_SUBST(AS_DASH_C_FLAG)
 AC_SUBST(LD)
 AC_SUBST(RC)
 AC_SUBST(RCFLAGS)
-AC_SUBST(MC)
 AC_SUBST(WINDRES)
 AC_SUBST(IMPLIB)
 AC_SUBST(FILTER)
@@ -6514,7 +6456,6 @@ AC_SUBST(BIN_FLAGS)
 AC_SUBST(MOZ_AUTH_EXTENSION)
 AC_SUBST(MOZ_PREF_EXTENSIONS)
 AC_SUBST(MOZ_DEBUG)
-AC_SUBST(MOZ_DEBUG_SYMBOLS)
 AC_SUBST(MOZ_DEBUG_LDFLAGS)
 AC_SUBST(WARNINGS_AS_ERRORS)
 AC_SUBST_SET(MOZ_EXTENSIONS)
@@ -6524,7 +6465,6 @@ AC_SUBST(MOZ_FEEDS)
 AC_SUBST(NS_PRINTING)
 AC_SUBST(MOZ_HELP_VIEWER)
 
-AC_SUBST(ENABLE_TESTS)
 AC_SUBST(MOZ_UNIVERSALCHARDET)
 AC_SUBST(ACCESSIBILITY)
 AC_SUBST(MOZ_SPELLCHECK)
@@ -6550,7 +6490,6 @@ AC_SUBST(MOZ_D3DCOMPILER_XP_CAB)
 AC_SUBST(MOZ_WEBSMS_BACKEND)
 AC_SUBST(MOZ_DISABLE_GECKOVIEW)
 AC_SUBST(MOZ_ANDROID_GECKOLIBS_AAR)
-AC_SUBST(MOZ_ANDROID_PACKAGE_INSTALL_BOUNCER)
 AC_SUBST(MOZ_ANDROID_APPLICATION_CLASS)
 AC_SUBST(MOZ_ANDROID_BROWSER_INTENT_CLASS)
 AC_SUBST(MOZ_ANDROID_SEARCH_INTENT_CLASS)

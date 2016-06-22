@@ -25,7 +25,7 @@ const {
   SELECTOR_ATTRIBUTE,
   SELECTOR_ELEMENT,
   SELECTOR_PSEUDO_CLASS
-} = require("devtools/client/shared/css-parsing-utils");
+} = require("devtools/shared/css-parsing-utils");
 const promise = require("promise");
 const Services = require("Services");
 const EventEmitter = require("devtools/shared/event-emitter");
@@ -87,7 +87,7 @@ RuleEditor.prototype = {
     let trait = this.isEditable &&
       toolbox.target.client.traits.selectorEditable &&
       this.rule.domRule.type !== ELEMENT_STYLE &&
-      this.rule.domRule.type !== Ci.nsIDOMCSSRule.KEYFRAME_RULE;
+      this.rule.domRule.type !== CSSRule.KEYFRAME_RULE;
 
     // Do not allow editing anonymousselectors until we can
     // detect mutations on  pseudo elements in Bug 1034110.
@@ -146,7 +146,7 @@ RuleEditor.prototype = {
       });
     }
 
-    if (this.rule.domRule.type !== Ci.nsIDOMCSSRule.KEYFRAME_RULE &&
+    if (this.rule.domRule.type !== CSSRule.KEYFRAME_RULE &&
         this.rule.domRule.selectors) {
       let selector = this.rule.domRule.selectors.join(", ");
 
@@ -279,7 +279,7 @@ RuleEditor.prototype = {
     // style, just show the text directly.
     if (this.rule.domRule.type === ELEMENT_STYLE) {
       this.selectorText.textContent = this.rule.selectorText;
-    } else if (this.rule.domRule.type === Ci.nsIDOMCSSRule.KEYFRAME_RULE) {
+    } else if (this.rule.domRule.type === CSSRule.KEYFRAME_RULE) {
       this.selectorText.textContent = this.rule.domRule.keyText;
     } else {
       this.rule.domRule.selectors.forEach((selector, i) => {
@@ -442,7 +442,7 @@ RuleEditor.prototype = {
 
     // Auto-close the input if multiple rules get pasted into new property.
     this.editor.input.addEventListener("paste",
-      blurOnMultipleProperties, false);
+      blurOnMultipleProperties(this.rule.cssProperties), false);
   },
 
   /**
@@ -462,7 +462,8 @@ RuleEditor.prototype = {
     // case, we're creating a new declaration, it doesn't make sense to accept
     // these entries
     this.multipleAddedProperties =
-      parseDeclarations(value, true).filter(d => d.name);
+      parseDeclarations(this.rule.cssProperties.isKnown, value, true)
+      .filter(d => d.name);
 
     // Blur the editor field now and deal with adding declarations later when
     // the field gets destroyed (see _newPropertyDestroy)

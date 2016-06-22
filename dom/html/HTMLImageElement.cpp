@@ -195,18 +195,6 @@ HTMLImageElement::GetCurrentSrc(nsAString& aValue)
   return NS_OK;
 }
 
-void
-HTMLImageElement::GetItemValueText(DOMString& aValue)
-{
-  GetSrc(aValue);
-}
-
-void
-HTMLImageElement::SetItemValueText(const nsAString& aValue)
-{
-  SetSrc(aValue);
-}
-
 bool
 HTMLImageElement::Draggable() const
 {
@@ -355,11 +343,11 @@ HTMLImageElement::GetAttributeChangeHint(const nsIAtom* aAttribute,
     nsGenericHTMLElement::GetAttributeChangeHint(aAttribute, aModType);
   if (aAttribute == nsGkAtoms::usemap ||
       aAttribute == nsGkAtoms::ismap) {
-    NS_UpdateHint(retval, NS_STYLE_HINT_FRAMECHANGE);
+    retval |= NS_STYLE_HINT_FRAMECHANGE;
   } else if (aAttribute == nsGkAtoms::alt) {
     if (aModType == nsIDOMMutationEvent::ADDITION ||
         aModType == nsIDOMMutationEvent::REMOVAL) {
-      NS_UpdateHint(retval, NS_STYLE_HINT_FRAMECHANGE);
+      retval |= NS_STYLE_HINT_FRAMECHANGE;
     }
   }
   return retval;
@@ -567,8 +555,10 @@ HTMLImageElement::SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
   } else if (aName == nsGkAtoms::referrerpolicy &&
       aNameSpaceID == kNameSpaceID_None &&
       aNotify) {
-    ReferrerPolicy referrerPolicy = ReferrerPolicyFromString(aValue);
-    if (!InResponsiveMode() && referrerPolicy != GetImageReferrerPolicy()) {
+    ReferrerPolicy referrerPolicy = AttributeReferrerPolicyFromString(aValue);
+    if (!InResponsiveMode() &&
+        referrerPolicy != RP_Unset &&
+        referrerPolicy != GetImageReferrerPolicy()) {
       // XXX: Bug 1076583 - We still use the older synchronous algorithm
       // Because referrerPolicy is not treated as relevant mutations, setting
       // the attribute will neither trigger a reload nor update the referrer

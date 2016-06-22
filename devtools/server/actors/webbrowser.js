@@ -8,6 +8,7 @@
 
 var { Ci, Cu } = require("chrome");
 var Services = require("Services");
+var { XPCOMUtils } = require("resource://gre/modules/XPCOMUtils.jsm");
 var promise = require("promise");
 var {
   ActorPool, createExtraActors, appendExtraActors, GeneratedLocation
@@ -17,8 +18,6 @@ var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 var { assert } = DevToolsUtils;
 var { TabSources } = require("./utils/TabSources");
 var makeDebugger = require("./utils/make-debugger");
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 loader.lazyRequireGetter(this, "RootActor", "devtools/server/actors/root", true);
 loader.lazyRequireGetter(this, "ThreadActor", "devtools/server/actors/script", true);
@@ -815,6 +814,10 @@ exports.BrowserTabList = BrowserTabList;
  *    This event fires when we switch the TabActor targeted document
  *    to one of its iframes, or back to its original top document.
  *    It is dispatched between window-destroyed and window-ready.
+ *  - stylesheet-added
+ *    This event is fired when a StyleSheetActor is created.
+ *    It contains the following attribute :
+ *     * actor (StyleSheetActor) The created actor.
  *
  * Note that *all* these events are dispatched in the following order
  * when we switch the context of the TabActor to a given iframe:
@@ -2016,7 +2019,7 @@ TabActor.prototype = {
       // We are very explicitly examining the "console" property of
       // the non-Xrayed object here.
       let console = window.wrappedJSObject.console;
-      isNative = console instanceof window.Console;
+      isNative = new XPCNativeWrapper(console).IS_NATIVE_CONSOLE
     } catch (ex) {
       // ignore
     }
@@ -2041,6 +2044,7 @@ TabActor.prototype = {
     this._styleSheetActors.set(styleSheet, actor);
 
     this._tabPool.addActor(actor);
+    events.emit(this, "stylesheet-added", actor);
 
     return actor;
   },
@@ -2316,11 +2320,7 @@ Object.defineProperty(BrowserAddonList.prototype, "onListChanged", {
         "onListChanged property may only be set to 'null' or a function");
     }
     this._onListChanged = v;
-    if (this._onListChanged) {
-      AddonManager.addAddonListener(this);
-    } else {
-      AddonManager.removeAddonListener(this);
-    }
+    this._adjustListener();
   }
 });
 
@@ -2330,12 +2330,34 @@ BrowserAddonList.prototype.onInstalled = function (addon) {
     // so this step is necessary to clear the cache.
     this._actorByAddonId.delete(addon.id);
   }
-  this._onListChanged();
+  this._notifyListChanged();
+  this._adjustListener();
 };
 
 BrowserAddonList.prototype.onUninstalled = function (addon) {
   this._actorByAddonId.delete(addon.id);
-  this._onListChanged();
+  this._notifyListChanged();
+  this._adjustListener();
+};
+
+BrowserAddonList.prototype._notifyListChanged = function () {
+  if (this._onListChanged) {
+    this._onListChanged();
+  }
+};
+
+BrowserAddonList.prototype._adjustListener = function () {
+  if (this._onListChanged) {
+    // As long as the callback exists, we need to listen for changes
+    // so we can notify about add-on changes.
+    AddonManager.addAddonListener(this);
+  } else {
+    // When the callback does not exist, we only need to keep listening
+    // if the actor cache will need adjusting when add-ons change.
+    if (this._actorByAddonId.size === 0) {
+      AddonManager.removeAddonListener(this);
+    }
+  }
 };
 
 exports.BrowserAddonList = BrowserAddonList;

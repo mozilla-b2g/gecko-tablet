@@ -73,10 +73,11 @@
 
 #include "GMPProcessChild.h"
 #include "GMPLoader.h"
+#include "mozilla/gfx/GPUProcessImpl.h"
 
 #include "GeckoProfiler.h"
 
- #include "base/histogram.h"
+#include "mozilla/Telemetry.h"
 
 #if defined(MOZ_SANDBOX) && defined(XP_WIN)
 #include "mozilla/sandboxTarget.h"
@@ -93,6 +94,10 @@ using mozilla::_ipdltest::IPDLUnitTestProcessChild;
 #ifdef MOZ_B2G_LOADER
 #include "nsLocalFile.h"
 #include "nsXREAppData.h"
+#endif
+
+#ifdef MOZ_JPROF
+#include "jprof.h"
 #endif
 
 using namespace mozilla;
@@ -214,7 +219,7 @@ const char*
 XRE_ChildProcessTypeToString(GeckoProcessType aProcessType)
 {
   return (aProcessType < GeckoProcessType_End) ?
-    kGeckoProcessTypeString[aProcessType] : nullptr;
+    kGeckoProcessTypeString[aProcessType] : "invalid";
 }
 
 namespace mozilla {
@@ -308,9 +313,13 @@ XRE_InitChildProcess(int aArgc,
   DllBlocklist_Initialize();
 #endif
 
+#ifdef MOZ_JPROF
+  // Call the code to install our handler
+  setupProfilingStuff();
+#endif
+
   // This is needed by Telemetry to initialize histogram collection.
-  UniquePtr<base::StatisticsRecorder> statisticsRecorder =
-    MakeUnique<base::StatisticsRecorder>();
+  Telemetry::CreateStatisticsRecorder();
 
 #if !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK)
   // On non-Fennec Gecko, the GMPLoader code resides in plugin-container,
@@ -478,6 +487,10 @@ XRE_InitChildProcess(int aArgc,
 #if MOZ_WIDGET_GTK == 2
   XRE_GlibInit();
 #endif
+#ifdef MOZ_WIDGET_GTK
+  // Setting the name here avoids the need to pass this through to gtk_init().
+  g_set_prgname(aArgv[0]);
+#endif
 
 #if defined(MOZ_WIDGET_QT)
   nsQAppInstance::AddRef();
@@ -554,6 +567,9 @@ XRE_InitChildProcess(int aArgc,
   case GeckoProcessType_GMPlugin:
       uiLoopType = MessageLoop::TYPE_DEFAULT;
       break;
+  case GeckoProcessType_GPU:
+      uiLoopType = MessageLoop::TYPE_UI;
+      break;
   default:
       uiLoopType = MessageLoop::TYPE_UI;
       break;
@@ -609,6 +625,10 @@ XRE_InitChildProcess(int aArgc,
         process = new gmp::GMPProcessChild(parentPID);
         break;
 
+      case GeckoProcessType_GPU:
+        process = new gfx::GPUProcessImpl(parentPID);
+        break;
+
       default:
         NS_RUNTIMEABORT("Unknown main thread class");
       }
@@ -647,10 +667,15 @@ XRE_InitChildProcess(int aArgc,
       // scope and being deleted
       process->CleanUp();
       mozilla::Omnijar::CleanUp();
+
+#if defined(XP_MACOSX)
+      // Everybody should be done using shared memory by now.
+      mozilla::ipc::SharedMemoryBasic::Shutdown();
+#endif
     }
   }
 
-  statisticsRecorder = nullptr;
+  Telemetry::DestroyStatisticsRecorder();
   profiler_shutdown();
   NS_LogTerm();
   return XRE_DeinitCommandLine();
@@ -813,9 +838,6 @@ void
 XRE_ShutdownChildProcess()
 {
   MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
-#if defined(XP_MACOSX)
-  mozilla::ipc::SharedMemoryBasic::Shutdown();
-#endif
 
   mozilla::DebugOnly<MessageLoop*> ioLoop = XRE_GetIOMessageLoop();
   MOZ_ASSERT(!!ioLoop, "Bad shutdown order");

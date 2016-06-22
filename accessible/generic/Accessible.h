@@ -11,6 +11,7 @@
 #include "mozilla/a11y/Role.h"
 #include "mozilla/a11y/States.h"
 
+#include "nsAutoPtr.h"
 #include "nsIContent.h"
 #include "nsString.h"
 #include "nsTArray.h"
@@ -48,6 +49,14 @@ class TableCellAccessible;
 class TextLeafAccessible;
 class XULLabelAccessible;
 class XULTreeAccessible;
+
+#ifdef A11Y_LOG
+namespace logging {
+  typedef const char* (*GetTreePrefix)(void* aData, Accessible*);
+  void Tree(const char* aTitle, const char* aMsgText, DocAccessible* aDoc,
+            GetTreePrefix aPrefixFunc, void* GetTreePrefixData);
+};
+#endif
 
 /**
  * Name type flags.
@@ -956,6 +965,12 @@ protected:
   virtual mozilla::a11y::ENameValueFlag NativeName(nsString& aName);
 
   /**
+   * Return the accessible description provided by native markup. It doesn't take
+   * into account ARIA markup used to specify the description.
+   */
+  virtual void NativeDescription(nsString& aDescription);
+
+  /**
    * Return object attributes provided by native markup. It doesn't take into
    * account ARIA.
    */
@@ -1113,6 +1128,12 @@ protected:
 
   void StaticAsserts() const;
 
+#ifdef A11Y_LOG
+  friend void logging::Tree(const char* aTitle, const char* aMsgText,
+                            DocAccessible* aDoc,
+                            logging::GetTreePrefix aPrefixFunc,
+                            void* aGetTreePrefixData);
+#endif
   friend class DocAccessible;
   friend class xpcAccessible;
   friend class TreeMutation;

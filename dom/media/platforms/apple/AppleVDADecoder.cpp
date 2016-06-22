@@ -16,7 +16,6 @@
 #include "MediaData.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/SyncRunnable.h"
-#include "nsAutoPtr.h"
 #include "nsThreadUtils.h"
 #include "mozilla/Logging.h"
 #include "VideoUtils.h"
@@ -28,8 +27,7 @@
 #include "MacIOSurfaceImage.h"
 #endif
 
-extern mozilla::LogModule* GetPDMLog();
-#define LOG(...) MOZ_LOG(GetPDMLog(), mozilla::LogLevel::Debug, (__VA_ARGS__))
+#define LOG(...) MOZ_LOG(sPDMLog, mozilla::LogLevel::Debug, (__VA_ARGS__))
 //#define LOG_MEDIA_SHA1
 
 namespace mozilla {
@@ -154,6 +152,9 @@ AppleVDADecoder::Flush()
   mIsFlushing = false;
   // All ProcessDecode() tasks should be done.
   MOZ_ASSERT(mInputIncoming == 0);
+
+  mSeekTargetThreshold.reset();
+
   return NS_OK;
 }
 
@@ -291,6 +292,13 @@ AppleVDADecoder::ClearReorderedFrames()
   mQueuedSamples = 0;
 }
 
+void
+AppleVDADecoder::SetSeekThreshold(const media::TimeUnit& aTime)
+{
+  LOG("SetSeekThreshold %lld", aTime.ToMicroseconds());
+  mSeekTargetThreshold = Some(aTime);
+}
+
 // Copy and return a decoded frame.
 nsresult
 AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
@@ -322,8 +330,17 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
     return NS_OK;
   }
 
+  bool useNullSample = false;
+  if (mSeekTargetThreshold.isSome()) {
+    if ((aFrameRef.composition_timestamp + aFrameRef.duration) < mSeekTargetThreshold.ref()) {
+      useNullSample = true;
+    } else {
+      mSeekTargetThreshold.reset();
+    }
+  }
+
   // Where our resulting image will end up.
-  RefPtr<VideoData> data;
+  RefPtr<MediaData> data;
   // Bounds.
   VideoInfo info;
   info.mDisplay = nsIntSize(mDisplayWidth, mDisplayHeight);
@@ -332,7 +349,11 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
                                       mPictureWidth,
                                       mPictureHeight);
 
-  if (mUseSoftwareImages) {
+  if (useNullSample) {
+    data = new NullData(aFrameRef.byte_offset,
+                        aFrameRef.composition_timestamp.ToMicroseconds(),
+                        aFrameRef.duration.ToMicroseconds());
+  } else if (mUseSoftwareImages) {
     size_t width = CVPixelBufferGetWidth(aImage);
     size_t height = CVPixelBufferGetHeight(aImage);
     DebugOnly<size_t> planes = CVPixelBufferGetPlaneCount(aImage);
@@ -344,7 +365,7 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
     CVReturn rv = CVPixelBufferLockBaseAddress(aImage, kCVPixelBufferLock_ReadOnly);
     if (rv != kCVReturnSuccess) {
       NS_ERROR("error locking pixel data");
-      mCallback->Error();
+      mCallback->Error(MediaDataDecoderError::DECODE_ERROR);
       return NS_ERROR_FAILURE;
     }
     // Y plane.
@@ -412,7 +433,7 @@ AppleVDADecoder::OutputFrame(CVPixelBufferRef aImage,
 
   if (!data) {
     NS_ERROR("Couldn't create VideoData for frame");
-    mCallback->Error();
+    mCallback->Error(MediaDataDecoderError::FATAL_ERROR);
     return NS_ERROR_FAILURE;
   }
 
@@ -514,7 +535,7 @@ AppleVDADecoder::DoDecode(MediaRawData* aSample)
 
   if (rv != noErr) {
     NS_WARNING("AppleVDADecoder: Couldn't pass frame to decoder");
-    mCallback->Error();
+    mCallback->Error(MediaDataDecoderError::FATAL_ERROR);
     return NS_ERROR_FAILURE;
   }
 

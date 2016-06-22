@@ -58,7 +58,6 @@
 #include "mozilla/EventStates.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/PendingAnimationTracker.h"
-#include "mozilla/Poison.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/unused.h"
@@ -390,6 +389,29 @@ AddAnimationForProperty(nsIFrame* aFrame, const AnimationProperty& aProperty,
     aLayer->AddAnimation();
 
   const TimingParams& timing = aAnimation->GetEffect()->SpecifiedTiming();
+
+  // If we are starting a new transition that replaces an existing transition
+  // running on the compositor, it is possible that the animation on the
+  // compositor will have advanced ahead of the main thread. If we use as
+  // the starting point of the new transition, the current value of the
+  // replaced transition as calculated on the main thread using the refresh
+  // driver time, the new transition will jump when it starts. Instead, we
+  // re-calculate the starting point of the new transition by applying the
+  // current TimeStamp to the parameters of the replaced transition.
+  //
+  // We need to do this here, rather than when we generate the new transition,
+  // since after generating the new transition other requestAnimationFrame
+  // callbacks may run that introduce further lag between the main thread and
+  // the compositor.
+  if (aAnimation->AsCSSTransition() &&
+      aAnimation->GetEffect()) {
+    MOZ_ASSERT(aAnimation->GetEffect()->AsTransition(),
+               "CSSTransition' effect should be an ElementPropertyTransition "
+               "until we fix bug 1049975");
+    aAnimation->GetEffect()->AsTransition()->
+      UpdateStartValueFromReplacedTransition();
+  }
+
   const ComputedTiming computedTiming =
     aAnimation->GetEffect()->GetComputedTiming();
   Nullable<TimeDuration> startTime = aAnimation->GetCurrentOrPendingStartTime();
@@ -492,10 +514,15 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
   }
 }
 
-static void
+static bool
 GenerateAndPushTextMask(nsIFrame* aFrame, nsRenderingContext* aContext,
-                        const nsRect& aFillRect)
+                        const nsRect& aFillRect, nsDisplayListBuilder* aBuilder)
 {
+  if (aBuilder->IsForGenerateGlyphMask() ||
+      aBuilder->IsForPaintingSelectionBG()) {
+    return false;
+  }
+
   // The main function of enabling background-clip:text property value.
   // When a nsDisplayBackgroundImage detects "text" bg-clip style, it will call
   // this function to
@@ -538,10 +565,11 @@ GenerateAndPushTextMask(nsIFrame* aFrame, nsRenderingContext* aContext,
   RefPtr<DrawTarget> maskDT =
     sourceTarget->CreateSimilarDrawTarget(drawRect.Size(),
                                           SurfaceFormat::A8);
-  if (!maskDT) {
-    NS_ABORT_OOM(drawRect.width * drawRect.height);
+  if (!maskDT || !maskDT->IsValid()) {
+    return false;
   }
-  RefPtr<gfxContext> maskCtx = gfxContext::ForDrawTargetWithTransform(maskDT);
+  RefPtr<gfxContext> maskCtx = gfxContext::CreatePreservingTransformOrNull(maskDT);
+  MOZ_ASSERT(maskCtx);
   gfxMatrix currentMatrix = sourceCtx->CurrentMatrix();
   maskCtx->SetMatrix(gfxMatrix::Translation(bounds.TopLeft()) *
                      currentMatrix *
@@ -562,6 +590,8 @@ GenerateAndPushTextMask(nsIFrame* aFrame, nsRenderingContext* aContext,
 
   RefPtr<SourceSurface> maskSurface = maskDT->Snapshot();
   sourceCtx->PushGroupForBlendBack(gfxContentType::COLOR_ALPHA, 1.0, maskSurface, maskTransform);
+
+  return true;
 }
 
 /* static */ void
@@ -2186,14 +2216,6 @@ static bool IsContentLEQ(nsDisplayItem* aItem1, nsDisplayItem* aItem2,
 
 static bool IsZOrderLEQ(nsDisplayItem* aItem1, nsDisplayItem* aItem2,
                         void* aClosure) {
-  {
-    // TEMPORARY debugging code for bug 1265280
-    nsIFrame* f2 = aItem2->Frame();
-    if (uintptr_t(f2->StyleContext()) == mozPoisonValue()) {
-      NS_RUNTIMEABORT(nsPrintfCString("bad display item %p type %s frame %p",
-                                      aItem2, aItem2->Name(), f2).get());
-    }
-  }
   // Note that we can't just take the difference of the two
   // z-indices here, because that might overflow a 32-bit int.
   return aItem1->ZIndex() <= aItem2->ZIndex();
@@ -2352,6 +2374,20 @@ RegisterThemeGeometry(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
   }
 }
 
+// Return the bounds of the viewport relative to |aFrame|'s reference frame.
+// Returns Nothing() if transforming into |aFrame|'s coordinate space fails.
+static Maybe<nsRect>
+GetViewportRectRelativeToReferenceFrame(nsDisplayListBuilder* aBuilder,
+                                        nsIFrame* aFrame)
+{
+  nsIFrame* rootFrame = aFrame->PresContext()->PresShell()->GetRootFrame();
+  nsRect rootRect = rootFrame->GetRectRelativeToSelf();
+  if (nsLayoutUtils::TransformRect(rootFrame, aFrame, rootRect) == nsLayoutUtils::TRANSFORM_SUCCEEDED) {
+    return Some(rootRect + aBuilder->ToReferenceFrame(aFrame));
+  }
+  return Nothing();
+}
+
 nsDisplayBackgroundImage::nsDisplayBackgroundImage(nsDisplayListBuilder* aBuilder,
                                                    nsIFrame* aFrame,
                                                    uint32_t aLayer,
@@ -2379,6 +2415,13 @@ nsDisplayBackgroundImage::nsDisplayBackgroundImage(nsDisplayListBuilder* aBuilde
   mBounds = GetBoundsInternal(aBuilder);
   if (ShouldFixToViewport(aBuilder)) {
     mAnimatedGeometryRoot = aBuilder->FindAnimatedGeometryRootFor(this);
+
+    // Expand the item's visible rect to cover the entire bounds, limited to the
+    // viewport rect. This is necessary because the background's clip can move
+    // asynchronously.
+    if (Maybe<nsRect> viewportRect = GetViewportRectRelativeToReferenceFrame(aBuilder, mFrame)) {
+      mVisibleRect = mBounds.Intersect(*viewportRect);
+    }
   }
 
   mFillRect = state.mFillArea;
@@ -2451,11 +2494,6 @@ nsDisplayBackgroundImage::AppendBackgroundItemsToTop(nsDisplayListBuilder* aBuil
                                                      nsDisplayList* aList,
                                                      bool aAllowWillPaintBorderOptimization)
 {
-  if (aBuilder->IsForGenerateGlyphMask() ||
-      aBuilder->IsForPaintingSelectionBG()) {
-    return true;
-  }
-
   nsStyleContext* bgSC = nullptr;
   const nsStyleBackground* bg = nullptr;
   nsRect bgRect = aBackgroundRect + aBuilder->ToReferenceFrame(aFrame);
@@ -2875,6 +2913,8 @@ nsDisplayBackgroundImage::GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
       (!mFrame->GetPrevContinuation() && !mFrame->GetNextContinuation())) {
     const nsStyleImageLayers::Layer& layer = mBackgroundStyle->mImage.mLayers[mLayer];
     if (layer.mImage.IsOpaque() && layer.mBlendMode == NS_STYLE_BLEND_NORMAL &&
+        layer.mRepeat.mXRepeat != NS_STYLE_IMAGELAYER_REPEAT_SPACE &&
+        layer.mRepeat.mYRepeat != NS_STYLE_IMAGELAYER_REPEAT_SPACE &&
         layer.mClip != NS_STYLE_IMAGELAYER_CLIP_TEXT) {
       result = GetInsideClipRegion(this, layer.mClip, mBounds, mBackgroundRect);
     }
@@ -2957,7 +2997,9 @@ nsDisplayBackgroundImage::PaintInternal(nsDisplayListBuilder* aBuilder,
   uint8_t clip = mBackgroundStyle->mImage.mLayers[mLayer].mClip;
 
   if (clip == NS_STYLE_IMAGELAYER_CLIP_TEXT) {
-    GenerateAndPushTextMask(mFrame, aCtx, mBackgroundRect);
+    if (!GenerateAndPushTextMask(mFrame, aCtx, mBackgroundRect, aBuilder)) {
+      return;
+    }
   }
 
   nsCSSRendering::PaintBGParams params =
@@ -3049,10 +3091,8 @@ nsDisplayBackgroundImage::GetBoundsInternal(nsDisplayListBuilder* aBuilder) {
     // If this is a background-attachment:fixed image, and APZ is enabled,
     // async scrolling could reveal additional areas of the image, so don't
     // clip it beyond clipping to the document's viewport.
-    nsIFrame* rootFrame = presContext->PresShell()->GetRootFrame();
-    nsRect rootRect = rootFrame->GetRectRelativeToSelf();
-    if (nsLayoutUtils::TransformRect(rootFrame, mFrame, rootRect) == nsLayoutUtils::TRANSFORM_SUCCEEDED) {
-      clipRect = clipRect.Union(rootRect + aBuilder->ToReferenceFrame(mFrame));
+    if (Maybe<nsRect> viewportRect = GetViewportRectRelativeToReferenceFrame(aBuilder, mFrame)) {
+      clipRect = clipRect.Union(*viewportRect);
     }
   }
   const nsStyleImageLayers::Layer& layer = mBackgroundStyle->mImage.mLayers[mLayer];
@@ -3231,7 +3271,7 @@ void
 nsDisplayImageContainer::ConfigureLayer(ImageLayer* aLayer,
                                         const ContainerLayerParameters& aParameters)
 {
-  aLayer->SetFilter(nsLayoutUtils::GetGraphicsFilterForFrame(mFrame));
+  aLayer->SetSamplingFilter(nsLayoutUtils::GetSamplingFilterForFrame(mFrame));
 
   nsCOMPtr<imgIContainer> image = GetImage();
   MOZ_ASSERT(image);
@@ -3391,7 +3431,10 @@ nsDisplayBackgroundColor::Paint(nsDisplayListBuilder* aBuilder,
 
   uint8_t clip = mBackgroundStyle->mImage.mLayers[0].mClip;
   if (clip == NS_STYLE_IMAGELAYER_CLIP_TEXT) {
-    GenerateAndPushTextMask(mFrame, aCtx, mBackgroundRect);
+    if (!GenerateAndPushTextMask(mFrame, aCtx, mBackgroundRect, aBuilder)) {
+      return;
+    }
+
     ctx->SetColor(mColor);
     ctx->Rectangle(bounds, true);
     ctx->Fill();
@@ -3636,6 +3679,33 @@ nsDisplayLayerEventRegions::AddInactiveScrollPort(const nsRect& aRect)
 {
   mHitRegion.Or(mHitRegion, aRect);
   mDispatchToContentHitRegion.Or(mDispatchToContentHitRegion, aRect);
+}
+
+bool
+nsDisplayLayerEventRegions::IsEmpty() const
+{
+  // If the hit region and maybe-hit region are empty, then the rest
+  // must be empty too.
+  if (mHitRegion.IsEmpty() && mMaybeHitRegion.IsEmpty()) {
+    MOZ_ASSERT(mDispatchToContentHitRegion.IsEmpty());
+    MOZ_ASSERT(mNoActionRegion.IsEmpty());
+    MOZ_ASSERT(mHorizontalPanRegion.IsEmpty());
+    MOZ_ASSERT(mVerticalPanRegion.IsEmpty());
+    return true;
+  }
+  return false;
+}
+
+int32_t
+nsDisplayLayerEventRegions::ZIndex() const
+{
+  return mOverrideZIndex ? *mOverrideZIndex : nsDisplayItem::ZIndex();
+}
+
+void
+nsDisplayLayerEventRegions::SetOverrideZIndex(int32_t aZIndex)
+{
+  mOverrideZIndex = Some(aZIndex);
 }
 
 void
@@ -4308,23 +4378,23 @@ nsDisplayOpacity::BuildLayer(nsDisplayListBuilder* aBuilder,
  * size --- but this should be good enough.
  */
 static bool
-IsItemTooSmallForActiveLayer(nsDisplayItem* aItem)
+IsItemTooSmallForActiveLayer(nsIFrame* aFrame)
 {
-  nsIntRect visibleDevPixels = aItem->Frame()->GetVisualOverflowRectRelativeToSelf().ToOutsidePixels(
-          aItem->Frame()->PresContext()->AppUnitsPerDevPixel());
+  nsIntRect visibleDevPixels = aFrame->GetVisualOverflowRectRelativeToSelf().ToOutsidePixels(
+          aFrame->PresContext()->AppUnitsPerDevPixel());
   static const int MIN_ACTIVE_LAYER_SIZE_DEV_PIXELS = 16;
   return visibleDevPixels.Size() <
     nsIntSize(MIN_ACTIVE_LAYER_SIZE_DEV_PIXELS, MIN_ACTIVE_LAYER_SIZE_DEV_PIXELS);
 }
 
 static void
-SetAnimationPerformanceWarningForTooSmallItem(nsDisplayItem* aItem,
+SetAnimationPerformanceWarningForTooSmallItem(nsIFrame* aFrame,
                                               nsCSSProperty aProperty)
 {
   // We use ToNearestPixels() here since ToOutsidePixels causes some sort of
   // errors. See https://bugzilla.mozilla.org/show_bug.cgi?id=1258904#c19
-  nsIntRect visibleDevPixels = aItem->Frame()->GetVisualOverflowRectRelativeToSelf().ToNearestPixels(
-          aItem->Frame()->PresContext()->AppUnitsPerDevPixel());
+  nsIntRect visibleDevPixels = aFrame->GetVisualOverflowRectRelativeToSelf().ToNearestPixels(
+          aFrame->PresContext()->AppUnitsPerDevPixel());
 
   // Set performance warning only if the visible dev pixels is not empty
   // because dev pixels is empty if the frame has 'preserve-3d' style.
@@ -4332,23 +4402,23 @@ SetAnimationPerformanceWarningForTooSmallItem(nsDisplayItem* aItem,
     return;
   }
 
-  EffectCompositor::SetPerformanceWarning(aItem->Frame(), aProperty,
+  EffectCompositor::SetPerformanceWarning(aFrame, aProperty,
       AnimationPerformanceWarning(
         AnimationPerformanceWarning::Type::ContentTooSmall,
         { visibleDevPixels.Width(), visibleDevPixels.Height() }));
 }
 
-bool
-nsDisplayOpacity::NeedsActiveLayer(nsDisplayListBuilder* aBuilder)
+/* static */ bool
+nsDisplayOpacity::NeedsActiveLayer(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
 {
-  if (ActiveLayerTracker::IsStyleAnimated(aBuilder, mFrame,
+  if (ActiveLayerTracker::IsStyleAnimated(aBuilder, aFrame,
                                           eCSSProperty_opacity) ||
-      EffectCompositor::HasAnimationsForCompositor(mFrame,
+      EffectCompositor::HasAnimationsForCompositor(aFrame,
                                                    eCSSProperty_opacity)) {
-    if (!IsItemTooSmallForActiveLayer(this)) {
+    if (!IsItemTooSmallForActiveLayer(aFrame)) {
       return true;
     }
-    SetAnimationPerformanceWarningForTooSmallItem(this, eCSSProperty_opacity);
+    SetAnimationPerformanceWarningForTooSmallItem(aFrame, eCSSProperty_opacity);
   }
   return false;
 }
@@ -4374,7 +4444,7 @@ nsDisplayOpacity::CanApplyOpacity() const
 bool
 nsDisplayOpacity::ShouldFlattenAway(nsDisplayListBuilder* aBuilder)
 {
-  if (NeedsActiveLayer(aBuilder) || mOpacity == 0.0) {
+  if (NeedsActiveLayer(aBuilder, mFrame) || mOpacity == 0.0) {
     // If our opacity is zero then we'll discard all descendant display items
     // except for layer event regions, so there's no point in doing this
     // optimization (and if we do do it, then invalidations of those descendants
@@ -4436,7 +4506,7 @@ nsDisplayOpacity::GetLayerState(nsDisplayListBuilder* aBuilder,
     return LAYER_INACTIVE;
   }
 
-  if (NeedsActiveLayer(aBuilder)) {
+  if (NeedsActiveLayer(aBuilder, mFrame)) {
     // Returns LAYER_ACTIVE_FORCE to avoid flatterning the layer for async
     // animations.
     return LAYER_ACTIVE_FORCE;
@@ -4913,8 +4983,6 @@ nsDisplayFixedPosition::nsDisplayFixedPosition(nsDisplayListBuilder* aBuilder,
 void
 nsDisplayFixedPosition::Init(nsDisplayListBuilder* aBuilder)
 {
-  bool snap;
-  mVisibleRect = GetBounds(aBuilder, &snap);
   mAnimatedGeometryRootForScrollMetadata = mAnimatedGeometryRoot;
   if (ShouldFixToViewport(aBuilder)) {
     mAnimatedGeometryRoot = aBuilder->FindAnimatedGeometryRootFor(this);
@@ -5585,11 +5653,10 @@ nsDisplayTransform::GetResultingTransformMatrix(const FrameTransformProperties& 
                                                 const nsPoint& aOrigin,
                                                 float aAppUnitsPerPixel,
                                                 uint32_t aFlags,
-                                                const nsRect* aBoundsOverride,
-                                                nsIFrame** aOutAncestor)
+                                                const nsRect* aBoundsOverride)
 {
   return GetResultingTransformMatrixInternal(aProperties, aOrigin, aAppUnitsPerPixel,
-                                             aFlags, aBoundsOverride, aOutAncestor);
+                                             aFlags, aBoundsOverride);
 }
 
 Matrix4x4
@@ -5597,15 +5664,14 @@ nsDisplayTransform::GetResultingTransformMatrix(const nsIFrame* aFrame,
                                                 const nsPoint& aOrigin,
                                                 float aAppUnitsPerPixel,
                                                 uint32_t aFlags,
-                                                const nsRect* aBoundsOverride,
-                                                nsIFrame** aOutAncestor)
+                                                const nsRect* aBoundsOverride)
 {
   FrameTransformProperties props(aFrame,
                                  aAppUnitsPerPixel,
                                  aBoundsOverride);
 
   return GetResultingTransformMatrixInternal(props, aOrigin, aAppUnitsPerPixel,
-                                             aFlags, aBoundsOverride, aOutAncestor);
+                                             aFlags, aBoundsOverride);
 }
 
 Matrix4x4
@@ -5613,17 +5679,10 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
                                                         const nsPoint& aOrigin,
                                                         float aAppUnitsPerPixel,
                                                         uint32_t aFlags,
-                                                        const nsRect* aBoundsOverride,
-                                                        nsIFrame** aOutAncestor)
+                                                        const nsRect* aBoundsOverride)
 {
   const nsIFrame *frame = aProperties.mFrame;
   NS_ASSERTION(frame || !(aFlags & INCLUDE_PERSPECTIVE), "Must have a frame to compute perspective!");
-  MOZ_ASSERT((aFlags & (OFFSET_BY_ORIGIN|BASIS_AT_ORIGIN)) != (OFFSET_BY_ORIGIN|BASIS_AT_ORIGIN),
-             "Can't specify offset by origin as well as basis at origin!");
-
-  if (aOutAncestor) {
-    *aOutAncestor = nsLayoutUtils::GetCrossDocParentFrame(frame);
-  }
 
   // Get the underlying transform matrix:
 
@@ -5665,16 +5724,6 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
     result = Matrix4x4::From2D(svgTransform);
   }
 
-  /* Account for the transform-origin property by translating the
-   * coordinate space to the new origin.
-   */
-  Point3D newOrigin =
-    Point3D(NSAppUnitsToFloatPixels(aOrigin.x, aAppUnitsPerPixel),
-            NSAppUnitsToFloatPixels(aOrigin.y, aAppUnitsPerPixel),
-            0.0f);
-  Point3D roundedOrigin(hasSVGTransforms ? newOrigin.x : NS_round(newOrigin.x),
-                        hasSVGTransforms ? newOrigin.y : NS_round(newOrigin.y),
-                        0);
 
   Matrix4x4 perspectiveMatrix;
   bool hasPerspective = aFlags & INCLUDE_PERSPECTIVE;
@@ -5687,17 +5736,7 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
     // This is a simplification of the following |else| block, the
     // simplification being possible because we don't need to apply
     // mToTransformOrigin between two transforms.
-    if ((aFlags & OFFSET_BY_ORIGIN) &&
-        !hasPerspective) {
-      // We can fold the final translation by roundedOrigin into the first matrix
-      // basis change translation. This is more stable against variation due to
-      // insufficient floating point precision than reversing the translation
-      // afterwards.
-      result.PreTranslate(-aProperties.mToTransformOrigin);
-      result.PostTranslate(roundedOrigin + aProperties.mToTransformOrigin);
-    } else {
-      result.ChangeBasis(aProperties.mToTransformOrigin);
-    }
+    result.ChangeBasis(aProperties.mToTransformOrigin);
   } else {
     Point3D refBoxOffset(NSAppUnitsToFloatPixels(refBox.X(), aAppUnitsPerPixel),
                          NSAppUnitsToFloatPixels(refBox.Y(), aAppUnitsPerPixel),
@@ -5721,25 +5760,11 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
     // Similar to the code in the |if| block above, but since we've accounted
     // for mToTransformOrigin so we don't include that. We also need to reapply
     // refBoxOffset.
-    if ((aFlags & OFFSET_BY_ORIGIN) &&
-        !hasPerspective) {
-      result.PreTranslate(-refBoxOffset);
-      result.PostTranslate(roundedOrigin + refBoxOffset);
-    } else {
-      result.ChangeBasis(refBoxOffset);
-    }
+    result.ChangeBasis(refBoxOffset);
   }
 
   if (hasPerspective) {
     result = result * perspectiveMatrix;
-
-    if (aFlags & OFFSET_BY_ORIGIN) {
-      result.PostTranslate(roundedOrigin);
-    }
-  }
-
-  if (aFlags & BASIS_AT_ORIGIN) {
-    result.ChangeBasis(roundedOrigin);
   }
 
   if ((aFlags & INCLUDE_PRESERVE3D_ANCESTORS) &&
@@ -5753,22 +5778,25 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
                                    aAppUnitsPerPixel,
                                    nullptr);
 
-    // If this frame isn't transformed (but we exist for backface-visibility),
-    // then we're not a reference frame so no offset to origin will be added. Our
-    // parent transform however *is* the reference frame, so we pass
-    // OFFSET_BY_ORIGIN to convert into the correct coordinate space.
     uint32_t flags = aFlags & (INCLUDE_PRESERVE3D_ANCESTORS|INCLUDE_PERSPECTIVE);
-    if (!frame->IsTransformed()) {
-      flags |= OFFSET_BY_ORIGIN;
-    } else {
-      flags |= BASIS_AT_ORIGIN;
+
+    // If this frame isn't transformed (but we exist for backface-visibility),
+    // then we're not a reference frame so no offset to origin will be added.
+    // Otherwise we need to manually translate into our parent's coordinate
+    // space.
+    if (frame->IsTransformed()) {
+      nsLayoutUtils::PostTranslate(result, frame->GetPosition(), aAppUnitsPerPixel, !hasSVGTransforms);
     }
     Matrix4x4 parent =
       GetResultingTransformMatrixInternal(props,
-                                          aOrigin - frame->GetPosition(),
+                                          nsPoint(0, 0),
                                           aAppUnitsPerPixel, flags,
-                                          nullptr, aOutAncestor);
+                                          nullptr);
     result = result * parent;
+  }
+
+  if (aFlags & OFFSET_BY_ORIGIN) {
+    nsLayoutUtils::PostTranslate(result, aOrigin, aAppUnitsPerPixel, !hasSVGTransforms);
   }
 
   return result;
@@ -5819,12 +5847,13 @@ nsDisplayTransform::ShouldPrerenderTransformedContent(nsDisplayListBuilder* aBui
   // reference frame size (~viewport), allowing a 1/8th fuzz factor
   // for shadows, borders, etc.
   refSize += nsSize(refSize.width / 8, refSize.height / 8);
-  nsSize frameSize = aFrame->GetVisualOverflowRectRelativeToSelf().Size();
+  gfxSize scale = nsLayoutUtils::GetTransformToAncestorScale(aFrame);
+  nsSize frameSize = aFrame->GetVisualOverflowRectRelativeToSelf().Size() *
+    nsSize(scale.width, scale.height);
   nscoord maxInAppUnits = nscoord_MAX;
   if (frameSize <= refSize) {
     maxInAppUnits = aFrame->PresContext()->DevPixelsToAppUnits(4096);
-    nsRect visual = aFrame->GetVisualOverflowRect();
-    if (visual.width <= maxInAppUnits && visual.height <= maxInAppUnits) {
+    if (frameSize <= nsSize(maxInAppUnits, maxInAppUnits)) {
       return true;
     }
   }
@@ -5917,11 +5946,10 @@ nsDisplayTransform::GetAccumulatedPreserved3DTransform(nsDisplayListBuilder* aBu
          establisher && establisher->Combines3DTransformWithAncestors();
          establisher = nsLayoutUtils::GetCrossDocParentFrame(establisher)) {
     }
-    establisher = nsLayoutUtils::GetCrossDocParentFrame(establisher);
     const nsIFrame* establisherReference =
-      aBuilder->FindReferenceFrameFor(establisher);
+      aBuilder->FindReferenceFrameFor(nsLayoutUtils::GetCrossDocParentFrame(establisher));
 
-    nsPoint offset = mFrame->GetOffsetToCrossDoc(establisherReference);
+    nsPoint offset = establisher->GetOffsetToCrossDoc(establisherReference);
     float scale = mFrame->PresContext()->AppUnitsPerDevPixel();
     uint32_t flags = INCLUDE_PRESERVE3D_ANCESTORS|INCLUDE_PERSPECTIVE|OFFSET_BY_ORIGIN;
     mTransformPreserves3D =
@@ -5993,10 +6021,10 @@ nsDisplayTransform::MayBeAnimated(nsDisplayListBuilder* aBuilder)
                                           eCSSProperty_transform) ||
       EffectCompositor::HasAnimationsForCompositor(mFrame,
                                                    eCSSProperty_transform)) {
-    if (!IsItemTooSmallForActiveLayer(this)) {
+    if (!IsItemTooSmallForActiveLayer(mFrame)) {
       return true;
     }
-    SetAnimationPerformanceWarningForTooSmallItem(this, eCSSProperty_transform);
+    SetAnimationPerformanceWarningForTooSmallItem(mFrame, eCSSProperty_transform);
   }
   return false;
 }
@@ -6347,41 +6375,31 @@ nsDisplayTransform::TryMerge(nsDisplayItem *aItem)
  */
 nsRect nsDisplayTransform::TransformRect(const nsRect &aUntransformedBounds,
                                          const nsIFrame* aFrame,
-                                         const nsPoint &aOrigin,
-                                         const nsRect* aBoundsOverride,
-                                         bool aPreserves3D)
+                                         const nsRect* aBoundsOverride)
 {
   NS_PRECONDITION(aFrame, "Can't take the transform based on a null frame!");
 
   float factor = aFrame->PresContext()->AppUnitsPerDevPixel();
 
-  uint32_t flags = INCLUDE_PERSPECTIVE|BASIS_AT_ORIGIN;
-  if (aPreserves3D) {
-    flags |= INCLUDE_PRESERVE3D_ANCESTORS;
-  }
+  uint32_t flags = INCLUDE_PERSPECTIVE|OFFSET_BY_ORIGIN|INCLUDE_PRESERVE3D_ANCESTORS;
   return nsLayoutUtils::MatrixTransformRect
     (aUntransformedBounds,
-     GetResultingTransformMatrix(aFrame, aOrigin, factor, flags, aBoundsOverride),
+     GetResultingTransformMatrix(aFrame, nsPoint(0, 0), factor, flags, aBoundsOverride),
      factor);
 }
 
 bool nsDisplayTransform::UntransformRect(const nsRect &aTransformedBounds,
                                          const nsRect &aChildBounds,
                                          const nsIFrame* aFrame,
-                                         const nsPoint &aOrigin,
-                                         nsRect *aOutRect,
-                                         bool aPreserves3D)
+                                         nsRect *aOutRect)
 {
   NS_PRECONDITION(aFrame, "Can't take the transform based on a null frame!");
 
   float factor = aFrame->PresContext()->AppUnitsPerDevPixel();
 
-  uint32_t flags = INCLUDE_PERSPECTIVE|BASIS_AT_ORIGIN;
-  if (aPreserves3D) {
-    flags |= INCLUDE_PRESERVE3D_ANCESTORS;
-  }
+  uint32_t flags = INCLUDE_PERSPECTIVE|OFFSET_BY_ORIGIN|INCLUDE_PRESERVE3D_ANCESTORS;
 
-  Matrix4x4 transform = GetResultingTransformMatrix(aFrame, aOrigin, factor, flags);
+  Matrix4x4 transform = GetResultingTransformMatrix(aFrame, nsPoint(0, 0), factor, flags);
   if (transform.IsSingular()) {
     return false;
   }
@@ -6554,9 +6572,11 @@ nsCharClipDisplayItem::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
 }
 
 nsDisplaySVGEffects::nsDisplaySVGEffects(nsDisplayListBuilder* aBuilder,
-                                         nsIFrame* aFrame, nsDisplayList* aList)
-    : nsDisplayWrapList(aBuilder, aFrame, aList),
-      mEffectsBounds(aFrame->GetVisualOverflowRectRelativeToSelf())
+                                         nsIFrame* aFrame, nsDisplayList* aList,
+                                         bool aOpacityItemCreated)
+  : nsDisplayWrapList(aBuilder, aFrame, aList)
+  , mEffectsBounds(aFrame->GetVisualOverflowRectRelativeToSelf())
+  , mOpacityItemCreated(aOpacityItemCreated)
 {
   MOZ_COUNT_CTOR(nsDisplaySVGEffects);
 }
@@ -6620,7 +6640,7 @@ nsDisplaySVGEffects::PaintAsLayer(nsDisplayListBuilder* aBuilder,
   nsSVGIntegrationUtils::PaintFramesParams params(*aCtx->ThebesContext(),
                                                   mFrame,  mVisibleRect,
                                                   borderArea, aBuilder,
-                                                  aManager);
+                                                  aManager, mOpacityItemCreated);
 
   nsSVGIntegrationUtils::PaintFramesWithEffects(params);
 }

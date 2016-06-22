@@ -114,6 +114,7 @@ OnSharedPreferenceChangeListener
     // some devices look bad. Don't use transitions on those
     // devices.
     private static final boolean NO_TRANSITIONS = HardwareUtils.IS_KINDLE_DEVICE;
+    private static final int NO_SUCH_ID = 0;
 
     public static final String NON_PREF_PREFIX = "android.not_a_preference.";
     public static final String INTENT_EXTRA_RESOURCES = "resource";
@@ -158,6 +159,7 @@ OnSharedPreferenceChangeListener
     public static final String PREFS_NOTIFICATIONS_CONTENT = NON_PREF_PREFIX + "notifications.content";
     public static final String PREFS_NOTIFICATIONS_CONTENT_LEARN_MORE = NON_PREF_PREFIX + "notifications.content.learn_more";
     public static final String PREFS_NOTIFICATIONS_WHATS_NEW = NON_PREF_PREFIX + "notifications.whats_new";
+    public static final String PREFS_APP_UPDATE_LAST_BUILD_ID = "app.update.last_build_id";
 
     private static final String ACTION_STUMBLER_UPLOAD_PREF = AppConstants.ANDROID_PACKAGE_NAME + ".STUMBLER_PREF";
 
@@ -281,7 +283,12 @@ OnSharedPreferenceChangeListener
             }
 
             // Update the title to for the preference pane that we're currently showing.
-            setTitle(R.string.pref_category_language);
+            final int titleId = getIntent().getExtras().getInt(PreferenceActivity.EXTRA_SHOW_FRAGMENT_TITLE);
+            if (titleId != NO_SUCH_ID) {
+                setTitle(titleId);
+            } else {
+                throw new IllegalStateException("Title id not found in intent bundle extras");
+            }
 
             // Don't finish the activity -- we just reloaded all of the
             // individual parts! -- but when it returns, make sure that the
@@ -356,8 +363,6 @@ OnSharedPreferenceChangeListener
             }
         }
 
-        initActionBar();
-
         // Use setResourceToOpen to specify these extras.
         Bundle intentExtras = getIntent().getExtras();
 
@@ -406,27 +411,6 @@ OnSharedPreferenceChangeListener
     }
 
     /**
-     * Initializes the action bar configuration in code.
-     *
-     * Declaring these attributes in XML does not work on some devices for an unknown reason
-     * (e.g. the back button stops working or the logo disappears; see bug 1152314) so we
-     * duplicate those attributes in code here. Note: the order of these calls matters.
-     *
-     * We keep the XML attributes because not all of these methods are available on pre-v14.
-     */
-    private void initActionBar() {
-        if (Versions.feature14Plus) {
-            final ActionBar actionBar = getSupportActionBar();
-            if (actionBar != null) {
-                actionBar.setHomeButtonEnabled(true);
-                actionBar.setDisplayHomeAsUpEnabled(true);
-                actionBar.setLogo(R.drawable.logo);
-                actionBar.setDisplayUseLogoEnabled(true);
-            }
-        }
-    }
-
-    /**
      * Set intent to display top-level settings fragment,
      * and show the correct title.
      */
@@ -451,6 +435,8 @@ OnSharedPreferenceChangeListener
         // Build fragment intent.
         intent.putExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT, GeckoPreferenceFragment.class.getName());
         intent.putExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT_ARGUMENTS, fragmentArgs);
+        // Used to get fragment title when locale changes (see onLocaleChanged method above)
+        intent.putExtra(PreferenceActivity.EXTRA_SHOW_FRAGMENT_TITLE, R.string.settings_title);
     }
 
     @Override
@@ -989,31 +975,6 @@ OnSharedPreferenceChangeListener
 
     /**
      * Broadcast the provided value as the value of the
-     * <code>PREFS_HEALTHREPORT_UPLOAD_ENABLED</code> pref.
-     */
-    public static void broadcastHealthReportUploadPref(final Context context, final boolean value) {
-        //broadcastPrefAction(context,
-        //                    HealthReportConstants.ACTION_HEALTHREPORT_UPLOAD_PREF,
-        //                    PREFS_HEALTHREPORT_UPLOAD_ENABLED,
-        //                    value);
-    }
-
-    /**
-     * Broadcast the current value of the
-     * <code>PREFS_HEALTHREPORT_UPLOAD_ENABLED</code> pref.
-     */
-    public static void broadcastHealthReportUploadPref(final Context context) {
-        //final boolean value = getBooleanPref(context, PREFS_HEALTHREPORT_UPLOAD_ENABLED, true);
-        //broadcastHealthReportUploadPref(context, value);
-    }
-
-    public static void broadcastHealthReportPrune(final Context context) {
-        //final Intent intent = new Intent(HealthReportConstants.ACTION_HEALTHREPORT_PRUNE);
-        //broadcastAction(context, intent);
-    }
-
-    /**
-     * Broadcast the provided value as the value of the
      * <code>PREFS_GEO_REPORTING</code> pref.
      */
     public static void broadcastStumblerPref(final Context context, final boolean value) {
@@ -1208,12 +1169,7 @@ OnSharedPreferenceChangeListener
         } else if (PREFS_UPDATER_URL.equals(prefName)) {
             UpdateServiceHelper.setUpdateUrl(this, (String) newValue);
         } else if (PREFS_HEALTHREPORT_UPLOAD_ENABLED.equals(prefName)) {
-            // The healthreport pref only lives in Android, so we do not persist
-            // to Gecko, but we do broadcast intent to the health report
-            // background uploader service, which will start or stop the
-            // repeated background upload attempts.
             final Boolean newBooleanValue = (Boolean) newValue;
-            broadcastHealthReportUploadPref(this, newBooleanValue);
             AdjustConstants.getAdjustHelper().setEnabled(newBooleanValue);
         } else if (PREFS_GEO_REPORTING.equals(prefName)) {
             if ((Boolean) newValue) {
@@ -1444,34 +1400,15 @@ OnSharedPreferenceChangeListener
             return screen.findPreference(prefName);
         }
 
-        // Handle v14 TwoStatePreference with backwards compatibility.
-        private static class CheckBoxPrefSetter {
-            public void setBooleanPref(Preference preference, boolean value) {
-                if ((preference instanceof CheckBoxPreference) &&
-                   ((CheckBoxPreference) preference).isChecked() != value) {
-                    ((CheckBoxPreference) preference).setChecked(value);
-                }
-            }
-        }
-
-        private static class TwoStatePrefSetter extends CheckBoxPrefSetter {
-            @Override
-            public void setBooleanPref(Preference preference, boolean value) {
-                if ((preference instanceof TwoStatePreference) &&
-                   ((TwoStatePreference) preference).isChecked() != value) {
-                    ((TwoStatePreference) preference).setChecked(value);
-                }
-            }
-        }
-
         @Override
         public void prefValue(String prefName, final boolean value) {
-            final Preference pref = getField(prefName);
-            final CheckBoxPrefSetter prefSetter = new TwoStatePrefSetter();
+            final TwoStatePreference pref = (TwoStatePreference) getField(prefName);
             ThreadUtils.postToUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    prefSetter.setBooleanPref(pref, value);
+                    if (pref.isChecked() != value) {
+                        pref.setChecked(value);
+                    }
                 }
             });
         }

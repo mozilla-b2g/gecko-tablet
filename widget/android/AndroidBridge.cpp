@@ -508,6 +508,22 @@ AndroidBridge::GetClipboardText(nsAString& aText)
 }
 
 void
+AndroidBridge::ShowPersistentAlertNotification(const nsAString& aPersistentData,
+                                               const nsAString& aImageUrl,
+                                               const nsAString& aAlertTitle,
+                                               const nsAString& aAlertText,
+                                               const nsAString& aAlertCookie,
+                                               const nsAString& aAlertName,
+                                               nsIPrincipal* aPrincipal)
+{
+    nsAutoString host;
+    nsAlertsUtils::GetSourceHostPort(aPrincipal, host);
+
+    GeckoAppShell::ShowPersistentAlertNotificationWrapper
+        (aPersistentData, aImageUrl, aAlertTitle, aAlertText, aAlertCookie, aAlertName, host);
+}
+
+void
 AndroidBridge::ShowAlertNotification(const nsAString& aImageUrl,
                                      const nsAString& aAlertTitle,
                                      const nsAString& aAlertText,
@@ -1646,15 +1662,43 @@ nsAndroidBridge::Observe(nsISupports* aSubject, const char* aTopic,
     RemoveObservers();
   } else if (!strcmp(aTopic, "audio-playback")) {
     ALOG_BRIDGE("nsAndroidBridge::Observe, get audio-playback event.");
+
+    nsCOMPtr<nsPIDOMWindowOuter> window = do_QueryInterface(aSubject);
+    MOZ_ASSERT(window);
+
     nsAutoString activeStr(aData);
-    if (activeStr.EqualsLiteral("active")) {
+    if (activeStr.EqualsLiteral("inactive-nonaudible")) {
+      // This state means the audio becomes silent, but it's still playing, so
+      // we don't need to notify the AudioFocusAgent.
+      return NS_OK;
+    }
+
+    bool isPlaying = activeStr.EqualsLiteral("active");
+
+    UpdateAudioPlayingWindows(window, isPlaying);
+  }
+  return NS_OK;
+}
+
+void
+nsAndroidBridge::UpdateAudioPlayingWindows(nsPIDOMWindowOuter* aWindow,
+                                           bool aPlaying)
+{
+  // Request audio focus for the first audio playing window and abandon focus
+  // for the last audio playing window.
+  if (aPlaying && !mAudioPlayingWindows.Contains(aWindow)) {
+    mAudioPlayingWindows.AppendElement(aWindow);
+    if (mAudioPlayingWindows.Length() == 1) {
+      ALOG_BRIDGE("nsAndroidBridge, request audio focus.");
       AudioFocusAgent::NotifyStartedPlaying();
-    } else {
+    }
+  } else if (!aPlaying && mAudioPlayingWindows.Contains(aWindow)) {
+    mAudioPlayingWindows.RemoveElement(aWindow);
+    if (mAudioPlayingWindows.Length() == 0) {
+      ALOG_BRIDGE("nsAndroidBridge, abandon audio focus.");
       AudioFocusAgent::NotifyStoppedPlaying();
     }
   }
-
-  return NS_OK;
 }
 
 void
@@ -1875,7 +1919,7 @@ AndroidBridge::CaptureZoomedView(mozIDOMWindowProxy *window, nsIntRect zoomedVie
         ALOG_BRIDGE("Error creating DrawTarget");
         return NS_ERROR_FAILURE;
     }
-    RefPtr<gfxContext> context = gfxContext::ForDrawTarget(dt);
+    RefPtr<gfxContext> context = gfxContext::CreateOrNull(dt);
     MOZ_ASSERT(context); // already checked the draw target above
     context->SetMatrix(context->CurrentMatrix().Scale(zoomFactor, zoomFactor));
 
@@ -1981,7 +2025,7 @@ nsresult AndroidBridge::CaptureThumbnail(mozIDOMWindowProxy *window, int32_t buf
         ALOG_BRIDGE("Error creating DrawTarget");
         return NS_ERROR_FAILURE;
     }
-    RefPtr<gfxContext> context = gfxContext::ForDrawTarget(dt);
+    RefPtr<gfxContext> context = gfxContext::CreateOrNull(dt);
     MOZ_ASSERT(context); // checked the draw target above
 
     context->SetMatrix(

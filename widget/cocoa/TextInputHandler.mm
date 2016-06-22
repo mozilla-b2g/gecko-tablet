@@ -233,25 +233,6 @@ GetGeckoKeyEventType(const WidgetEvent& aEvent)
 }
 
 static const char*
-GetRangeTypeName(uint32_t aRangeType)
-{
-  switch (aRangeType) {
-    case NS_TEXTRANGE_RAWINPUT:
-      return "NS_TEXTRANGE_RAWINPUT";
-    case NS_TEXTRANGE_CONVERTEDTEXT:
-      return "NS_TEXTRANGE_CONVERTEDTEXT";
-    case NS_TEXTRANGE_SELECTEDRAWTEXT:
-      return "NS_TEXTRANGE_SELECTEDRAWTEXT";
-    case NS_TEXTRANGE_SELECTEDCONVERTEDTEXT:
-      return "NS_TEXTRANGE_SELECTEDCONVERTEDTEXT";
-    case NS_TEXTRANGE_CARETPOSITION:
-      return "NS_TEXTRANGE_CARETPOSITION";
-    default:
-      return "invalid range type";
-  }
-}
-
-static const char*
 GetWindowLevelName(NSInteger aWindowLevel)
 {
   switch (aWindowLevel) {
@@ -1541,6 +1522,16 @@ TextInputHandler::HandleKeyDownEvent(NSEvent* aNativeEvent)
      [aNativeEvent modifierFlags], GetCharacters([aNativeEvent characters]),
      GetCharacters([aNativeEvent charactersIgnoringModifiers])));
 
+  // Except when Command key is pressed, we should hide mouse cursor until
+  // next mousemove.  Handling here means that:
+  // - Don't hide mouse cursor at pressing modifier key
+  // - Hide mouse cursor even if the key event will be handled by IME (i.e.,
+  //   even without dispatching eKeyPress events)
+  // - Hide mouse cursor even when a plugin has focus
+  if (!([aNativeEvent modifierFlags] & NSCommandKeyMask)) {
+    [NSCursor setHiddenUntilMouseMoves:YES];
+  }
+
   RefPtr<nsChildView> kungFuDeathGrip(mWidget);
 
   KeyEventState* currentKeyEvent = PushKeyEvent(aNativeEvent);
@@ -2222,6 +2213,10 @@ TextInputHandler::InsertText(NSAttributedString* aAttrString,
 
   // Dispatch keypress event with char instead of compositionchange event
   WidgetKeyboardEvent keypressEvent(true, eKeyPress, mWidget);
+  // XXX Why do we need to dispatch keypress event for not inputting any
+  //     string?  If it wants to delete the specified range, should we
+  //     dispatch an eContentCommandDelete event instead?  Because this
+  //     must not be caused by a key operation, a part of IME's processing.
   keypressEvent.mIsChar = IsPrintableChar(str.CharAt(0));
 
   // Don't set other modifiers from the current event, because here in
@@ -2233,14 +2228,10 @@ TextInputHandler::InsertText(NSAttributedString* aAttrString,
     InitKeyEvent(keyEvent, keypressEvent, &str);
   } else {
     nsCocoaUtils::InitInputEvent(keypressEvent, static_cast<NSEvent*>(nullptr));
-    if (keypressEvent.mIsChar) {
-      keypressEvent.mCharCode = str.CharAt(0);
-    }
-    // Note that insertText is not called only at key pressing.
-    if (!keypressEvent.mCharCode) {
-      keypressEvent.mKeyCode =
-        WidgetUtils::ComputeKeyCodeFromChar(keypressEvent.mCharCode);
-    }
+    keypressEvent.mKeyNameIndex = KEY_NAME_INDEX_USE_STRING;
+    keypressEvent.mKeyValue = str;
+    // FYI: TextEventDispatcher will set mKeyCode to 0 for printable key's
+    //      keypress events even if they don't cause inputting non-empty string.
   }
 
   // Remove basic modifiers from keypress event because if they are included,
@@ -2743,7 +2734,7 @@ IMEInputHandler::ExecutePendingMethods()
  *
  ******************************************************************************/
 
-uint32_t
+TextRangeType
 IMEInputHandler::ConvertToTextRangeType(uint32_t aUnderlineStyle,
                                         NSRange& aSelectedRange)
 {
@@ -2759,23 +2750,23 @@ IMEInputHandler::ConvertToTextRangeType(uint32_t aUnderlineStyle,
   if (aSelectedRange.length == 0) {
     switch (aUnderlineStyle) {
       case NSUnderlineStyleSingle:
-        return NS_TEXTRANGE_RAWINPUT;
+        return TextRangeType::eRawClause;
       case NSUnderlineStyleThick:
-        return NS_TEXTRANGE_SELECTEDRAWTEXT;
+        return TextRangeType::eSelectedRawClause;
       default:
         NS_WARNING("Unexpected line style");
-        return NS_TEXTRANGE_SELECTEDRAWTEXT;
+        return TextRangeType::eSelectedRawClause;
     }
   }
 
   switch (aUnderlineStyle) {
     case NSUnderlineStyleSingle:
-      return NS_TEXTRANGE_CONVERTEDTEXT;
+      return TextRangeType::eConvertedClause;
     case NSUnderlineStyleThick:
-      return NS_TEXTRANGE_SELECTEDCONVERTEDTEXT;
+      return TextRangeType::eSelectedClause;
     default:
       NS_WARNING("Unexpected line style");
-      return NS_TEXTRANGE_SELECTEDCONVERTEDTEXT;
+      return TextRangeType::eSelectedClause;
   }
 }
 
@@ -2841,7 +2832,7 @@ IMEInputHandler::CreateTextRangeArray(NSAttributedString *aAttrString,
       ("%p IMEInputHandler::CreateTextRangeArray, "
        "range={ mStartOffset=%llu, mEndOffset=%llu, mRangeType=%s }",
        this, range.mStartOffset, range.mEndOffset,
-       GetRangeTypeName(range.mRangeType)));
+       ToChar(range.mRangeType)));
 
     limitRange =
       NSMakeRange(NSMaxRange(effectiveRange), 
@@ -2852,14 +2843,14 @@ IMEInputHandler::CreateTextRangeArray(NSAttributedString *aAttrString,
   TextRange range;
   range.mStartOffset = aSelectedRange.location + aSelectedRange.length;
   range.mEndOffset = range.mStartOffset;
-  range.mRangeType = NS_TEXTRANGE_CARETPOSITION;
+  range.mRangeType = TextRangeType::eCaret;
   textRangeArray->AppendElement(range);
 
   MOZ_LOG(gLog, LogLevel::Info,
     ("%p IMEInputHandler::CreateTextRangeArray, "
      "range={ mStartOffset=%llu, mEndOffset=%llu, mRangeType=%s }",
      this, range.mStartOffset, range.mEndOffset,
-     GetRangeTypeName(range.mRangeType)));
+     ToChar(range.mRangeType)));
 
   return textRangeArray.forget();
 
@@ -3217,33 +3208,6 @@ IMEInputHandler::SetMarkedText(NSAttributedString* aAttrString,
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
-NSInteger
-IMEInputHandler::ConversationIdentifier()
-{
-  MOZ_LOG(gLog, LogLevel::Info,
-    ("%p IMEInputHandler::ConversationIdentifier, Destroyed()=%s",
-     this, TrueOrFalse(Destroyed())));
-
-  if (Destroyed()) {
-    return reinterpret_cast<NSInteger>(mView);
-  }
-
-  RefPtr<IMEInputHandler> kungFuDeathGrip(this);
-
-  // NOTE: The size of NSInteger is same as pointer size.
-  WidgetQueryContentEvent textContent(true, eQueryTextContent, mWidget);
-  textContent.InitForQueryTextContent(0, 0);
-  DispatchEvent(textContent);
-  if (!textContent.mSucceeded) {
-    MOZ_LOG(gLog, LogLevel::Info,
-      ("%p IMEInputHandler::ConversationIdentifier, Failed", this));
-    return reinterpret_cast<NSInteger>(mView);
-  }
-  // XXX This might return same ID as a previously existing editor if the
-  //     deleted editor was created at the same address.  Is there a better way?
-  return reinterpret_cast<NSInteger>(textContent.mReply.mContentsRoot);
-}
-
 NSAttributedString*
 IMEInputHandler::GetAttributedSubstringFromRange(NSRange& aRange,
                                                  NSRange* aActualRange)
@@ -3317,27 +3281,13 @@ IMEInputHandler::GetAttributedSubstringFromRange(NSRange& aRange,
     return nil;
   }
 
-  NSString* nsstr = nsCocoaUtils::ToNSString(textContent.mReply.mString);
+  // We don't set vertical information at this point.  If required,
+  // OS will calls drawsVerticallyForCharacterAtIndex.
   NSMutableAttributedString* result =
-    [[[NSMutableAttributedString alloc] initWithString:nsstr
-                                            attributes:nil] autorelease];
-  const nsTArray<FontRange>& fontRanges = textContent.mReply.mFontRanges;
-  int32_t lastOffset = textContent.mReply.mString.Length();
-  for (auto i = fontRanges.Length(); i > 0; --i) {
-    const FontRange& fontRange = fontRanges[i - 1];
-    NSString* fontName = nsCocoaUtils::ToNSString(fontRange.mFontName);
-    CGFloat fontSize = fontRange.mFontSize / mWidget->BackingScaleFactor();
-    NSFont* font = [NSFont fontWithName:fontName size:fontSize];
-    if (!font) {
-      font = [NSFont systemFontOfSize:fontSize];
-    }
-
-    NSDictionary* attrs = @{ NSFontAttributeName: font };
-    NSRange range = NSMakeRange(fontRange.mStartOffset,
-                                lastOffset - fontRange.mStartOffset);
-    [result setAttributes:attrs range:range];
-    lastOffset = fontRange.mStartOffset;
-  }
+    nsCocoaUtils::GetNSMutableAttributedString(textContent.mReply.mString,
+                                               textContent.mReply.mFontRanges,
+                                               false,
+                                               mWidget->BackingScaleFactor());
   if (aActualRange) {
     aActualRange->location = textContent.mReply.mOffset;
     aActualRange->length = textContent.mReply.mString.Length();
@@ -4023,14 +3973,6 @@ TextInputHandlerBase::OnDestroyWidget(nsChildView* aDestroyingWidget)
 bool
 TextInputHandlerBase::DispatchEvent(WidgetGUIEvent& aEvent)
 {
-  if (aEvent.mMessage == eKeyPress) {
-    WidgetInputEvent& inputEvent = *aEvent.AsInputEvent();
-    if (!inputEvent.IsMeta()) {
-      MOZ_LOG(gLog, LogLevel::Info,
-        ("%p TextInputHandlerBase::DispatchEvent, hiding mouse cursor", this));
-      [NSCursor setHiddenUntilMouseMoves:YES];
-    }
-  }
   return mWidget->DispatchWindowEvent(aEvent);
 }
 

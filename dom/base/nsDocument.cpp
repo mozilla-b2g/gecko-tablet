@@ -138,6 +138,7 @@
 
 #include "jsapi.h"
 #include "nsIXPConnect.h"
+#include "xpcpublic.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsIContentPolicy.h"
 #include "nsContentPolicyUtils.h"
@@ -163,6 +164,7 @@
 #include "mozilla/dom/HTMLIFrameElement.h"
 #include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/MediaSource.h"
+#include "mozilla/dom/FlyWebService.h"
 
 #include "mozAutoDocUpdate.h"
 #include "nsGlobalWindow.h"
@@ -1808,6 +1810,13 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
     return NS_SUCCESS_INTERRUPTED_TRAVERSE;
   }
 
+  if (tmp->mMaybeEndOutermostXBLUpdateRunner) {
+    // The cached runnable keeps a reference to the document object..
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb,
+                                       "mMaybeEndOutermostXBLUpdateRunner.mObj");
+    cb.NoteXPCOMChild(ToSupports(tmp));
+  }
+
   for (auto iter = tmp->mIdentifierMap.ConstIter(); !iter.Done();
        iter.Next()) {
     iter.Get()->Traverse(&cb);
@@ -1958,6 +1967,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   tmp->mCachedRootElement = nullptr; // Avoid a dangling pointer
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDisplayDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFirstBaseNodeWithHref)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mMaybeEndOutermostXBLUpdateRunner)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mDOMImplementation)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mImageMaps)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCachedEncoder)
@@ -2585,10 +2595,8 @@ nsDocument::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(aContainer);
 
   if (docShell) {
-    nsresult rv = docShell->GetSandboxFlags(&mSandboxFlags);
-    NS_ENSURE_SUCCESS(rv, rv);
+    docShell->ApplySandboxAndFullscreenFlags(this);
     WarnIfSandboxIneffective(docShell, mSandboxFlags, GetChannel());
-    mFullscreenEnabled = docShell->GetFullscreenAllowed();
   }
 
   // The CSP directive upgrade-insecure-requests not only applies to the
@@ -2752,7 +2760,6 @@ nsDocument::ApplySettingsFromCSP(bool aSpeculative)
 nsresult
 nsDocument::InitCSP(nsIChannel* aChannel)
 {
-  nsCOMPtr<nsIContentSecurityPolicy> csp;
   if (!CSPService::sCSPEnabled) {
     MOZ_LOG(gCspPRLog, LogLevel::Debug,
            ("CSP is disabled, skipping CSP init for document %p", this));
@@ -2872,6 +2879,7 @@ nsDocument::InitCSP(nsIChannel* aChannel)
     }
   }
 
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
   rv = principal->EnsureCSP(this, getter_AddRefs(csp));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -3771,15 +3779,17 @@ nsDocument::SetHeaderData(nsIAtom* aHeaderField, const nsAString& aData)
 
   // Referrer policy spec says to ignore any empty referrer policies.
   if (aHeaderField == nsGkAtoms::referrer && !aData.IsEmpty()) {
-    ReferrerPolicy policy = mozilla::net::ReferrerPolicyFromString(aData);
-
-    // Referrer policy spec (section 6.1) says that we always use the newest
-    // referrer policy we find
-    mReferrerPolicy = policy;
-    mReferrerPolicySet = true;
+     ReferrerPolicy policy = mozilla::net::ReferrerPolicyFromString(aData);
+    // If policy is not the empty string, then set element's node document's
+    // referrer policy to policy
+    if (policy != mozilla::net::RP_Unset) {
+      // Referrer policy spec (section 6.1) says that we always use the newest
+      // referrer policy we find
+      mReferrerPolicy = policy;
+      mReferrerPolicySet = true;
+    }
   }
 }
-
 void
 nsDocument::TryChannelCharset(nsIChannel *aChannel,
                               int32_t& aCharsetSource,
@@ -4980,8 +4990,11 @@ nsDocument::MaybeEndOutermostXBLUpdate()
       mInXBLUpdate = false;
       BindingManager()->EndOutermostUpdate();
     } else if (!mInDestructor) {
-      nsContentUtils::AddScriptRunner(
-        NewRunnableMethod(this, &nsDocument::MaybeEndOutermostXBLUpdate));
+      if (!mMaybeEndOutermostXBLUpdateRunner) {
+        mMaybeEndOutermostXBLUpdateRunner =
+          NewRunnableMethod(this, &nsDocument::MaybeEndOutermostXBLUpdate);
+      }
+      nsContentUtils::AddScriptRunner(mMaybeEndOutermostXBLUpdateRunner);
     }
   }
 }
@@ -8468,12 +8481,9 @@ nsDocument::IsScriptEnabled()
 {
   // If this document is sandboxed without 'allow-scripts'
   // script is not enabled
-  if (mSandboxFlags & SANDBOXED_SCRIPTS) {
+  if (HasScriptsBlockedBySandbox()) {
     return false;
   }
-
-  nsCOMPtr<nsIScriptSecurityManager> sm(do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID));
-  NS_ENSURE_TRUE(sm, false);
 
   nsCOMPtr<nsIScriptGlobalObject> globalObject = do_QueryInterface(GetInnerWindow());
   if (!globalObject && mMasterDocument) {
@@ -8483,7 +8493,7 @@ nsDocument::IsScriptEnabled()
     return false;
   }
 
-  return sm->ScriptAllowed(globalObject->GetGlobalJSObject());
+  return xpc::Scriptability::Get(globalObject->GetGlobalJSObject()).Allowed();
 }
 
 nsRadioGroupStruct*
@@ -8976,6 +8986,13 @@ nsDocument::CanSavePresentation(nsIRequest *aNewRequest)
   // Don't save presentations for documents containing MSE content, to
   // reduce memory usage.
   if (ContainsMSEContent()) {
+    return false;
+  }
+
+  // Don't save presentation if there are active FlyWeb connections or FlyWeb
+  // servers.
+  FlyWebService* flyWebService = FlyWebService::GetExisting();
+  if (flyWebService && flyWebService->HasConnectionOrServer(win->WindowID())) {
     return false;
   }
 
@@ -9765,6 +9782,9 @@ nsDocument::SuppressEventHandling(nsIDocument::SuppressionType aWhat,
     mAnimationsPaused += aIncrease;
   } else {
     mEventsSuppressed += aIncrease;
+    for (uint32_t i = 0; i < aIncrease; ++i) {
+      ScriptLoader()->AddExecuteBlocker();
+    }
   }
 
   SuppressArgs args = { aWhat, aIncrease };
@@ -10093,6 +10113,7 @@ GetAndUnsuppressSubDocuments(nsIDocument* aDocument,
   if (args->mWhat != nsIDocument::eAnimationsOnly &&
       aDocument->EventHandlingSuppressed() > 0) {
     static_cast<nsDocument*>(aDocument)->DecreaseEventSuppression();
+    aDocument->ScriptLoader()->RemoveExecuteBlocker();
   } else if (args->mWhat == nsIDocument::eAnimationsOnly &&
              aDocument->AnimationsPaused()) {
     static_cast<nsDocument*>(aDocument)->ResumeAnimations();
@@ -12817,6 +12838,13 @@ nsDocument::GetVisibilityState() const
   // Otherwise, we're visible.
   if (!IsVisible() || !mWindow || !mWindow->GetOuterWindow() ||
       mWindow->GetOuterWindow()->IsBackground()) {
+
+    // Check if the document is in prerender state.
+    nsCOMPtr<nsIDocShell> docshell = GetDocShell();
+    if (docshell && docshell->GetIsPrerendered()) {
+      return dom::VisibilityState::Prerender;
+    }
+
     return dom::VisibilityState::Hidden;
   }
 
@@ -13193,6 +13221,12 @@ nsIDocument::SetPageUseCounter(UseCounter aUseCounter)
   }
 
   contentParent->SetChildDocumentUseCounter(aUseCounter);
+}
+
+bool
+nsIDocument::HasScriptsBlockedBySandbox()
+{
+  return mSandboxFlags & SANDBOXED_SCRIPTS;
 }
 
 static bool

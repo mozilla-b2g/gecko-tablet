@@ -174,8 +174,10 @@ js::AppendUnique(JSContext* cx, AutoIdVector& base, AutoIdVector& others)
                 break;
             }
         }
-        if (unique)
-            uniqueOthers.append(others[i]);
+        if (unique) {
+            if (!uniqueOthers.append(others[i]))
+                return false;
+        }
     }
     return base.appendAll(uniqueOthers);
 }
@@ -675,11 +677,7 @@ js::proxy_ObjectMoved(JSObject* obj, const JSObject* old)
 bool
 js::proxy_HasInstance(JSContext* cx, HandleObject proxy, MutableHandleValue v, bool* bp)
 {
-    bool b;
-    if (!Proxy::hasInstance(cx, proxy, v, &b))
-        return false;
-    *bp = !!b;
-    return true;
+    return Proxy::hasInstance(cx, proxy, v, bp);
 }
 
 bool

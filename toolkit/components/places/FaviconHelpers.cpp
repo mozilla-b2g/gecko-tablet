@@ -419,7 +419,9 @@ AsyncFetchAndSetIconForPage::FetchFromNetwork() {
   rv = NS_NewChannel(getter_AddRefs(channel),
                      iconURI,
                      mLoadingPrincipal,
-                     nsILoadInfo::SEC_NORMAL,
+                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS |
+                     nsILoadInfo::SEC_ALLOW_CHROME |
+                     nsILoadInfo::SEC_DISALLOW_SCRIPT,
                      nsIContentPolicy::TYPE_INTERNAL_IMAGE);
 
   NS_ENSURE_SUCCESS(rv, rv);
@@ -439,7 +441,11 @@ AsyncFetchAndSetIconForPage::FetchFromNetwork() {
     priorityChannel->AdjustPriority(nsISupportsPriority::PRIORITY_LOWEST);
   }
 
-  return channel->AsyncOpen(this, nullptr);
+  rv = channel->AsyncOpen2(this);
+  if (NS_SUCCEEDED(rv)) {
+    mRequest = channel;
+  }
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -460,6 +466,9 @@ NS_IMETHODIMP
 AsyncFetchAndSetIconForPage::OnStartRequest(nsIRequest* aRequest,
                                             nsISupports* aContext)
 {
+  // mRequest should already be set from ::FetchFromNetwork, but in the case of
+  // a redirect we might get a new request, and we should make sure we keep a
+  // reference to the most current request.
   mRequest = aRequest;
   if (mCanceled) {
     mRequest->Cancel(NS_BINDING_ABORTED);

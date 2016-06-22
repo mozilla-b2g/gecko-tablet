@@ -3,12 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/layers/AsyncTransactionTracker.h" // for AsyncTransactionTracker
 #include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/SharedBufferManagerChild.h"
 #include "mozilla/layers/ISurfaceAllocator.h"     // for GfxMemoryImageReporter
+#include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
@@ -141,6 +141,7 @@ class mozilla::gl::SkiaGLGlue : public GenericAtomicRefCounted {
 #include "mozilla/dom/ContentChild.h"
 #include "gfxVR.h"
 #include "VRManagerChild.h"
+#include "mozilla/gfx/GPUParent.h"
 
 namespace mozilla {
 namespace layers {
@@ -581,7 +582,7 @@ static uint32_t GetSkiaGlyphCacheSize()
 void
 gfxPlatform::Init()
 {
-    MOZ_RELEASE_ASSERT(NS_IsMainThread());
+    MOZ_RELEASE_ASSERT(NS_IsMainThread(), "GFX: Not in main thread.");
     if (gEverInitialized) {
         NS_RUNTIMEABORT("Already started???");
     }
@@ -590,6 +591,12 @@ gfxPlatform::Init()
     // Initialize the preferences by creating the singleton.
     gfxPrefs::GetSingleton();
     MediaPrefs::GetSingleton();
+
+    gfxConfig::Init();
+
+    if (XRE_IsParentProcess()) {
+      GPUProcessManager::Initialize();
+    }
 
     auto fwd = new CrashStatsLogForwarder("GraphicsCriticalError");
     fwd->SetCircularBufferSize(gfxPrefs::GfxLoggingCrashLength());
@@ -705,7 +712,8 @@ gfxPlatform::Init()
     gPlatform->mScreenReferenceDrawTarget =
         gPlatform->CreateOffscreenContentDrawTarget(IntSize(1, 1),
                                                     SurfaceFormat::B8G8R8A8);
-    if (!gPlatform->mScreenReferenceDrawTarget) {
+    if (!gPlatform->mScreenReferenceDrawTarget ||
+        !gPlatform->mScreenReferenceDrawTarget->IsValid()) {
       NS_RUNTIMEABORT("Could not initialize mScreenReferenceDrawTarget");
     }
 
@@ -779,6 +787,8 @@ static bool sLayersIPCIsUp = false;
 void
 gfxPlatform::Shutdown()
 {
+    // In some cases, gPlatform may not be created but Shutdown() called,
+    // e.g., during xpcshell tests.
     if (!gPlatform) {
       return;
     }
@@ -798,28 +808,29 @@ gfxPlatform::Shutdown()
     // Free the various non-null transforms and loaded profiles
     ShutdownCMS();
 
-    // In some cases, gPlatform may not be created but Shutdown() called,
-    // e.g., during xpcshell tests.
-    if (gPlatform) {
-        /* Unregister our CMS Override callback. */
-        NS_ASSERTION(gPlatform->mSRGBOverrideObserver, "mSRGBOverrideObserver has alreay gone");
-        Preferences::RemoveObserver(gPlatform->mSRGBOverrideObserver, GFX_PREF_CMS_FORCE_SRGB);
-        gPlatform->mSRGBOverrideObserver = nullptr;
+    /* Unregister our CMS Override callback. */
+    NS_ASSERTION(gPlatform->mSRGBOverrideObserver, "mSRGBOverrideObserver has alreay gone");
+    Preferences::RemoveObserver(gPlatform->mSRGBOverrideObserver, GFX_PREF_CMS_FORCE_SRGB);
+    gPlatform->mSRGBOverrideObserver = nullptr;
 
-        NS_ASSERTION(gPlatform->mFontPrefsObserver, "mFontPrefsObserver has alreay gone");
-        Preferences::RemoveObservers(gPlatform->mFontPrefsObserver, kObservedPrefs);
-        gPlatform->mFontPrefsObserver = nullptr;
+    NS_ASSERTION(gPlatform->mFontPrefsObserver, "mFontPrefsObserver has alreay gone");
+    Preferences::RemoveObservers(gPlatform->mFontPrefsObserver, kObservedPrefs);
+    gPlatform->mFontPrefsObserver = nullptr;
 
-        NS_ASSERTION(gPlatform->mMemoryPressureObserver, "mMemoryPressureObserver has already gone");
-        nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-        if (obs) {
-            obs->RemoveObserver(gPlatform->mMemoryPressureObserver, "memory-pressure");
-        }
-
-        gPlatform->mMemoryPressureObserver = nullptr;
-        gPlatform->mSkiaGlue = nullptr;
-        gPlatform->mVsyncSource = nullptr;
+    NS_ASSERTION(gPlatform->mMemoryPressureObserver, "mMemoryPressureObserver has already gone");
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    if (obs) {
+        obs->RemoveObserver(gPlatform->mMemoryPressureObserver, "memory-pressure");
     }
+
+    gPlatform->mMemoryPressureObserver = nullptr;
+    gPlatform->mSkiaGlue = nullptr;
+
+    if (XRE_IsParentProcess()) {
+      gPlatform->mVsyncSource->Shutdown();
+    }
+
+    gPlatform->mVsyncSource = nullptr;
 
 #ifdef MOZ_WIDGET_ANDROID
     // Shut down the texture pool
@@ -839,6 +850,10 @@ gfxPlatform::Shutdown()
     GLContextProviderEGL::Shutdown();
 #endif
 
+    if (XRE_IsParentProcess()) {
+      GPUProcessManager::Shutdown();
+    }
+
     // This is a bit iffy - we're assuming that we were the ones that set the
     // log forwarder in the Factory, so that it's our responsibility to
     // delete it.
@@ -852,6 +867,8 @@ gfxPlatform::Shutdown()
     gfxPrefs::DestroySingleton();
     gfxFont::DestroySingletons();
 
+    gfxConfig::Shutdown();
+
     delete gPlatform;
     gPlatform = nullptr;
 }
@@ -863,8 +880,6 @@ gfxPlatform::InitLayersIPC()
       return;
     }
     sLayersIPCIsUp = true;
-
-    AsyncTransactionTrackersHolder::Initialize();
 
     if (XRE_IsParentProcess())
     {
@@ -936,8 +951,6 @@ gfxPlatform::~gfxPlatform()
 #endif
 }
 
-cairo_user_data_key_t kDrawTarget;
-
 already_AddRefed<DrawTarget>
 gfxPlatform::CreateDrawTargetForSurface(gfxASurface *aSurface, const IntSize& aSize)
 {
@@ -947,7 +960,6 @@ gfxPlatform::CreateDrawTargetForSurface(gfxASurface *aSurface, const IntSize& aS
     gfxWarning() << "gfxPlatform::CreateDrawTargetForSurface failed in CreateDrawTargetForCairoSurface";
     return nullptr;
   }
-  aSurface->SetData(&kDrawTarget, drawTarget, nullptr);
   return drawTarget.forget();
 }
 
@@ -998,9 +1010,6 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
 
   if (!aTarget) {
     aTarget = gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget();
-    if (!aTarget) {
-      return nullptr;
-    }
   }
 
   void *userData = aSurface->GetData(&kSourceSurface);
@@ -1231,7 +1240,7 @@ gfxPlatform::PopulateScreenInfo()
 bool
 gfxPlatform::SupportsAzureContentForDrawTarget(DrawTarget* aTarget)
 {
-  if (!aTarget) {
+  if (!aTarget || !aTarget->IsValid()) {
     return false;
   }
 
@@ -1314,8 +1323,10 @@ gfxPlatform::GetSkiaGLGlue()
      * stands, this only works on the main thread.
      */
     RefPtr<GLContext> glContext;
+    nsCString discardFailureId;
     glContext = GLContextProvider::CreateHeadless(CreateContextFlags::REQUIRE_COMPAT_PROFILE |
-                                                  CreateContextFlags::ALLOW_OFFLINE_RENDERER);
+                                                  CreateContextFlags::ALLOW_OFFLINE_RENDERER,
+                                                  discardFailureId);
     if (!glContext) {
       printf_stderr("Failed to create GLContext for SkiaGL!\n");
       return nullptr;
@@ -2062,7 +2073,6 @@ gfxPlatform::OptimalFormatForContent(gfxContentType aContent)
  * and remember the values.  Changing these preferences during the run will
  * not have any effect until we restart.
  */
-bool gANGLESupportsD3D11 = false;
 static mozilla::Atomic<bool> sLayersSupportsHardwareVideoDecoding(false);
 static bool sLayersHardwareVideoDecodingFailed = false;
 static bool sBufferRotationCheckPref = true;
@@ -2091,15 +2101,6 @@ gfxPlatform::InitAcceleration()
   nsCOMPtr<nsIGfxInfo> gfxInfo = services::GetGfxInfo();
   nsCString discardFailureId;
   int32_t status;
-#ifdef XP_WIN
-  if (!gfxPrefs::LayersAccelerationDisabledDoNotUseDirectly() && gfxInfo) {
-    if (NS_SUCCEEDED(gfxInfo->GetFeatureStatus(nsIGfxInfo::FEATURE_DIRECT3D_11_ANGLE, discardFailureId, &status))) {
-      if (status == nsIGfxInfo::FEATURE_STATUS_OK) {
-        gANGLESupportsD3D11 = true;
-      }
-    }
-  }
-#endif
 
   if (Preferences::GetBool("media.hardware-video-decoding.enabled", false) &&
 #ifdef XP_WIN
@@ -2115,6 +2116,23 @@ gfxPlatform::InitAcceleration()
   Preferences::AddBoolVarCache(&sLayersHardwareVideoDecodingFailed,
                                "media.hardware-video-decoding.failed",
                                false);
+
+  if (XRE_IsParentProcess()) {
+    if (gfxPrefs::GPUProcessDevEnabled()) {
+      // We want to hide this from about:support, so only set a default if the
+      // pref is known to be true.
+      gfxConfig::SetDefaultFromPref(
+        Feature::GPU_PROCESS,
+        gfxPrefs::GetGPUProcessDevEnabledPrefName(),
+        true,
+        gfxPrefs::GetGPUProcessDevEnabledPrefDefault());
+    }
+
+    if (gfxConfig::IsEnabled(Feature::GPU_PROCESS)) {
+      GPUProcessManager* gpu = GPUProcessManager::Get();
+      gpu->EnableGPUProcess();
+    }
+  }
 
   sLayersAccelerationPrefsInitialized = true;
 }
@@ -2132,9 +2150,11 @@ gfxPlatform::InitCompositorAccelerationPrefs()
                          "Acceleration blocked by platform"))
   {
     if (gfxPrefs::LayersAccelerationDisabledDoNotUseDirectly()) {
-      feature.UserDisable("Disabled by pref");
+      feature.UserDisable("Disabled by pref",
+                          NS_LITERAL_CSTRING("FEATURE_FAILURE_COMP_PREF"));
     } else if (acceleratedEnv && *acceleratedEnv == '0') {
-      feature.UserDisable("Disabled by envvar");
+      feature.UserDisable("Disabled by envvar",
+                          NS_LITERAL_CSTRING("FEATURE_FAILURE_COMP_ENV"));
     }
   } else {
     if (acceleratedEnv && *acceleratedEnv == '1') {
@@ -2149,7 +2169,8 @@ gfxPlatform::InitCompositorAccelerationPrefs()
 
   // Safe mode trumps everything.
   if (InSafeMode()) {
-    feature.ForceDisable(FeatureStatus::Blocked, "Acceleration blocked by safe-mode");
+    feature.ForceDisable(FeatureStatus::Blocked, "Acceleration blocked by safe-mode",
+                         NS_LITERAL_CSTRING("FEATURE_FAILURE_COMP_SAFEMODE"));
   }
 }
 

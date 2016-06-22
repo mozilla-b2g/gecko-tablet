@@ -134,7 +134,8 @@ public class GeckoAppShell
 
         @Override
         public void uncaughtException(final Thread thread, final Throwable exc) {
-            if (GeckoThread.isStateAtLeast(GeckoThread.State.EXITING)) {
+            if (GeckoThread.isState(GeckoThread.State.EXITING) ||
+                    GeckoThread.isState(GeckoThread.State.EXITED)) {
                 // We've called System.exit. All exceptions after this point are Android
                 // berating us for being nasty to it.
                 return;
@@ -893,6 +894,19 @@ public class GeckoAppShell
         } else {
             Log.d(LOGTAG, "Notification client already set");
         }
+    }
+
+    @WrapForJNI(stubName = "ShowPersistentAlertNotificationWrapper")
+    public static void showPersistentAlertNotification(
+          String aPersistentData,
+          String aImageUrl, String aAlertTitle, String aAlertText,
+          String aAlertCookie, String aAlertName, String aHost) {
+        Intent notificationIntent = GeckoService.getIntentToCreateServices(
+                getApplicationContext(), "persistent-notification-click", aPersistentData);
+        int notificationID = aAlertName.hashCode();
+        PendingIntent contentIntent = PendingIntent.getService(
+                getApplicationContext(), 0, notificationIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+        notificationClient.add(notificationID, aImageUrl, aHost, aAlertTitle, aAlertText, contentIntent);
     }
 
     @WrapForJNI(stubName = "ShowAlertNotificationWrapper")

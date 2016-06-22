@@ -6,6 +6,7 @@
     "atob": true,
     "btoa": true,
     "Components": true,
+    "CSSRule": true,
     "clearInterval": true,
     "clearTimeout": true,
     "console": true,
@@ -18,6 +19,7 @@
     "setInterval": true,
     "setTimeout": true,
     "XMLHttpRequest": true,
+    "URL": true,
     "_Iterator": true,
   },
   "rules": {
@@ -28,8 +30,9 @@
     "mozilla/mark-test-function-used": 1,
     "mozilla/no-aArgs": 1,
     "mozilla/no-cpows-in-tests": 2,
+    "mozilla/no-single-arg-cu-import": 2,
     // See bug 1224289.
-    "mozilla/reject-importGlobalProperties": 1,
+    "mozilla/reject-importGlobalProperties": 2,
     "mozilla/var-only-at-top-level": 1,
 
     // Rules from the React plugin
@@ -135,7 +138,7 @@
     // rule is a better rule to check this.
     "max-depth": 0,
     // Maximum length of a line.
-    "max-len": [2, 80, 2, {"ignoreUrls": true, "ignorePattern": "data:image\/|\\s*require\\s*\\(|^\\s*loader\\.lazy|-\\*-"}],
+    "max-len": [2, 90, 2, {"ignoreUrls": true, "ignorePattern": "data:image\/|\\s*require\\s*\\(|^\\s*loader\\.lazy|-\\*-"}],
     // Maximum depth callbacks can be nested.
     "max-nested-callbacks": [2, 3],
     // Don't limit the number of parameters that can be used in a function.

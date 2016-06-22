@@ -1,7 +1,10 @@
 #include "TestBridgeMain.h"
 
+#include "base/task.h"
 #include "IPDLUnitTests.h"      // fail etc.
 #include "IPDLUnitTestSubprocess.h"
+
+#include "nsAutoPtr.h"
 
 using namespace std;
 

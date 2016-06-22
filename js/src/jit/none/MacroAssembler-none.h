@@ -79,6 +79,14 @@ static MOZ_CONSTEXPR_VAR Register64 ReturnReg64(InvalidReg);
 #error "Bad architecture"
 #endif
 
+static MOZ_CONSTEXPR_VAR Register ABINonArgReg0 = { Registers::invalid_reg };
+static MOZ_CONSTEXPR_VAR Register ABINonArgReg1 = { Registers::invalid_reg };
+static MOZ_CONSTEXPR_VAR Register ABINonArgReturnReg0 = { Registers::invalid_reg };
+static MOZ_CONSTEXPR_VAR Register ABINonArgReturnReg1 = { Registers::invalid_reg };
+
+static MOZ_CONSTEXPR_VAR Register WasmTableCallPtrReg = { Registers::invalid_reg };
+static MOZ_CONSTEXPR_VAR Register WasmTableCallSigReg = { Registers::invalid_reg };
+
 static MOZ_CONSTEXPR_VAR uint32_t ABIStackAlignment = 4;
 static MOZ_CONSTEXPR_VAR uint32_t CodeAlignment = 4;
 static MOZ_CONSTEXPR_VAR uint32_t JitStackAlignment = 8;
@@ -138,6 +146,8 @@ class Assembler : public AssemblerShared
     static void ToggleToJmp(CodeLocationLabel) { MOZ_CRASH(); }
     static void ToggleToCmp(CodeLocationLabel) { MOZ_CRASH(); }
     static void ToggleCall(CodeLocationLabel, bool) { MOZ_CRASH(); }
+
+    static void UpdateBoundsCheck(uint8_t*, uint32_t) { MOZ_CRASH(); }
 
     static uintptr_t GetPointer(uint8_t*) { MOZ_CRASH(); }
 
@@ -422,12 +432,6 @@ class ABIArgGenerator
     ABIArg next(MIRType) { MOZ_CRASH(); }
     ABIArg& current() { MOZ_CRASH(); }
     uint32_t stackBytesConsumedSoFar() const { MOZ_CRASH(); }
-
-    static const Register NonArgReturnReg0;
-    static const Register NonArgReturnReg1;
-    static const Register NonArg_VolatileReg;
-    static const Register NonReturn_VolatileReg0;
-    static const Register NonReturn_VolatileReg1;
 };
 
 static inline void

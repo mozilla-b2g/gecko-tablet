@@ -28,23 +28,6 @@ namespace wasm {
 
 class FunctionGenerator;
 
-// A slow function describes a function that took longer than msThreshold to
-// validate and compile.
-
-struct SlowFunction
-{
-    SlowFunction(uint32_t index, unsigned ms, unsigned lineOrBytecode)
-     : index(index), ms(ms), lineOrBytecode(lineOrBytecode)
-    {}
-
-    static const unsigned msThreshold = 250;
-
-    uint32_t index;
-    unsigned ms;
-    unsigned lineOrBytecode;
-};
-typedef Vector<SlowFunction> SlowFunctionVector;
-
 // The ModuleGeneratorData holds all the state shared between the
 // ModuleGenerator thread and background compile threads. The background
 // threads are given a read-only view of the ModuleGeneratorData and the
@@ -84,21 +67,22 @@ struct ModuleGeneratorData
 {
     CompileArgs                     args;
     ModuleKind                      kind;
-    uint32_t                        numTableElems;
     mozilla::Atomic<uint32_t>       minHeapLength;
 
     DeclaredSigVector               sigs;
-    TableModuleGeneratorDataVector  sigToTable;
     DeclaredSigPtrVector            funcSigs;
     ImportModuleGeneratorDataVector imports;
     GlobalDescVector                globals;
+
+    TableModuleGeneratorData        wasmTable;
+    TableModuleGeneratorDataVector  asmJSSigToTable;
 
     uint32_t funcSigIndex(uint32_t funcIndex) const {
         return funcSigs[funcIndex] - sigs.begin();
     }
 
     explicit ModuleGeneratorData(ExclusiveContext* cx, ModuleKind kind = ModuleKind::Wasm)
-      : args(cx), kind(kind), numTableElems(0), minHeapLength(0)
+      : args(cx), kind(kind), minHeapLength(0)
     {}
 };
 
@@ -117,10 +101,10 @@ class MOZ_STACK_CLASS ModuleGenerator
     ExclusiveContext*               cx_;
     jit::JitContext                 jcx_;
 
-    // Data handed back to the caller in finish()
-    UniqueModuleData                module_;
-    UniqueExportMap                 exportMap_;
-    SlowFunctionVector              slowFuncs_;
+    // Data that is moved into the result of finish()
+    LinkData                        linkData_;
+    MutableMetadata                 metadata_;
+    ExportMap                       exportMap_;
 
     // Data scoped to the ModuleGenerator's lifetime
     UniqueModuleGeneratorData       shared_;
@@ -147,23 +131,24 @@ class MOZ_STACK_CLASS ModuleGenerator
 
     MOZ_MUST_USE bool finishOutstandingTask();
     bool funcIsDefined(uint32_t funcIndex) const;
-    uint32_t funcEntry(uint32_t funcIndex) const;
+    const CodeRange& funcCodeRange(uint32_t funcIndex) const;
     MOZ_MUST_USE bool convertOutOfRangeBranchesToThunks();
     MOZ_MUST_USE bool finishTask(IonCompileTask* task);
-    MOZ_MUST_USE bool finishCodegen(StaticLinkData* link);
-    MOZ_MUST_USE bool finishStaticLinkData(uint8_t* code, uint32_t codeBytes, StaticLinkData* link);
+    MOZ_MUST_USE bool finishCodegen();
+    MOZ_MUST_USE bool finishLinkData(Bytes& code);
     MOZ_MUST_USE bool addImport(const Sig& sig, uint32_t globalDataOffset);
-    MOZ_MUST_USE bool allocateGlobalBytes(uint32_t bytes, uint32_t align,
-                                          uint32_t* globalDataOffset);
+    MOZ_MUST_USE bool allocateGlobalBytes(uint32_t bytes, uint32_t align, uint32_t* globalDataOff);
 
   public:
     explicit ModuleGenerator(ExclusiveContext* cx);
     ~ModuleGenerator();
 
-    MOZ_MUST_USE bool init(UniqueModuleGeneratorData shared, UniqueChars filename);
+    MOZ_MUST_USE bool init(UniqueModuleGeneratorData shared,
+                           UniqueChars filename,
+                           Metadata* maybeMetadata = nullptr);
 
-    bool isAsmJS() const { return module_->kind == ModuleKind::AsmJS; }
-    CompileArgs args() const { return module_->compileArgs; }
+    bool isAsmJS() const { return metadata_->kind == ModuleKind::AsmJS; }
+    CompileArgs args() const { return metadata_->compileArgs; }
     jit::MacroAssembler& masm() { return masm_; }
 
     // Heap usage:
@@ -175,7 +160,7 @@ class MOZ_STACK_CLASS ModuleGenerator
     const DeclaredSig& sig(uint32_t sigIndex) const;
 
     // Function declarations:
-    uint32_t numFuncSigs() const { return module_->numFuncs; }
+    uint32_t numFuncSigs() const { return shared_->funcSigs.length(); }
     const DeclaredSig& funcSig(uint32_t funcIndex) const;
 
     // Globals:
@@ -195,12 +180,11 @@ class MOZ_STACK_CLASS ModuleGenerator
     // Function definitions:
     MOZ_MUST_USE bool startFuncDefs();
     MOZ_MUST_USE bool startFuncDef(uint32_t lineOrBytecode, FunctionGenerator* fg);
-    MOZ_MUST_USE bool finishFuncDef(uint32_t funcIndex, unsigned generateTime,
-                                    FunctionGenerator* fg);
+    MOZ_MUST_USE bool finishFuncDef(uint32_t funcIndex, FunctionGenerator* fg);
     MOZ_MUST_USE bool finishFuncDefs();
 
-    // Function-pointer tables:
-    static const uint32_t BadIndirectCall = UINT32_MAX;
+    // Pretty function names:
+    void setFuncNames(NameInBytecodeVector&& funcNames);
 
     // asm.js lazy initialization:
     void initSig(uint32_t sigIndex, Sig&& sig);
@@ -210,14 +194,10 @@ class MOZ_STACK_CLASS ModuleGenerator
     void initSigTableElems(uint32_t sigIndex, Uint32Vector&& elemFuncIndices);
     void bumpMinHeapLength(uint32_t newMinHeapLength);
 
-    // Return a ModuleData object which may be used to construct a Module, the
-    // StaticLinkData required to call Module::staticallyLink, and the list of
-    // functions that took a long time to compile.
-    MOZ_MUST_USE bool finish(CacheableCharsVector&& prettyFuncNames,
-                             UniqueModuleData* module,
-                             UniqueStaticLinkData* staticLinkData,
-                             UniqueExportMap* exportMap,
-                             SlowFunctionVector* slowFuncs);
+    // Finish compilation, provided the list of imported names and source
+    // bytecode. Both these Vectors may be empty (viz., b/c asm.js does
+    // different things for imports and source).
+    UniqueModule finish(ImportNameVector&& importNames, const ShareableBytes& bytecode);
 };
 
 // A FunctionGenerator encapsulates the generation of a single function body.
@@ -232,6 +212,8 @@ class MOZ_STACK_CLASS FunctionGenerator
 
     ModuleGenerator* m_;
     IonCompileTask*  task_;
+    bool             usesSimd_;
+    bool             usesAtomics_;
 
     // Data created during function generation, then handed over to the
     // FuncBytes in ModuleGenerator::finishFunc().
@@ -242,8 +224,26 @@ class MOZ_STACK_CLASS FunctionGenerator
 
   public:
     FunctionGenerator()
-      : m_(nullptr), task_(nullptr), lineOrBytecode_(0)
+      : m_(nullptr), task_(nullptr), usesSimd_(false), usesAtomics_(false), lineOrBytecode_(0)
     {}
+
+    bool usesSimd() const {
+        return usesSimd_;
+    }
+    void setUsesSimd() {
+        usesSimd_ = true;
+    }
+
+    bool usesAtomics() const {
+        return usesAtomics_;
+    }
+    void setUsesAtomics() {
+        usesAtomics_ = true;
+    }
+
+    bool usesSignalsForInterrupts() const {
+        return m_->args().useSignalHandlersForInterrupt;
+    }
 
     Bytes& bytes() {
         return bytes_;

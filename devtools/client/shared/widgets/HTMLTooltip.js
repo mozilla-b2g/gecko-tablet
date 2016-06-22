@@ -7,11 +7,40 @@
 "use strict";
 
 const EventEmitter = require("devtools/shared/event-emitter");
+const {TooltipToggle} = require("devtools/client/shared/widgets/tooltip/TooltipToggle");
+
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
-const IFRAME_URL = "chrome://devtools/content/shared/widgets/tooltip-frame.xhtml";
-const IFRAME_CONTAINER_ID = "tooltip-iframe-container";
+const POSITION = {
+  TOP: "top",
+  BOTTOM: "bottom",
+};
+
+module.exports.POSITION = POSITION;
+
+const TYPE = {
+  NORMAL: "normal",
+  ARROW: "arrow",
+};
+
+module.exports.TYPE = TYPE;
+
+const ARROW_WIDTH = 32;
+
+// Default offset between the tooltip's left edge and the tooltip arrow.
+const ARROW_OFFSET = 20;
+
+const EXTRA_HEIGHT = {
+  "normal": 0,
+  // The arrow is 16px tall, but merges on 3px with the panel border
+  "arrow": 13,
+};
+
+const EXTRA_BORDER = {
+  "normal": 0,
+  "arrow": 3,
+};
 
 /**
  * The HTMLTooltip can display HTML content in a tooltip popup.
@@ -20,62 +49,57 @@ const IFRAME_CONTAINER_ID = "tooltip-iframe-container";
  *        The devtools toolbox, needed to get the devtools main window.
  * @param {Object}
  *        - {String} type
- *          Display type of the tooltip. Possible values: "normal"
+ *          Display type of the tooltip. Possible values: "normal", "arrow"
  *        - {Boolean} autofocus
- *          Defaults to true. Should the tooltip be focused when opening it.
+ *          Defaults to false. Should the tooltip be focused when opening it.
  *        - {Boolean} consumeOutsideClicks
  *          Defaults to true. The tooltip is closed when clicking outside.
  *          Should this event be stopped and consumed or not.
  */
 function HTMLTooltip(toolbox,
-  {type = "normal", autofocus = true, consumeOutsideClicks = true} = {}) {
+  {type = "normal", autofocus = false, consumeOutsideClicks = true} = {}) {
   EventEmitter.decorate(this);
 
-  this.document = toolbox.doc;
+  this.doc = toolbox.doc;
   this.type = type;
   this.autofocus = autofocus;
   this.consumeOutsideClicks = consumeOutsideClicks;
 
   // Use the topmost window to listen for click events to close the tooltip
-  this.topWindow = this.document.defaultView.top;
+  this.topWindow = this.doc.defaultView.top;
 
   this._onClick = this._onClick.bind(this);
 
+  this._toggle = new TooltipToggle(this);
+  this.startTogglingOnHover = this._toggle.start.bind(this._toggle);
+  this.stopTogglingOnHover = this._toggle.stop.bind(this._toggle);
+
   this.container = this._createContainer();
 
-  // Promise that will resolve when the container can be filled with content.
-  this.containerReady = new Promise(resolve => {
-    if (this._isXUL()) {
-      // In XUL context, load a placeholder document in the iframe container.
-      let onLoad = () => {
-        this.container.removeEventListener("load", onLoad, true);
-        resolve();
-      };
-
-      this.container.addEventListener("load", onLoad, true);
-      this.container.setAttribute("src", IFRAME_URL);
-    } else {
-      // In non-XUL context the container is ready to use as is.
-      resolve();
-    }
-  });
+  if (this._isXUL()) {
+    this.doc.querySelector("window").appendChild(this.container);
+  } else {
+    // In non-XUL context the container is ready to use as is.
+    this.doc.body.appendChild(this.container);
+  }
 }
 
 module.exports.HTMLTooltip = HTMLTooltip;
 
 HTMLTooltip.prototype = {
-  position: {
-    TOP: "top",
-    BOTTOM: "bottom",
+  /**
+   * The tooltip panel is the parentNode of the tooltip content provided in
+   * setContent().
+   */
+  get panel() {
+    return this.container.querySelector(".tooltip-panel");
   },
 
-  get parent() {
-    if (this._isXUL()) {
-      // In XUL context, we are wrapping the HTML content in an iframe.
-      let win = this.container.contentWindow.wrappedJSObject;
-      return win.document.getElementById(IFRAME_CONTAINER_ID);
-    }
-    return this.container;
+  /**
+   * The arrow element. Might be null depending on the tooltip type.
+   */
+  get arrow() {
+    return this.container.querySelector(".tooltip-arrow");
   },
 
   /**
@@ -86,19 +110,23 @@ HTMLTooltip.prototype = {
    *        The tooltip content, should be a HTML element.
    * @param {Number} width
    *        Preferred width for the tooltip container
-   * @param {Number} height
-   *        Preferred height for the tooltip container
+   * @param {Number} height (optional)
+   *        Preferred height for the tooltip container. If the content height is
+   *        smaller than the container's height, the tooltip will automatically
+   *        shrink around the content. If not specified, will use all the height
+   *        available.
    * @return {Promise} a promise that will resolve when the content has been
    *         added in the tooltip container.
    */
-  setContent: function (content, width, height) {
-    this.preferredWidth = width;
-    this.preferredHeight = height;
+  setContent: function (content, width, height = Infinity) {
+    let themeHeight = EXTRA_HEIGHT[this.type] + 2 * EXTRA_BORDER[this.type];
+    let themeWidth = 2 * EXTRA_BORDER[this.type];
 
-    return this.containerReady.then(() => {
-      this.parent.innerHTML = "";
-      this.parent.appendChild(content);
-    });
+    this.preferredWidth = width + themeWidth;
+    this.preferredHeight = height + themeHeight;
+
+    this.panel.innerHTML = "";
+    this.panel.appendChild(content);
   },
 
   /**
@@ -114,30 +142,31 @@ HTMLTooltip.prototype = {
    *          more space is available.
    */
   show: function (anchor, {position} = {}) {
-    this.containerReady.then(() => {
-      let {top, left, width, height} = this._findBestPosition(anchor, position);
+    let computedPosition = this._findBestPosition(anchor, position);
 
-      if (this._isXUL()) {
-        this.container.setAttribute("width", width);
-        this.container.setAttribute("height", height);
-      } else {
-        this.container.style.width = width + "px";
-        this.container.style.height = height + "px";
-      }
+    let isTop = computedPosition.position === POSITION.TOP;
+    this.container.classList.toggle("tooltip-top", isTop);
+    this.container.classList.toggle("tooltip-bottom", !isTop);
 
-      this.container.style.top = top + "px";
-      this.container.style.left = left + "px";
-      this.container.style.display = "block";
+    this.container.style.width = computedPosition.width + "px";
+    this.container.style.height = computedPosition.height + "px";
+    this.container.style.top = computedPosition.top + "px";
+    this.container.style.left = computedPosition.left + "px";
 
-      if (this.autofocus) {
-        this.container.focus();
-      }
+    if (this.type === TYPE.ARROW) {
+      this.arrow.style.left = computedPosition.arrowLeft + "px";
+    }
 
-      this.attachEventsTimer = this.document.defaultView.setTimeout(() => {
-        this.topWindow.addEventListener("click", this._onClick, true);
-        this.emit("shown");
-      }, 0);
-    });
+    this.container.classList.add("tooltip-visible");
+
+    // Keep a pointer on the focused element to refocus it when hiding the tooltip.
+    this._focusedElement = this.doc.activeElement;
+
+    this.attachEventsTimer = this.doc.defaultView.setTimeout(() => {
+      this._maybeFocusTooltip();
+      this.topWindow.addEventListener("click", this._onClick, true);
+      this.emit("shown");
+    }, 0);
   },
 
   /**
@@ -145,12 +174,19 @@ HTMLTooltip.prototype = {
    * is hidden.
    */
   hide: function () {
-    this.document.defaultView.clearTimeout(this.attachEventsTimer);
+    this.doc.defaultView.clearTimeout(this.attachEventsTimer);
+    if (!this.isVisible()) {
+      return;
+    }
 
-    if (this.isVisible()) {
-      this.topWindow.removeEventListener("click", this._onClick, true);
-      this.container.style.display = "none";
-      this.emit("hidden");
+    this.topWindow.removeEventListener("click", this._onClick, true);
+    this.container.classList.remove("tooltip-visible");
+    this.emit("hidden");
+
+    let tooltipHasFocus = this.container.contains(this.doc.activeElement);
+    if (tooltipHasFocus && this._focusedElement) {
+      this._focusedElement.focus();
+      this._focusedElement = null;
     }
   },
 
@@ -159,8 +195,7 @@ HTMLTooltip.prototype = {
    * @return {Boolean} true if the tooltip is visible
    */
   isVisible: function () {
-    let win = this.document.defaultView;
-    return win.getComputedStyle(this.container).display != "none";
+    return this.container.classList.contains("tooltip-visible");
   },
 
   /**
@@ -173,19 +208,17 @@ HTMLTooltip.prototype = {
   },
 
   _createContainer: function () {
-    let container;
-    if (this._isXUL()) {
-      container = this.document.createElementNS(XHTML_NS, "iframe");
-      container.classList.add("devtools-tooltip-iframe");
-      this.document.querySelector("window").appendChild(container);
-    } else {
-      container = this.document.createElementNS(XHTML_NS, "div");
-      this.document.body.appendChild(container);
+    let container = this.doc.createElementNS(XHTML_NS, "div");
+    container.setAttribute("type", this.type);
+    container.classList.add("tooltip-container");
+
+    let html = '<div class="tooltip-filler"></div>';
+    html += '<div class="tooltip-panel"></div>';
+
+    if (this.type === TYPE.ARROW) {
+      html += '<div class="tooltip-arrow"></div>';
     }
-
-    container.classList.add("theme-body");
-    container.classList.add("devtools-htmltooltip-container");
-
+    container.innerHTML = html;
     return container;
   },
 
@@ -202,67 +235,106 @@ HTMLTooltip.prototype = {
   },
 
   _isInTooltipContainer: function (node) {
-    let contentWindow = this.parent.ownerDocument.defaultView;
+    // Check if the target is the tooltip arrow.
+    if (this.arrow && this.arrow === node) {
+      return true;
+    }
+
+    let tooltipWindow = this.panel.ownerDocument.defaultView;
     let win = node.ownerDocument.defaultView;
 
-    if (win === contentWindow) {
-      // If node is in the same window as the tooltip, check if the tooltip
-      // parent contains node.
-      return this.parent.contains(node);
+    // Check if the tooltip panel contains the node if they live in the same document.
+    if (win === tooltipWindow) {
+      return this.panel.contains(node);
     }
 
-    // Otherwise check if the node window is in the tooltip window.
+    // Check if the node window is in the tooltip container.
     while (win.parent && win.parent != win) {
-      win = win.parent;
-      if (win === contentWindow) {
-        return true;
+      if (win.parent === tooltipWindow) {
+        // If the parent window is the tooltip window, check if the tooltip contains
+        // the current frame element.
+        return this.panel.contains(win.frameElement);
       }
+      win = win.parent;
     }
+
     return false;
   },
 
+  /**
+   * Calculates the best possible position to display the tooltip near the
+   * provided anchor. An optional position can be provided, but will be
+   * respected only if it doesn't force the tooltip to be resized.
+   *
+   * If the tooltip has to be resized, the position will be wherever the most
+   * space is available.
+   *
+   */
   _findBestPosition: function (anchor, position) {
-    let top, left;
-    let {TOP, BOTTOM} = this.position;
+    let {TOP, BOTTOM} = POSITION;
 
-    let {left: anchorLeft, top: anchorTop, height: anchorHeight}
-      = this._getRelativeRect(anchor, this.document);
+    // Get anchor geometry
+    let {
+      left: anchorLeft, top: anchorTop,
+      height: anchorHeight, width: anchorWidth
+    } = this._getRelativeRect(anchor, this.doc);
 
+    // Get document geometry
     let {bottom: docBottom, right: docRight} =
-      this.document.documentElement.getBoundingClientRect();
+      this.doc.documentElement.getBoundingClientRect();
 
-    let height = this.preferredHeight;
-    // Check if the popup can fit above the anchor.
+    // Calculate available space for the tooltip.
     let availableTop = anchorTop;
-    let fitsAbove = availableTop >= height;
-    // Check if the popup can fit below the anchor.
-    let availableBelow = docBottom - (anchorTop + anchorHeight);
-    let fitsBelow = availableBelow >= height;
+    let availableBottom = docBottom - (anchorTop + anchorHeight);
 
-    let isPositionSuitable = (fitsAbove && position === TOP)
-      || (fitsBelow && position === BOTTOM);
-    if (!isPositionSuitable) {
-      // If the preferred position does not fit the preferred height,
-      // pick the position offering the most height.
-      position = availableTop > availableBelow ? TOP : BOTTOM;
+    // Find POSITION
+    let keepPosition = false;
+    if (position === TOP) {
+      keepPosition = availableTop >= this.preferredHeight;
+    } else if (position === BOTTOM) {
+      keepPosition = availableBottom >= this.preferredHeight;
+    }
+    if (!keepPosition) {
+      position = availableTop > availableBottom ? TOP : BOTTOM;
     }
 
-    // Calculate height, capped by the maximum height available.
-    height = Math.min(height, Math.max(availableTop, availableBelow));
-    top = position === TOP ? anchorTop - height : anchorTop + anchorHeight;
+    // Calculate HEIGHT.
+    let availableHeight = position === TOP ? availableTop : availableBottom;
+    let height = Math.min(this.preferredHeight, availableHeight);
+    height = Math.floor(height);
 
+    // Calculate TOP.
+    let top = position === TOP ? anchorTop - height : anchorTop + anchorHeight;
+
+    // Calculate WIDTH.
     let availableWidth = docRight;
     let width = Math.min(this.preferredWidth, availableWidth);
 
-    // By default, align the tooltip's left edge with the anchor left edge.
-    if (anchorLeft + width <= docRight) {
-      left = anchorLeft;
-    } else {
-      // If the tooltip cannot fit, shift to the left just enough to fit.
-      left = docRight - width;
+    // Calculate LEFT.
+    // By default the tooltip is aligned with the anchor left edge. Unless this
+    // makes it overflow the viewport, in which case is shifts to the left.
+    let left = Math.min(anchorLeft, docRight - width);
+
+    // Calculate ARROW LEFT (tooltip's LEFT might be updated)
+    let arrowLeft;
+    // Arrow style tooltips may need to be shifted to the left
+    if (this.type === TYPE.ARROW) {
+      let arrowCenter = left + ARROW_OFFSET + ARROW_WIDTH / 2;
+      let anchorCenter = anchorLeft + anchorWidth / 2;
+      // If the anchor is too narrow, align the arrow and the anchor center.
+      if (arrowCenter > anchorCenter) {
+        left = Math.max(0, left - (arrowCenter - anchorCenter));
+      }
+      // Arrow's left offset relative to the anchor.
+      arrowLeft = Math.min(ARROW_OFFSET, (anchorWidth - ARROW_WIDTH) / 2) | 0;
+      // Translate the coordinate to tooltip container
+      arrowLeft += anchorLeft - left;
+      // Make sure the arrow remains in the tooltip container.
+      arrowLeft = Math.min(arrowLeft, width - ARROW_WIDTH);
+      arrowLeft = Math.max(arrowLeft, 0);
     }
 
-    return {top, left, width, height};
+    return {top, left, width, height, position, arrowLeft};
   },
 
   /**
@@ -274,13 +346,9 @@ HTMLTooltip.prototype = {
     // Width and Height can be taken from the rect.
     let {width, height} = node.getBoundingClientRect();
 
-    // Find the smallest top/left coordinates from all quads.
-    let top = Infinity, left = Infinity;
-    let quads = node.getBoxQuads({relativeTo: relativeTo});
-    for (let quad of quads) {
-      top = Math.min(top, quad.bounds.top);
-      left = Math.min(left, quad.bounds.left);
-    }
+    let quads = node.getBoxQuads({relativeTo});
+    let top = quads[0].bounds.top;
+    let left = quads[0].bounds.left;
 
     // Compute right and bottom coordinates using the rest of the data.
     let right = left + width;
@@ -289,7 +357,24 @@ HTMLTooltip.prototype = {
     return {top, right, bottom, left, width, height};
   },
 
+  /**
+   * Check if the tooltip's owner document is a XUL document.
+   */
   _isXUL: function () {
-    return this.document.documentElement.namespaceURI === XUL_NS;
+    return this.doc.documentElement.namespaceURI === XUL_NS;
+  },
+
+  /**
+   * If the tootlip is configured to autofocus and a focusable element can be found,
+   * focus it.
+   */
+  _maybeFocusTooltip: function () {
+    // Simplied selector targetting elements that can receive the focus, full version at
+    // http://stackoverflow.com/questions/1599660/which-html-elements-can-receive-focus .
+    let focusableSelector = "a, button, iframe, input, select, textarea";
+    let focusableElement = this.panel.querySelector(focusableSelector);
+    if (this.autofocus && focusableElement) {
+      focusableElement.focus();
+    }
   },
 };

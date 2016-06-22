@@ -477,13 +477,15 @@ this.PushServiceWebSocket = {
       console.warn("makeWebSocket: Network is offline.");
       return null;
     }
-    let socket = Cc["@mozilla.org/network/protocol;1?name=wss"]
-                   .createInstance(Ci.nsIWebSocketChannel);
+    let contractId = uri.scheme == "ws" ?
+                     "@mozilla.org/network/protocol;1?name=ws" :
+                     "@mozilla.org/network/protocol;1?name=wss";
+    let socket = Cc[contractId].createInstance(Ci.nsIWebSocketChannel);
 
     socket.initLoadInfo(null, // aLoadingNode
                         Services.scriptSecurityManager.getSystemPrincipal(),
                         null, // aTriggeringPrincipal
-                        Ci.nsILoadInfo.SEC_NORMAL,
+                        Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_DATA_IS_NULL,
                         Ci.nsIContentPolicy.TYPE_WEBSOCKET);
 
     return socket;
@@ -713,13 +715,26 @@ this.PushServiceWebSocket = {
         update);
       return;
     }
+    function updateRecord(record) {
+      // Ignore messages that we've already processed. This can happen if the
+      // connection drops between notifying the service worker and acking the
+      // the message. In that case, the server will re-send the message on
+      // reconnect.
+      if (record.hasRecentMessageID(update.version)) {
+        console.warn("handleDataUpdate: Ignoring duplicate message",
+          update.version);
+        return null;
+      }
+      record.noteRecentMessageID(update.version);
+      return record;
+    }
     if (typeof update.data != "string") {
       promise = this._mainPushService.receivedPushMessage(
         update.channelID,
         update.version,
         null,
         null,
-        record => record
+        updateRecord
       );
     } else {
       let params = getCryptoParams(update.headers);
@@ -733,7 +748,7 @@ this.PushServiceWebSocket = {
           update.version,
           message,
           params,
-          record => record
+          updateRecord
         );
       } else {
         promise = Promise.reject(new Error("Invalid crypto headers"));

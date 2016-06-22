@@ -104,8 +104,7 @@
           this.durationValue = "";
           this.valueBar = null;
           this.isDragging = false;
-          this.isDraggingComplete = true;
-          this.wasPausedBeforeDrag = true;
+          this.isPausedByDragging = false;
 
           this.thumb = document.getAnonymousElementByAttribute(this, "class", "scale-thumb");
           this.type = this.getAttribute("class");
@@ -172,17 +171,23 @@
             if (this.type == "scrubber") {
                 this.Utils.log("--- dragStateChanged: " + isDragging + " ---");
                 this.isDragging = isDragging;
-                if (isDragging) {
-                    this.wasPausedBeforeDrag = this.Utils.video.paused;
-                    this.isDraggingComplete = false;
-                    this.Utils.video.pause();
-                } else if (!this.wasPausedBeforeDrag && !this.isDraggingComplete) {
-                    this.isDraggingComplete = true;
+                if (this.isPausedByDragging && !isDragging) {
                     // After the drag ends, resume playing.
                     this.Utils.video.play();
-                } else {
-                    this.isDraggingComplete = true;
+                    this.isPausedByDragging = false;
                 }
+            }
+          ]]>
+          </body>
+      </method>
+
+      <method name="pauseVideoDuringDragging">
+          <body>
+          <![CDATA[
+            if (this.isDragging &&
+                !this.Utils.video.paused && !this.isPausedByDragging) {
+                this.isPausedByDragging = true;
+                this.Utils.video.pause();
             }
           ]]>
           </body>
@@ -631,11 +636,17 @@
                 },
 
                 terminateEventListeners : function () {
-                    for (let event of this.videoEvents)
-                        this.video.removeEventListener(event, this, false);
+                    for (let event of this.videoEvents) {
+                        this.video.removeEventListener(event, this, {
+                            capture: true,
+                            mozSystemGroup: true
+                        });
+                    }
 
-                    for (let element of this.controlListeners)
-                        element.item.removeEventListener(element.event, element.func, false);
+                    for (let element of this.controlListeners) {
+                        element.item.removeEventListener(element.event, element.func,
+                                                         { mozSystemGroup: true });
+                    }
 
                     delete this.controlListeners;
 
@@ -826,6 +837,11 @@
                 },
                 HIDE_CONTROLS_TIMEOUT_MS : 2000,
                 onMouseMove : function (event) {
+                    // Pause playing video when the mouse is dragging over the control bar.
+                    if (this.scrubber.isDragging) {
+                      this.scrubber.pauseVideoDuringDragging();
+                    }
+
                     // If the controls are static, don't change anything.
                     if (!this.dynamicControls)
                         return;
@@ -952,11 +968,15 @@
 
                 _triggeredByControls: false,
 
+                startPlay : function () {
+                    this._triggeredByControls = true;
+                    this.hideClickToPlay();
+                    this.video.play();
+                },
+
                 togglePause : function () {
                     if (this.video.paused || this.video.ended) {
-                        this._triggeredByControls = true;
-                        this.hideClickToPlay();
-                        this.video.play();
+                        this.startPlay();
                     } else {
                         this.video.pause();
                     }
@@ -1033,21 +1053,13 @@
                         this.suppressError = true;
                         return;
                     }
-
-                    // Read defaultPrevented and the playback state asynchronously,
-                    // since Web content may want to consume the "click" event
-                    // but will only receive it after us. If web content
-                    // doesn't use preventDefault but still toggles playback,
-                    // we will treat that act the same as a call to preventDefault()
-                    // so the web content-initiated toggle is not reverted.
-                    let previousState = this.video.paused;
-                    setTimeout(() => {
-                        if (e.defaultPrevented ||
-                            this.video.paused != previousState) {
-                            return;
-                        }
-                        this.togglePause();
-                    }, 0);
+                    if (e.defaultPrevented)
+                        return;
+                    if (this.playButton.hasAttribute("paused")) {
+                        this.startPlay();
+                    } else {
+                        this.video.pause();
+                    }
                 },
                 hideClickToPlay : function () {
                     let videoHeight = this.video.clientHeight;
@@ -1330,10 +1342,15 @@
                     this.setupNewLoadState();
 
                     // Use the handleEvent() callback for all media events.
-                    // The "error" event listener must capture, so that it can trap error events
-                    // from the <source> children, which don't bubble.
-                    for (let event of this.videoEvents)
-                        this.video.addEventListener(event, this, (event == "error") ? true : false);
+                    // Only the "error" event listener must capture, so that it can trap error
+                    // events from <source> children, which don't bubble. But we use capture
+                    // for all events in order to simplify the event listener add/remove.
+                    for (let event of this.videoEvents) {
+                        this.video.addEventListener(event, this, {
+                            capture: true,
+                            mozSystemGroup: true
+                        });
+                    }
 
                     var self = this;
 
@@ -1343,7 +1360,7 @@
                     function addListener(elem, eventName, func) {
                       let boundFunc = func.bind(self);
                       self.controlListeners.push({ item: elem, event: eventName, func: boundFunc });
-                      elem.addEventListener(eventName, boundFunc, false);
+                      elem.addEventListener(eventName, boundFunc, { mozSystemGroup: true });
                     }
 
                     addListener(this.muteButton, "command", this.toggleMute);
@@ -1355,7 +1372,7 @@
 
                     addListener(this.videocontrols, "resizevideocontrols", this.adjustControlSize);
                     addListener(this.videocontrols, "transitionend", this.onTransitionEnd);
-                    addListener(this.video.ownerDocument, "mozfullscreenchange", this.onFullscreenChange);
+                    addListener(this.video.ownerDocument, "fullscreenchange", this.onFullscreenChange);
                     addListener(this.video, "keypress", this.keyHandler);
 
                     addListener(this.videocontrols, "dragstart", function(event) {
@@ -1370,6 +1387,7 @@
         </constructor>
         <destructor>
             <![CDATA[
+            this.Utils.terminateEventListeners();
             // randomID used to be a <field>, which meant that the XBL machinery
             // undefined the property when the element was unbound. The code in
             // this file actually depends on this, so now that randomID is an
@@ -1669,10 +1687,12 @@
             controlListeners: [],
             terminateEventListeners : function () {
               for (let event of this.videoEvents)
-                this.video.removeEventListener(event, this, false);
+                this.video.removeEventListener(event, this, { mozSystemGroup: true });
 
-              for (let element of this.controlListeners)
-                element.item.removeEventListener(element.event, element.func, false);
+              for (let element of this.controlListeners) {
+                element.item.removeEventListener(element.event, element.func,
+                                                 { mozSystemGroup: true });
+              }
 
               delete this.controlListeners;
             },
@@ -1736,13 +1756,13 @@
               function addListener(elem, eventName, func) {
                 let boundFunc = func.bind(self);
                 self.controlListeners.push({ item: elem, event: eventName, func: boundFunc });
-                elem.addEventListener(eventName, boundFunc, false);
+                elem.addEventListener(eventName, boundFunc, { mozSystemGroup: true });
               }
               addListener(this.clickToPlay, "click", this.clickToPlayClickHandler);
               addListener(this.video, "MozNoControlsBlockedVideo", this.blockedVideoHandler);
 
               for (let event of this.videoEvents) {
-                this.video.addEventListener(event, this, false);
+                this.video.addEventListener(event, this, { mozSystemGroup: true });
               }
 
               if (this.video.autoplay && !this.video.mozAutoplayEnabled) {
@@ -1756,6 +1776,7 @@
       </constructor>
       <destructor>
           <![CDATA[
+          this.Utils.terminateEventListeners();
           // randomID used to be a <field>, which meant that the XBL machinery
           // undefined the property when the element was unbound. The code in
           // this file actually depends on this, so now that randomID is an

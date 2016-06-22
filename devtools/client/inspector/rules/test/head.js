@@ -490,23 +490,6 @@ function getRuleViewLinkTextByIndex(view, index) {
 }
 
 /**
- * Get the rule editor from the rule-view given its index
- *
- * @param {CssRuleView} view
- *        The instance of the rule-view panel
- * @param {Number} childrenIndex
- *        The children index of the element to get
- * @param {Number} nodeIndex
- *        The child node index of the element to get
- * @return {DOMNode} The rule editor if any at this index
- */
-function getRuleViewRuleEditor(view, childrenIndex, nodeIndex) {
-  return nodeIndex !== undefined ?
-    view.element.children[childrenIndex].childNodes[nodeIndex]._ruleEditor :
-    view.element.children[childrenIndex]._ruleEditor;
-}
-
-/**
  * Simulate adding a new property in an existing rule in the rule-view.
  *
  * @param {CssRuleView} view
@@ -733,6 +716,7 @@ function* reloadPage(inspector, testActor) {
 
 /**
  * Create a new rule by clicking on the "add rule" button.
+ * This will leave the selector inplace-editor active.
  *
  * @param {InspectorPanel} inspector
  *        The instance of InspectorPanel currently loaded in the toolbox
@@ -746,6 +730,36 @@ function* addNewRule(inspector, view) {
 
   info("Waiting for rule view to change");
   yield view.once("ruleview-changed");
+}
+
+/**
+ * Create a new rule by clicking on the "add rule" button, dismiss the editor field and
+ * verify that the selector is correct.
+ *
+ * @param {InspectorPanel} inspector
+ *        The instance of InspectorPanel currently loaded in the toolbox
+ * @param {CssRuleView} view
+ *        The instance of the rule-view panel
+ * @param {String} expectedSelector
+ *        The value we expect the selector to have
+ * @param {Number} expectedIndex
+ *        The index we expect the rule to have in the rule-view
+ * @return a promise that resolves after the rule has been added
+ */
+function* addNewRuleAndDismissEditor(inspector, view, expectedSelector, expectedIndex) {
+  yield addNewRule(inspector, view);
+
+  info("Getting the new rule at index " + expectedIndex);
+  let ruleEditor = getRuleViewRuleEditor(view, expectedIndex);
+  let editor = ruleEditor.selectorText.ownerDocument.activeElement;
+  is(editor.value, expectedSelector,
+     "The editor for the new selector has the correct value: " + expectedSelector);
+
+  info("Pressing escape to leave the editor");
+  EventUtils.synthesizeKey("VK_ESCAPE", {});
+
+  is(ruleEditor.selectorText.textContent, expectedSelector,
+     "The new selector has the correct text: " + expectedSelector);
 }
 
 /**

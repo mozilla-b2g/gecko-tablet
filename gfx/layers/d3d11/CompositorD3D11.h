@@ -48,7 +48,6 @@ public:
   virtual CompositorD3D11* AsCompositorD3D11() override { return this; }
 
   virtual bool Initialize() override;
-  virtual void Destroy() override {}
 
   virtual TextureFactoryIdentifier
     GetTextureFactoryIdentifier() override;
@@ -170,7 +169,7 @@ private:
   bool VerifyBufferSize();
   bool UpdateRenderTarget();
   bool UpdateConstantBuffers();
-  void SetSamplerForFilter(gfx::Filter aFilter);
+  void SetSamplerForSamplingFilter(gfx::SamplingFilter aSamplingFilter);
   ID3D11PixelShader* GetPSForEffect(Effect *aEffect, MaskType aMaskType);
   void PaintToTarget();
   RefPtr<ID3D11Texture2D> CreateTexture(const gfx::IntRect& aRect,

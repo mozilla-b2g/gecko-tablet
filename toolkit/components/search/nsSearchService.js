@@ -1209,7 +1209,7 @@ EngineURL.prototype = {
         this._addMozParam(param);
       }
       else
-        this.addParam(param.name, param.value, param.purpose);
+        this.addParam(param.name, param.value, param.purpose || undefined);
     }
   },
 
@@ -1777,6 +1777,13 @@ Engine.prototype = {
         + this.name + "\".");
     // Only accept remote icons from http[s] or ftp
     switch (uri.scheme) {
+      case "resource":
+      case "chrome":
+        // We only allow chrome and resource icon URLs for built-in search engines
+        if (!this._isDefault) {
+          return;
+        }
+        // Fall through to the data case
       case "data":
         if (!this._hasPreferredIcon || aIsPreferred) {
           this._iconURI = uri;
@@ -2069,7 +2076,7 @@ Engine.prototype = {
       let url = aJson._urls[i];
       let engineURL = new EngineURL(url.type || URLTYPE_SEARCH_HTML,
                                     url.method || "GET", url.template,
-                                    url.resultDomain);
+                                    url.resultDomain || undefined);
       engineURL._initWithJSON(url, this);
       this._urls.push(engineURL);
     }
@@ -2408,6 +2415,21 @@ Engine.prototype = {
   },
 #endif
 
+  get _isWhiteListed() {
+    let url = this._getURLOfType(URLTYPE_SEARCH_HTML).template;
+    let hostname = makeURI(url).host;
+    let whitelist = Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF)
+                            .getCharPref("reset.whitelist")
+                            .split(",");
+    if (whitelist.includes(hostname)) {
+      LOG("The hostname " + hostname + " is white listed, " +
+          "we won't show the search reset prompt");
+      return true;
+    }
+
+    return false;
+  },
+
   // from nsISearchEngine
   getSubmission: function SRCH_ENG_getSubmission(aData, aResponseType, aPurpose) {
 #ifdef ANDROID
@@ -2419,6 +2441,24 @@ Engine.prototype = {
       aResponseType = URLTYPE_SEARCH_HTML;
     }
 
+    if (aResponseType == URLTYPE_SEARCH_HTML &&
+        Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF).getBoolPref("reset.enabled") &&
+        this.name == Services.search.currentEngine.name &&
+        !this._isDefault &&
+        (!this.getAttr("loadPathHash") ||
+         this.getAttr("loadPathHash") != getVerificationHash(this._loadPath)) &&
+        !this._isWhiteListed) {
+      let url = "about:searchreset";
+      let data = [];
+      if (aData)
+        data.push("data=" + encodeURIComponent(aData));
+      if (aPurpose)
+        data.push("purpose=" + aPurpose);
+      if (data.length)
+        url += "?" + data.join("&");
+      return new Submission(makeURI(url));
+    }
+
     var url = this._getURLOfType(aResponseType);
 
     if (!url)
@@ -2426,7 +2466,7 @@ Engine.prototype = {
 
     if (!aData) {
       // Return a dummy submission object with our searchForm attribute
-      return new Submission(makeURI(this._getSearchFormWithPurpose(aPurpose)), null);
+      return new Submission(makeURI(this._getSearchFormWithPurpose(aPurpose)));
     }
 
     LOG("getSubmission: In data: \"" + aData + "\"; Purpose: \"" + aPurpose + "\"");
@@ -2739,7 +2779,7 @@ SearchService.prototype = {
 
     Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "init-complete");
     Services.telemetry.getHistogramById("SEARCH_SERVICE_INIT_SYNC").add(true);
-    this._recordEnginesWithUpdate();
+    this._recordEngineTelemetry();
 
     LOG("_syncInit end");
   },
@@ -2782,7 +2822,7 @@ SearchService.prototype = {
       this._initObservers.resolve(this._initRV);
       Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "init-complete");
       Services.telemetry.getHistogramById("SEARCH_SERVICE_INIT_SYNC").add(false);
-      this._recordEnginesWithUpdate();
+      this._recordEngineTelemetry();
 
       LOG("_asyncInit: Completed _asyncInit");
     }.bind(this));
@@ -2822,7 +2862,7 @@ SearchService.prototype = {
 
   // Get the original Engine object that is the default for this region,
   // ignoring changes the user may have subsequently made.
-  get _originalDefaultEngine() {
+  get originalDefaultEngine() {
     let defaultEngine = this.getVerifiedGlobalAttr("searchDefault");
     if (!defaultEngine) {
       let defaultPrefB = Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF);
@@ -2841,7 +2881,7 @@ SearchService.prototype = {
   },
 
   resetToOriginalDefaultEngine: function SRCH_SVC__resetToOriginalDefaultEngine() {
-    this.currentEngine = this._originalDefaultEngine;
+    this.currentEngine = this.originalDefaultEngine;
   },
 
   _buildCache: function SRCH_SVC__buildCache() {
@@ -3154,7 +3194,7 @@ SearchService.prototype = {
         // Typically we'll re-init as a result of a pref observer,
         // so signal to 'callers' that we're done.
         Services.obs.notifyObservers(null, SEARCH_SERVICE_TOPIC, "init-complete");
-        this._recordEnginesWithUpdate();
+        this._recordEngineTelemetry();
         gInitialized = true;
       } catch (err) {
         LOG("Reinit failed: " + err);
@@ -3384,7 +3424,7 @@ SearchService.prototype = {
 
     let skippedEngines = 0;
     for (let engine of cache.engines) {
-      if (skipReadOnly && engine._readOnly !== false) {
+      if (skipReadOnly && engine._readOnly == undefined) {
         ++skippedEngines;
         continue;
       }
@@ -3399,7 +3439,7 @@ SearchService.prototype = {
 
   _loadEngineFromCache: function SRCH_SVC__loadEngineFromCache(json) {
     try {
-      let engine = new Engine(json._shortName, json._readOnly);
+      let engine = new Engine(json._shortName, json._readOnly == undefined);
       engine._initWithJSON(json);
       this._addEngineToStore(engine);
     } catch (ex) {
@@ -3948,6 +3988,7 @@ SearchService.prototype = {
     var engine = new Engine(sanitizeName(aName), false);
     engine._initFromMetadata(aName, aIconURL, aAlias, aDescription,
                              aMethod, aTemplate, aExtensionID);
+    engine._loadPath = "[other]addEngineWithDetails";
     this._addEngineToStore(engine);
   },
 
@@ -4111,13 +4152,13 @@ SearchService.prototype = {
         this._currentEngine = engine;
       }
       if (!name)
-        this._currentEngine = this._originalDefaultEngine;
+        this._currentEngine = this.originalDefaultEngine;
     }
 
     // If the current engine is not set or hidden, we fallback...
     if (!this._currentEngine || this._currentEngine.hidden) {
       // first to the original default engine
-      let originalDefault = this._originalDefaultEngine;
+      let originalDefault = this.originalDefaultEngine;
       if (!originalDefault || originalDefault.hidden) {
         // then to the first visible engine
         let firstVisible = this._getSortedEngines(false)[0];
@@ -4154,9 +4195,11 @@ SearchService.prototype = {
     if (!newCurrentEngine)
       FAIL("Can't find engine in store!", Cr.NS_ERROR_UNEXPECTED);
 
-    if (!newCurrentEngine._isDefault && newCurrentEngine._loadPath) {
+    if (!newCurrentEngine._isDefault) {
       // If a non default engine is being set as the current engine, ensure
       // its loadPath has a verification hash.
+      if (!newCurrentEngine._loadPath)
+        newCurrentEngine._loadPath = "[other]unknown";
       let loadPathHash = getVerificationHash(newCurrentEngine._loadPath);
       let currentHash = newCurrentEngine.getAttr("loadPathHash");
       if (!currentHash || currentHash != loadPathHash) {
@@ -4176,7 +4219,7 @@ SearchService.prototype = {
     // build's default engine, so that the currentEngine getter falls back to
     // whatever the default is.
     let newName = this._currentEngine.name;
-    if (this._currentEngine == this._originalDefaultEngine) {
+    if (this._currentEngine == this.originalDefaultEngine) {
       newName = "";
     }
 
@@ -4264,7 +4307,9 @@ SearchService.prototype = {
     return result;
   },
 
-  _recordEnginesWithUpdate: function() {
+  _recordEngineTelemetry: function() {
+    Services.telemetry.getHistogramById("SEARCH_SERVICE_ENGINE_COUNT")
+            .add(Object.keys(this._engines).length);
     let hasUpdates = false;
     let hasIconUpdates = false;
     for (let name in this._engines) {

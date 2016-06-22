@@ -23,6 +23,8 @@ user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("shell.checkDefaultClient", false);
 user_pref("browser.warnOnQuit", false);
 user_pref("accessibility.typeaheadfind.autostart", false);
+user_pref("findbar.highlightAll", false);
+user_pref("findbar.modalHighlight", false);
 user_pref("javascript.options.showInConsole", true);
 user_pref("devtools.browsertoolbox.panel", "jsdebugger");
 user_pref("devtools.debugger.remote-port", 6023);
@@ -109,8 +111,8 @@ user_pref("extensions.getAddons.get.url", "http://%(server)s/extensions-dummy/re
 user_pref("extensions.getAddons.getWithPerformance.url", "http://%(server)s/extensions-dummy/repositoryGetWithPerformanceURL");
 user_pref("extensions.getAddons.search.browseURL", "http://%(server)s/extensions-dummy/repositoryBrowseURL");
 user_pref("extensions.getAddons.search.url", "http://%(server)s/extensions-dummy/repositorySearchURL");
-// Ensure kinto updates don't hit the network
-user_pref("services.kinto.base", "http://%(server)s/dummy-kinto/v1");
+// Ensure blocklist updates don't hit the network
+user_pref("services.settings.server", "http://%(server)s/dummy-kinto/v1");
 // Make sure that opening the plugins check page won't hit the network
 user_pref("plugins.update.url", "http://%(server)s/plugins-dummy/updateCheckURL");
 // Make sure SNTP requests don't hit the network
@@ -137,6 +139,7 @@ user_pref("security.turn_off_all_security_so_that_viruses_can_take_over_this_com
 // use an additional pref here to allow automation to use the "normal" behavior.
 user_pref("dom.use_xbl_scopes_for_remote_xul", true);
 
+user_pref("captivedetect.canonicalURL", "http://%(server)s/captive-detect/success.txt");
 // Get network events.
 user_pref("network.activity.blipIntervalMilliseconds", 250);
 

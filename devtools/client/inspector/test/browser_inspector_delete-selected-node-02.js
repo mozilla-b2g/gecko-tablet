@@ -28,21 +28,21 @@ add_task(function* () {
     info("Getting the node container in the markup view.");
     let container = yield getContainerForSelector("#deleteManually", inspector);
 
-    info("Simulating right-click on the markup view container.");
-    EventUtils.synthesizeMouse(container.tagLine, 2, 2,
-      {type: "contextmenu", button: 2}, inspector.panelWin);
-
-    info("Waiting for the context menu to open.");
-    yield once(inspector.panelDoc.getElementById("inspectorPopupSet"), "popupshown");
+    let allMenuItems = openContextMenuAndGetAllItems(inspector, {
+      target: container.tagLine,
+    });
+    let menuItem = allMenuItems.find(item => item.id === "node-menu-delete");
 
     info("Clicking 'Delete Node' in the context menu.");
-    inspector.panelDoc.getElementById("node-menu-delete").click();
+    is(menuItem.disabled, false, "delete menu item is enabled");
+    menuItem.click();
 
     info("Waiting for inspector to update.");
     yield inspector.once("inspector-updated");
 
     info("Inspector updated, performing checks.");
-    yield assertNodeSelectedAndPanelsUpdated("#selectedAfterDelete", "li#selectedAfterDelete");
+    yield assertNodeSelectedAndPanelsUpdated("#selectedAfterDelete",
+                                             "li#selectedAfterDelete");
   }
 
   function* testAutomaticallyDeleteSelectedNode() {
@@ -59,7 +59,8 @@ add_task(function* () {
     yield inspector.once("inspector-updated");
 
     info("Inspector updated, performing checks.");
-    yield assertNodeSelectedAndPanelsUpdated("#deleteChildren", "ul#deleteChildren");
+    yield assertNodeSelectedAndPanelsUpdated("#deleteChildren",
+                                             "ul#deleteChildren");
   }
 
   function* testDeleteSelectedNodeContainerFrame() {
@@ -86,8 +87,10 @@ add_task(function* () {
     let nodeFront = yield getNodeFront(selector, inspector);
     is(inspector.selection.nodeFront, nodeFront, "The right node is selected");
 
-    let breadcrumbs = inspector.panelDoc.getElementById("inspector-breadcrumbs");
-    is(breadcrumbs.querySelector("button[checked=true]").textContent, crumbLabel,
-      "The right breadcrumb is selected");
+    let breadcrumbs = inspector.panelDoc.getElementById(
+      "inspector-breadcrumbs");
+    is(breadcrumbs.querySelector("button[checked=true]").textContent,
+       crumbLabel,
+       "The right breadcrumb is selected");
   }
 });

@@ -412,6 +412,9 @@ class RefTest(object):
         self.killNamedOrphans('ssltunnel')
         self.killNamedOrphans('xpcshell')
 
+        if options.cleanupCrashes:
+            mozcrash.cleanup_pending_crash_reports()
+
         manifests = self.resolver.resolveManifests(options, tests)
         if options.filter:
             manifests[""] = options.filter
@@ -504,7 +507,7 @@ class RefTest(object):
         # TODO: bug 913975 : _processOutput should call self.processOutputLine
         # one more time one timeout (I think)
         self.log.error("%s | application timed out after %d seconds with no output" % (self.lastTestSeen, int(timeout)))
-        self.log.warning("Force-terminating active process(es).");
+        self.log.error("Force-terminating active process(es).");
         self.killAndGetStack(
             proc, utilityPath, debuggerInfo, dump_screen=not debuggerInfo)
 
@@ -564,8 +567,8 @@ class RefTest(object):
         def record_last_test(message):
             """Records the last test seen by this harness for the benefit of crash logging."""
             if message['action'] == 'test_start':
-                if isinstance(message['test'], tuple):
-                    self.lastTestSeen = message['test'][0]
+                if " " in message['test']:
+                    self.lastTestSeen = message['test'].split(" ")[0]
                 else:
                     self.lastTestSeen = message['test']
 

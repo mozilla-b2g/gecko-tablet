@@ -254,6 +254,14 @@ OSXNotificationCenter::ShowAlertNotification(const nsAString & aImageUrl, const 
 }
 
 NS_IMETHODIMP
+OSXNotificationCenter::ShowPersistentNotification(const nsAString& aPersistentData,
+                                                  nsIAlertNotification* aAlert,
+                                                  nsIObserver* aAlertListener)
+{
+  return ShowAlert(aAlert, aAlertListener);
+}
+
+NS_IMETHODIMP
 OSXNotificationCenter::ShowAlert(nsIAlertNotification* aAlert,
                                  nsIObserver* aAlertListener)
 {
@@ -391,7 +399,8 @@ OSXNotificationCenter::ShowAlertWithIconData(nsIAlertNotification* aAlert,
   } else {
     mPendingAlerts.AppendElement(osxni);
     osxni->mPendingNotifiction = notification;
-    RefPtr<imgLoader> il = imgLoader::GetInstance();
+    imgLoader* il = inPrivateBrowsing ? imgLoader::PrivateBrowsingLoader()
+                                      : imgLoader::NormalLoader();
     if (il) {
       nsCOMPtr<nsIURI> imageUri;
       NS_NewURI(getter_AddRefs(imageUri), imageUrl);

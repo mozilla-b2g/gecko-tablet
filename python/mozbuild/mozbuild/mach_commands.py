@@ -399,9 +399,6 @@ class Build(MachCommandBase):
                     line_handler=output.on_line, log=False,
                     print_directory=False)
 
-                if self.substs.get('MOZ_ARTIFACT_BUILDS', False):
-                    self._run_mach_artifact_install()
-
                 # Build target pairs.
                 for make_dir, make_target in target_pairs:
                     # We don't display build status messages during partial
@@ -416,44 +413,10 @@ class Build(MachCommandBase):
                     if status != 0:
                         break
             else:
-                try:
-                    if self.substs.get('MOZ_ARTIFACT_BUILDS', False):
-                        self._run_mach_artifact_install()
-                except BuildEnvironmentNotFoundException:
-                    # Can't read self.substs from config.status?  That means we
-                    # need to run configure.  The client.mk invocation below
-                    # will configure, which will run config.status, which will
-                    # invoke |mach artifact install| itself before continuing
-                    # the build.  Therefore, we needn't install artifacts
-                    # ourselves.
-                    self.log(logging.DEBUG, 'artifact',
-                             {}, "Not running |mach artifact install| -- it will be run by client.mk.")
-
                 status = self._run_make(srcdir=True, filename='client.mk',
                     line_handler=output.on_line, log=False, print_directory=False,
                     allow_parallel=False, ensure_exit_code=False, num_jobs=jobs,
                     silent=not verbose)
-
-                make_extra = self.mozconfig['make_extra'] or []
-                make_extra = dict(m.split('=', 1) for m in make_extra)
-
-                # For universal builds, we need to run the automation steps in
-                # the first architecture from MOZ_BUILD_PROJECTS
-                projects = make_extra.get('MOZ_BUILD_PROJECTS')
-                append_env = None
-                if projects:
-                    project = projects.split()[0]
-                    append_env = {b'MOZ_CURRENT_PROJECT': project.encode('utf-8')}
-                    subdir = os.path.join(self.topobjdir, project)
-                else:
-                    subdir = self.topobjdir
-                moz_automation = os.getenv('MOZ_AUTOMATION') or make_extra.get('export MOZ_AUTOMATION', None)
-                if moz_automation and status == 0:
-                    status = self._run_make(target='automation/build', directory=subdir,
-                        line_handler=output.on_line, log=False, print_directory=False,
-                        ensure_exit_code=False, num_jobs=jobs, silent=not verbose,
-                        append_env=append_env
-                    )
 
                 self.log(logging.WARNING, 'warning_summary',
                     {'count': len(monitor.warnings_database)},
@@ -680,18 +643,6 @@ class Build(MachCommandBase):
 
         return self._run_command_in_objdir(args=args, pass_thru=True,
             ensure_exit_code=False)
-
-    def _run_mach_artifact_install(self):
-        # We'd like to launch artifact using
-        # self._mach_context.commands.dispatch.  However, artifact activates
-        # the virtualenv, which plays badly with the rest of this code.
-        # Therefore, we run |mach artifact install| in a new process (and
-        # throw an exception if it fails).
-        self.log(logging.INFO, 'artifact',
-                 {}, "Running |mach artifact install|.")
-        args = [os.path.join(self.topsrcdir, 'mach'), 'artifact', 'install']
-        self._run_command_in_srcdir(args=args, require_unix_environment=True,
-            pass_thru=True, ensure_exit_code=True)
 
 @CommandProvider
 class Doctor(MachCommandBase):
@@ -1533,7 +1484,9 @@ class PackageFrontend(MachCommandBase):
 
         # Absolutely must come after the virtualenv is populated!
         from mozbuild.artifacts import Artifacts
-        artifacts = Artifacts(tree, job, log=self.log, cache_dir=cache_dir, skip_cache=skip_cache, hg=hg, git=git)
+        artifacts = Artifacts(tree, self.substs, self.defines, job,
+                              log=self.log, cache_dir=cache_dir,
+                              skip_cache=skip_cache, hg=hg, git=git)
         return artifacts
 
     @ArtifactSubCommand('artifact', 'install',

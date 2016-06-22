@@ -44,7 +44,6 @@ NS_IMPL_ISUPPORTS(nsXPConnect, nsIXPConnect)
 
 nsXPConnect* nsXPConnect::gSelf = nullptr;
 bool         nsXPConnect::gOnceAliveNowDead = false;
-uint32_t     nsXPConnect::gReportAllJSExceptions = 0;
 
 // Global cache of the default script security manager (QI'd to
 // nsIScriptSecurityManager) and the system principal.
@@ -68,10 +67,6 @@ nsXPConnect::nsXPConnect()
     if (!mRuntime) {
         NS_RUNTIMEABORT("Couldn't create XPCJSRuntime.");
     }
-
-    char* reportableEnv = PR_GetEnv("MOZ_REPORT_ALL_JS_EXCEPTIONS");
-    if (reportableEnv && *reportableEnv)
-        gReportAllJSExceptions = 1;
 }
 
 nsXPConnect::~nsXPConnect()
@@ -279,7 +274,7 @@ xpc::ErrorReport::LogToConsoleWithStack(JS::HandleObject aStack)
       errorObject = new nsScriptError();
     }
     errorObject->SetErrorMessageName(mErrorMsgName);
-    NS_ENSURE_TRUE_VOID(consoleService && errorObject);
+    NS_ENSURE_TRUE_VOID(consoleService);
 
     nsresult rv = errorObject->InitWithWindowID(mErrorMsg, mFileName, mSourceLine,
                                                 mLineNumber, mColumn, mFlags,
@@ -347,11 +342,10 @@ xpc_MarkInCCGeneration(nsISupports* aVariant, uint32_t aGeneration)
 void
 xpc_TryUnmarkWrappedGrayObject(nsISupports* aWrappedJS)
 {
-    nsCOMPtr<nsIXPConnectWrappedJS> wjs = do_QueryInterface(aWrappedJS);
-    if (wjs) {
-        // Unmarks gray JSObject.
-        static_cast<nsXPCWrappedJS*>(wjs.get())->GetJSObject();
-    }
+    nsCOMPtr<nsIXPConnectWrappedJSUnmarkGray> wjsug =
+      do_QueryInterface(aWrappedJS);
+    MOZ_ASSERT(!wjsug, "One should never be able to QI to "
+                       "nsIXPConnectWrappedJSUnmarkGray successfully!");
 }
 
 /***************************************************************************/
@@ -978,16 +972,6 @@ nsXPConnect::JSToVariant(JSContext* ctx, HandleValue value, nsIVariant** _retval
     return NS_OK;
 }
 
-NS_IMETHODIMP
-nsXPConnect::SetReportAllJSExceptions(bool newval)
-{
-    // Ignore if the environment variable was set.
-    if (gReportAllJSExceptions != 1)
-        gReportAllJSExceptions = newval ? 2 : 0;
-
-    return NS_OK;
-}
-
 /* virtual */
 JSContext*
 nsXPConnect::GetCurrentJSContext()
@@ -1004,10 +988,10 @@ nsXPConnect::GetSafeJSContext()
 
 namespace xpc {
 
-bool
+void
 PushNullJSContext()
 {
-    return XPCJSRuntime::Get()->GetJSContextStack()->Push(nullptr);
+    XPCJSRuntime::Get()->GetJSContextStack()->Push(nullptr);
 }
 
 void

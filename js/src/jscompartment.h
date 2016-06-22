@@ -14,6 +14,7 @@
 #include "mozilla/Variant.h"
 #include "mozilla/XorShift128PlusRNG.h"
 
+#include "asmjs/WasmJS.h"
 #include "builtin/RegExp.h"
 #include "gc/Barrier.h"
 #include "gc/Zone.h"
@@ -29,16 +30,11 @@ class JitCompartment;
 } // namespace jit
 
 namespace gc {
-template<class Node> class ComponentFinder;
+template <typename Node, typename Derived> class ComponentFinder;
 } // namespace gc
-
-namespace wasm {
-class Module;
-} // namespace wasm
 
 class ClonedBlockObject;
 class ScriptSourceObject;
-class WasmModuleObject;
 struct NativeIterator;
 
 /*
@@ -427,10 +423,10 @@ struct JSCompartment
      * For generational GC, record whether a write barrier has added this
      * compartment's global to the store buffer since the last minor GC.
      *
-     * This is used to avoid adding it to the store buffer on every write, which
-     * can quickly fill the buffer and also cause performance problems.
+     * This is used to avoid calling into the VM every time a nursery object is
+     * written to a property of the global.
      */
-    bool                         globalWriteBarriered;
+    uint32_t                     globalWriteBarriered;
 
     // Non-zero if the storage underlying any typed object in this compartment
     // might be detached.
@@ -518,10 +514,11 @@ struct JSCompartment
     // All unboxed layouts in the compartment.
     mozilla::LinkedList<js::UnboxedLayout> unboxedLayouts;
 
-    // All wasm modules in the compartment. Weakly held.
-    //
-    // The caller needs to call wasm::Module::readBarrier() manually!
-    mozilla::LinkedList<js::wasm::Module> wasmModuleWeakList;
+    // All wasm live instances in the compartment.
+    using WasmInstanceObjectSet = js::GCHashSet<js::HeapPtr<js::WasmInstanceObject*>,
+                                                js::MovableCellHasher<js::HeapPtr<js::WasmInstanceObject*>>,
+                                                js::SystemAllocPolicy>;
+    JS::WeakCache<WasmInstanceObjectSet> wasmInstances;
 
   private:
     // All non-syntactic lexical scopes in the compartment. These are kept in
@@ -656,7 +653,7 @@ struct JSCompartment
 
     js::SavedStacks& savedStacks() { return savedStacks_; }
 
-    void findOutgoingEdges(js::gc::ComponentFinder<JS::Zone>& finder);
+    void findOutgoingEdges(js::gc::ZoneComponentFinder& finder);
 
     js::DtoaCache dtoaCache;
 
@@ -849,6 +846,8 @@ struct JSCompartment
     };
 
     js::ArgumentsObject* getOrCreateArgumentsTemplateObject(JSContext* cx, bool mapped);
+
+    js::ArgumentsObject* maybeArgumentsTemplateObject(bool mapped) const;
 
   private:
     // Used for collecting telemetry on SpiderMonkey's deprecated language extensions.

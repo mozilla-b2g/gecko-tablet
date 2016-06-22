@@ -17,8 +17,6 @@ import java.util.Map;
 
 import org.mozilla.gecko.GeckoProfile;
 import org.mozilla.gecko.R;
-import org.mozilla.gecko.Tab;
-import org.mozilla.gecko.Tabs;
 import org.mozilla.gecko.Telemetry;
 import org.mozilla.gecko.TelemetryContract;
 import org.mozilla.gecko.db.BrowserContract.Thumbnails;
@@ -588,6 +586,25 @@ public class TopSitesPanel extends HomeFragment {
         }
 
         @Override
+        public long getItemId(int position) {
+            // We are trying to return stable ids so that Android can recycle views appropriately:
+            // * If we have a history id then we return it
+            // * If we only have a bookmark id then we negate it and return it. We negate it in order
+            //   to avoid clashing/conflicting with history ids.
+
+            final Cursor cursor = getCursor();
+            cursor.moveToPosition(position);
+
+            final long historyId = cursor.getLong(cursor.getColumnIndexOrThrow(TopSites.HISTORY_ID));
+            if (historyId != 0) {
+                return historyId;
+            }
+
+            final long bookmarkId = cursor.getLong(cursor.getColumnIndexOrThrow(TopSites.BOOKMARK_ID));
+            return -1 * bookmarkId;
+        }
+
+        @Override
         public void bindView(View bindView, Context context, Cursor cursor) {
             final String url = cursor.getString(cursor.getColumnIndexOrThrow(TopSites.URL));
             final String title = cursor.getString(cursor.getColumnIndexOrThrow(TopSites.TITLE));
@@ -812,21 +829,31 @@ public class TopSitesPanel extends HomeFragment {
                 return thumbnails;
             }
 
+            // We need to query metadata based on the URL without any refs, hence we create a new
+            // mapping and list of these URLs (we need to preserve the original URL for display purposes)
+            final Map<String, String> queryURLs = new HashMap<>();
+            for (final String pageURL : mUrls) {
+                queryURLs.put(pageURL, StringUtils.stripRef(pageURL));
+            }
+
             // Query the DB for tile images.
             final ContentResolver cr = getContext().getContentResolver();
-            final Map<String, Map<String, Object>> metadata = mDB.getURLMetadata().getForURLs(cr, mUrls, COLUMNS);
+            // Use the stripped URLs for querying the DB
+            final Map<String, Map<String, Object>> metadata = mDB.getURLMetadata().getForURLs(cr, queryURLs.values(), COLUMNS);
 
             // Keep a list of urls that don't have tiles images. We'll use thumbnails for them instead.
             final List<String> thumbnailUrls = new ArrayList<String>();
-            for (String url : mUrls) {
-                ThumbnailInfo info = ThumbnailInfo.fromMetadata(metadata.get(url));
+            for (final String pageURL : mUrls) {
+                final String queryURL = queryURLs.get(pageURL);
+
+                ThumbnailInfo info = ThumbnailInfo.fromMetadata(metadata.get(queryURL));
                 if (info == null) {
                     // If we didn't find metadata, we'll look for a thumbnail for this url.
-                    thumbnailUrls.add(url);
+                    thumbnailUrls.add(pageURL);
                     continue;
                 }
 
-                thumbnails.put(url, info);
+                thumbnails.put(pageURL, info);
             }
 
             if (thumbnailUrls.size() == 0) {

@@ -228,7 +228,8 @@ class TabChild final : public TabChildBase,
                        public nsITabChild,
                        public nsIObserver,
                        public TabContext,
-                       public nsITooltipListener
+                       public nsITooltipListener,
+                       public mozilla::ipc::IShmemAllocator
 {
   typedef mozilla::dom::ClonedMessageData ClonedMessageData;
   typedef mozilla::layout::RenderFrameChild RenderFrameChild;
@@ -284,6 +285,8 @@ public:
   NS_DECL_NSITABCHILD
   NS_DECL_NSIOBSERVER
   NS_DECL_NSITOOLTIPLISTENER
+
+  FORWARD_SHMEM_ALLOCATOR_TO(PBrowserChild)
 
   /**
    * MessageManagerCallback methods that we override.
@@ -580,7 +583,8 @@ public:
                  const mozilla::NativeEventData& aKeyEventData,
                  const bool& aIsConsumed) override;
 
-  virtual bool RecvPrint(const PrintData& aPrintData) override;
+  virtual bool RecvPrint(const uint64_t& aOuterWindowID,
+                         const PrintData& aPrintData) override;
 
   /**
    * Native widget remoting protocol for use with windowed plugins with e10s.
@@ -667,6 +671,9 @@ protected:
   virtual bool RecvSuppressDisplayport(const bool& aEnabled) override;
 
   virtual bool RecvParentActivated(const bool& aActivated) override;
+
+  virtual bool RecvSetKeyboardIndicators(const UIStateChangeType& aShowAccelerators,
+                                         const UIStateChangeType& aShowFocusRings) override;
 
   virtual bool RecvStopIMEStateManagement() override;
 

@@ -35,6 +35,7 @@ static const char MemorySectionId[]      = "memory";
 static const char ExportSectionId[]      = "export";
 static const char CodeSectionId[]        = "code";
 static const char DataSectionId[]        = "data";
+static const char NameSectionId[]        = "name";
 
 enum class ValType
 {
@@ -744,19 +745,7 @@ class Decoder
 
     // See writeBytes comment.
 
-    MOZ_MUST_USE bool readBytes(Bytes* bytes) {
-        uint32_t numBytes;
-        if (!readVarU32(&numBytes))
-            return false;
-        if (bytesRemain() < numBytes)
-            return false;
-        if (!bytes->resize(numBytes))
-            return false;
-        memcpy(bytes->begin(), cur_, numBytes);
-        cur_ += numBytes;
-        return true;
-    }
-    MOZ_MUST_USE bool readBytesRaw(uint32_t numBytes, const uint8_t** bytes) {
+    MOZ_MUST_USE bool readBytes(uint32_t numBytes, const uint8_t** bytes = nullptr) {
         if (bytes)
             *bytes = cur_;
         if (bytesRemain() < numBytes)
@@ -796,6 +785,10 @@ class Decoder
     }
     MOZ_MUST_USE bool finishSection(uint32_t startOffset, uint32_t size) {
         return size == (cur_ - beg_) - startOffset;
+    }
+    void ignoreSection(uint32_t startOffset, uint32_t size) {
+        cur_ = (beg_ + startOffset) + size;
+        MOZ_ASSERT(cur_ <= end_);
     }
     MOZ_MUST_USE bool skipSection() {
         uint32_t idSize;

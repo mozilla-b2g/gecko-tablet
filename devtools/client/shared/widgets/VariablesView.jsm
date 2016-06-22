@@ -10,16 +10,15 @@ const Cu = Components.utils;
 
 const DBG_STRINGS_URI = "chrome://devtools/locale/debugger.properties";
 const LAZY_EMPTY_DELAY = 150; // ms
-const LAZY_EXPAND_DELAY = 50; // ms
 const SCROLL_PAGE_SIZE_DEFAULT = 0;
 const PAGE_SIZE_SCROLL_HEIGHT_RATIO = 100;
 const PAGE_SIZE_MAX_JUMPS = 30;
 const SEARCH_ACTION_MAX_DELAY = 300; // ms
 const ITEM_FLASH_DURATION = 300; // ms
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://devtools/shared/event-emitter.js");
 const { require } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const {XPCOMUtils} = require("resource://gre/modules/XPCOMUtils.jsm");
+const EventEmitter = require("devtools/shared/event-emitter");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const Services = require("Services");
 const { getSourceNames } = require("devtools/client/shared/source-utils");
@@ -27,6 +26,7 @@ const promise = require("promise");
 const { Heritage, ViewHelpers, setNamedTimeout } =
   require("devtools/client/shared/widgets/view-helpers");
 const { Task } = require("devtools/shared/task");
+const nodeConstants = require("devtools/shared/dom-node-constants");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
   "resource://gre/modules/PluralForm.jsm");
@@ -3758,7 +3758,7 @@ VariablesView.stringifiers.byObjectKind = {
     let {preview} = aGrip;
 
     switch (preview.nodeType) {
-      case Ci.nsIDOMNode.DOCUMENT_NODE: {
+      case nodeConstants.DOCUMENT_NODE: {
         let result = aGrip.class;
         if (preview.location) {
           result += ` \u2192 ${getSourceNames(preview.location)[concise ? "short" : "long"]}`;
@@ -3767,22 +3767,22 @@ VariablesView.stringifiers.byObjectKind = {
         return result;
       }
 
-      case Ci.nsIDOMNode.ATTRIBUTE_NODE: {
+      case nodeConstants.ATTRIBUTE_NODE: {
         let value = VariablesView.getString(preview.value, { noStringQuotes: true });
         return preview.nodeName + '="' + escapeHTML(value) + '"';
       }
 
-      case Ci.nsIDOMNode.TEXT_NODE:
+      case nodeConstants.TEXT_NODE:
         return preview.nodeName + " " +
                VariablesView.getString(preview.textContent);
 
-      case Ci.nsIDOMNode.COMMENT_NODE: {
+      case nodeConstants.COMMENT_NODE: {
         let comment = VariablesView.getString(preview.textContent,
                                               { noStringQuotes: true });
         return "<!--" + comment + "-->";
       }
 
-      case Ci.nsIDOMNode.DOCUMENT_FRAGMENT_NODE: {
+      case nodeConstants.DOCUMENT_FRAGMENT_NODE: {
         if (concise || !preview.childNodes) {
           return aGrip.class + "[" + preview.childNodesLength + "]";
         }
@@ -3797,7 +3797,7 @@ VariablesView.stringifiers.byObjectKind = {
         return aGrip.class + " [" + nodes.join(", ") + "]";
       }
 
-      case Ci.nsIDOMNode.ELEMENT_NODE: {
+      case nodeConstants.ELEMENT_NODE: {
         let attrs = preview.attributes;
         if (!concise) {
           let n = 0, result = "<" + preview.nodeName;

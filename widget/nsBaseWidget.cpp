@@ -58,6 +58,7 @@
 #include "mozilla/layers/APZCCallbackHelper.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/TabParent.h"
+#include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/Move.h"
 #include "mozilla/Services.h"
 #include "mozilla/Snprintf.h"
@@ -173,7 +174,7 @@ nsBaseWidget::nsBaseWidget()
 , mUpdateCursor(true)
 , mUseAttachedEvents(false)
 , mIMEHasFocus(false)
-#if defined(XP_WIN) || defined(XP_MACOSX)
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
 , mAccessibilityInUseFlag(false)
 #endif
 {
@@ -240,18 +241,6 @@ WidgetShutdownObserver::Unregister()
     mRegistered = false;
   }
 }
-
-#if defined(XP_WIN) || defined(XP_MACOSX)
-// defined in nsAppRunner.cpp
-extern const char* kAccessibilityLastRunDatePref;
-
-static inline uint32_t
-PRTimeToSeconds(PRTime t_usec)
-{
-  PRTime usec_per_sec = PR_USEC_PER_SEC;
-  return uint32_t(t_usec /= usec_per_sec);
-}
-#endif
 
 void
 nsBaseWidget::Shutdown()
@@ -930,10 +919,20 @@ nsBaseWidget::AutoLayerManagerSetup::~AutoLayerManagerSetup()
   }
 }
 
+bool nsBaseWidget::IsSmallPopup() const
+{
+  return mWindowType == eWindowType_popup && mPopupType != ePopupTypePanel;
+}
+
 bool
 nsBaseWidget::ComputeShouldAccelerate()
 {
-  return gfx::gfxConfig::IsEnabled(gfx::Feature::HW_COMPOSITING);
+  bool enabled = gfx::gfxConfig::IsEnabled(gfx::Feature::HW_COMPOSITING);
+#ifdef MOZ_WIDGET_GTK
+  return enabled && !IsSmallPopup();
+#else
+  return enabled;
+#endif
 }
 
 bool
@@ -1101,15 +1100,17 @@ nsBaseWidget::ProcessUntransformedAPZEvent(WidgetInputEvent* aEvent,
       mAPZEventState->ProcessTouchEvent(*touchEvent, aGuid, aInputBlockId,
           aApzResponse, status);
     } else if (WidgetWheelEvent* wheelEvent = aEvent->AsWheelEvent()) {
-      if (wheelEvent->mFlags.mHandledByAPZ) {
-        APZCCallbackHelper::SendSetTargetAPZCNotification(this, GetDocument(),
-            *(original->AsWheelEvent()), aGuid, aInputBlockId);
-        if (wheelEvent->mCanTriggerSwipe) {
-          ReportSwipeStarted(aInputBlockId, wheelEvent->TriggersSwipe());
-        }
-        mAPZEventState->ProcessWheelEvent(*wheelEvent, aGuid, aInputBlockId);
+      MOZ_ASSERT(wheelEvent->mFlags.mHandledByAPZ);
+      APZCCallbackHelper::SendSetTargetAPZCNotification(this, GetDocument(),
+          *(original->AsWheelEvent()), aGuid, aInputBlockId);
+      if (wheelEvent->mCanTriggerSwipe) {
+        ReportSwipeStarted(aInputBlockId, wheelEvent->TriggersSwipe());
       }
+      mAPZEventState->ProcessWheelEvent(*wheelEvent, aGuid, aInputBlockId);
     } else if (WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent()) {
+      MOZ_ASSERT(mouseEvent->mFlags.mHandledByAPZ);
+      APZCCallbackHelper::SendSetTargetAPZCNotification(this, GetDocument(),
+          *(original->AsMouseEvent()), aGuid, aInputBlockId);
       mAPZEventState->ProcessMouseEvent(*mouseEvent, aGuid, aInputBlockId);
     }
   }
@@ -1284,7 +1285,8 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
 
   RefPtr<ClientLayerManager> lm = new ClientLayerManager(this);
 
-  mCompositorSession = CompositorSession::CreateTopLevel(
+  gfx::GPUProcessManager* gpu = gfx::GPUProcessManager::Get();
+  mCompositorSession = gpu->CreateTopLevelCompositor(
     mCompositorWidgetProxy,
     lm,
     GetDefaultScale(),
@@ -1872,6 +1874,18 @@ nsBaseWidget::ZoomToRect(const uint32_t& aPresShellId,
 
 #ifdef ACCESSIBILITY
 
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
+// defined in nsAppRunner.cpp
+extern const char* kAccessibilityLastRunDatePref;
+
+static inline uint32_t
+PRTimeToSeconds(PRTime t_usec)
+{
+  PRTime usec_per_sec = PR_USEC_PER_SEC;
+  return uint32_t(t_usec /= usec_per_sec);
+}
+#endif
+
 a11y::Accessible*
 nsBaseWidget::GetRootAccessible()
 {
@@ -1890,7 +1904,7 @@ nsBaseWidget::GetRootAccessible()
   nsCOMPtr<nsIAccessibilityService> accService =
     services::GetAccessibilityService();
   if (accService) {
-#if defined(XP_WIN) || defined(XP_MACOSX)
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
     if (!mAccessibilityInUseFlag) {
       mAccessibilityInUseFlag = true;
       uint32_t now = PRTimeToSeconds(PR_Now());
@@ -1934,9 +1948,10 @@ nsBaseWidget::GetWidgetScreen()
 
   LayoutDeviceIntRect bounds;
   GetScreenBounds(bounds);
+  DesktopIntRect deskBounds = RoundedToInt(bounds / GetDesktopToDeviceScale());
   nsCOMPtr<nsIScreen> screen;
-  screenManager->ScreenForRect(bounds.x, bounds.y,
-                               bounds.width, bounds.height,
+  screenManager->ScreenForRect(deskBounds.x, deskBounds.y,
+                               deskBounds.width, deskBounds.height,
                                getter_AddRefs(screen));
   return screen.forget();
 }
@@ -2143,6 +2158,35 @@ nsIWidget::OnWindowedPluginKeyEvent(const NativeEventData& aKeyEventData,
 
 namespace mozilla {
 namespace widget {
+
+const char*
+ToChar(IMEMessage aIMEMessage)
+{
+  switch (aIMEMessage) {
+    case NOTIFY_IME_OF_NOTHING:
+      return "NOTIFY_IME_OF_NOTHING";
+    case NOTIFY_IME_OF_FOCUS:
+      return "NOTIFY_IME_OF_FOCUS";
+    case NOTIFY_IME_OF_BLUR:
+      return "NOTIFY_IME_OF_BLUR";
+    case NOTIFY_IME_OF_SELECTION_CHANGE:
+      return "NOTIFY_IME_OF_SELECTION_CHANGE";
+    case NOTIFY_IME_OF_TEXT_CHANGE:
+      return "NOTIFY_IME_OF_TEXT_CHANGE";
+    case NOTIFY_IME_OF_COMPOSITION_EVENT_HANDLED:
+      return "NOTIFY_IME_OF_COMPOSITION_EVENT_HANDLED";
+    case NOTIFY_IME_OF_POSITION_CHANGE:
+      return "NOTIFY_IME_OF_POSITION_CHANGE";
+    case NOTIFY_IME_OF_MOUSE_BUTTON_EVENT:
+      return "NOTIFY_IME_OF_MOUSE_BUTTON_EVENT";
+    case REQUEST_TO_COMMIT_COMPOSITION:
+      return "REQUEST_TO_COMMIT_COMPOSITION";
+    case REQUEST_TO_CANCEL_COMPOSITION:
+      return "REQUEST_TO_CANCEL_COMPOSITION";
+    default:
+      return "Unexpected value";
+  }
+}
 
 void
 NativeIMEContext::Init(nsIWidget* aWidget)

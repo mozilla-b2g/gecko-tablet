@@ -201,8 +201,9 @@ js::DumpPCCounts(JSContext* cx, HandleScript script, Sprinter* sp)
 void
 js::DumpCompartmentPCCounts(JSContext* cx)
 {
-    for (ZoneCellIter i(cx->zone(), gc::AllocKind::SCRIPT); !i.done(); i.next()) {
-        RootedScript script(cx, i.get<JSScript>());
+    RootedScript script(cx);
+    for (auto iter = cx->zone()->cellIter<JSScript>(); !iter.done(); iter.next()) {
+        script = iter;
         if (script->compartment() != cx->compartment())
             continue;
 
@@ -713,7 +714,7 @@ js::Disassemble(JSContext* cx, HandleScript script, bool lines, Sprinter* sp)
 }
 
 JS_FRIEND_API(bool)
-js::DumpPC(JSContext* cx)
+js::DumpPC(JSContext* cx, FILE* fp)
 {
     gc::AutoSuppressGC suppressGC(cx);
     Sprinter sprinter(cx);
@@ -721,17 +722,17 @@ js::DumpPC(JSContext* cx)
         return false;
     ScriptFrameIter iter(cx);
     if (iter.done()) {
-        fprintf(stdout, "Empty stack.\n");
+        fprintf(fp, "Empty stack.\n");
         return true;
     }
     RootedScript script(cx, iter.script());
     bool ok = DisassembleAtPC(cx, script, true, iter.pc(), false, &sprinter);
-    fprintf(stdout, "%s", sprinter.string());
+    fprintf(fp, "%s", sprinter.string());
     return ok;
 }
 
 JS_FRIEND_API(bool)
-js::DumpScript(JSContext* cx, JSScript* scriptArg)
+js::DumpScript(JSContext* cx, JSScript* scriptArg, FILE* fp)
 {
     gc::AutoSuppressGC suppressGC(cx);
     Sprinter sprinter(cx);
@@ -739,7 +740,7 @@ js::DumpScript(JSContext* cx, JSScript* scriptArg)
         return false;
     RootedScript script(cx, scriptArg);
     bool ok = Disassemble(cx, script, true, &sprinter);
-    fprintf(stdout, "%s", sprinter.string());
+    fprintf(fp, "%s", sprinter.string());
     return ok;
 }
 
@@ -1417,11 +1418,10 @@ DecompileExpressionFromStack(JSContext* cx, int spindex, int skipStackHits, Hand
 
     FrameIter frameIter(cx);
 
-    if (frameIter.done() || !frameIter.hasScript())
+    if (frameIter.done() || !frameIter.hasScript() || frameIter.compartment() != cx->compartment())
         return true;
 
     RootedScript script(cx, frameIter.script());
-    AutoCompartment ac(cx, &script->global());
     jsbytecode* valuepc = frameIter.pc();
 
     MOZ_ASSERT(script->containsPC(valuepc));
@@ -1488,17 +1488,17 @@ DecompileArgumentFromStack(JSContext* cx, int formalIndex, char** res)
      */
     FrameIter frameIter(cx);
     MOZ_ASSERT(!frameIter.done());
+    MOZ_ASSERT(frameIter.script()->selfHosted());
 
     /*
      * Get the second-to-top frame, the caller of the builtin that called the
      * intrinsic.
      */
     ++frameIter;
-    if (frameIter.done() || !frameIter.hasScript())
+    if (frameIter.done() || !frameIter.hasScript() || frameIter.compartment() != cx->compartment())
         return true;
 
     RootedScript script(cx, frameIter.script());
-    AutoCompartment ac(cx, &script->global());
     jsbytecode* current = frameIter.pc();
 
     MOZ_ASSERT(script->containsPC(current));
@@ -1658,8 +1658,7 @@ js::StopPCCountProfiling(JSContext* cx)
         return;
 
     for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
-        for (ZoneCellIter i(zone, AllocKind::SCRIPT); !i.done(); i.next()) {
-            JSScript* script = i.get<JSScript>();
+        for (auto script = zone->cellIter<JSScript>(); !script.done(); script.next()) {
             if (script->hasScriptCounts() && script->types()) {
                 if (!vec->append(script))
                     return;
@@ -2026,8 +2025,7 @@ GenerateLcovInfo(JSContext* cx, JSCompartment* comp, GenericPrinter& out)
     }
     Rooted<ScriptVector> topScripts(cx, ScriptVector(cx));
     for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
-        for (ZoneCellIter i(zone, AllocKind::SCRIPT); !i.done(); i.next()) {
-            JSScript* script = i.get<JSScript>();
+        for (auto script = zone->cellIter<JSScript>(); !script.done(); script.next()) {
             if (script->compartment() != comp ||
                 !script->isTopLevel() ||
                 !script->filename())

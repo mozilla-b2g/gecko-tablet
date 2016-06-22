@@ -9,7 +9,8 @@ const promise = require("promise");
 const protocol = require("devtools/shared/protocol");
 const {LongStringActor} = require("devtools/server/actors/string");
 const {getDefinedGeometryProperties} = require("devtools/server/actors/highlighters/geometry-editor");
-const {parseDeclarations} = require("devtools/client/shared/css-parsing-utils");
+const {parseDeclarations} = require("devtools/shared/css-parsing-utils");
+const {isCssPropertyKnown} = require("devtools/server/actors/css-properties");
 const {Task} = require("devtools/shared/task");
 const events = require("sdk/event/core");
 
@@ -65,7 +66,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
                    "creating a PageStyleActor.");
     }
     this.walker = inspector.walker;
-    this.cssLogic = new CssLogic();
+    this.cssLogic = new CssLogic(DOMUtils.isInheritedProperty);
 
     // Stores the association of DOM objects -> actors
     this.refMap = new Map();
@@ -74,7 +75,10 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
     this.styleElements = new WeakMap();
 
     this.onFrameUnload = this.onFrameUnload.bind(this);
+    this.onStyleSheetAdded = this.onStyleSheetAdded.bind(this);
+
     events.on(this.inspector.tabActor, "will-navigate", this.onFrameUnload);
+    events.on(this.inspector.tabActor, "stylesheet-added", this.onStyleSheetAdded);
 
     this._styleApplied = this._styleApplied.bind(this);
     this._watchedSheets = new Set();
@@ -86,6 +90,7 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
     }
     protocol.Actor.prototype.destroy.call(this);
     events.off(this.inspector.tabActor, "will-navigate", this.onFrameUnload);
+    events.off(this.inspector.tabActor, "stylesheet-added", this.onStyleSheetAdded);
     this.inspector = null;
     this.walker = null;
     this.refMap = null;
@@ -173,10 +178,6 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
   _sheetRef: function (sheet) {
     let tabActor = this.inspector.tabActor;
     let actor = tabActor.createStyleSheetActor(sheet);
-    if (!this._watchedSheets.has(actor)) {
-      this._watchedSheets.add(actor);
-      actor.on("style-applied", this._styleApplied);
-    }
     return actor;
   },
 
@@ -837,6 +838,18 @@ var PageStyleActor = protocol.ActorClassWithSpec(pageStyleSpec, {
   },
 
   /**
+   * When a stylesheet is added, handle the related StyleSheetActor to listen for changes.
+   * @param  {StyleSheetActor} actor
+   *         The actor for the added stylesheet.
+   */
+  onStyleSheetAdded: function (actor) {
+    if (!this._watchedSheets.has(actor)) {
+      this._watchedSheets.add(actor);
+      actor.on("style-applied", this._styleApplied);
+    }
+  },
+
+  /**
    * Helper function to addNewRule to get or create a style tag in the provided
    * document.
    *
@@ -1093,8 +1106,9 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
     // and so that we can safely determine if a declaration is valid rather than
     // have the client guess it.
     if (form.authoredText || form.cssText) {
-      let declarations = parseDeclarations(form.authoredText ||
-                                           form.cssText, true);
+      let declarations = parseDeclarations(isCssPropertyKnown,
+                                           form.authoredText || form.cssText,
+                                           true);
       form.declarations = declarations.map(decl => {
         decl.isValid = DOMUtils.cssPropertyIsValid(decl.name, decl.value);
         return decl;
@@ -1465,13 +1479,15 @@ var StyleRuleActor = protocol.ActorClassWithSpec(styleRuleSpec, {
       if (newCssRule) {
         let ruleEntry = this.pageStyle.findEntryMatchingRule(node, newCssRule);
         if (ruleEntry.length === 1) {
-          isMatching = true;
           ruleProps =
             this.pageStyle.getAppliedProps(node, ruleEntry,
                                            { matchedSelectors: true });
         } else {
           ruleProps = this.pageStyle.getNewAppliedProps(node, newCssRule);
         }
+
+        isMatching = ruleProps.entries.some((ruleProp) =>
+          ruleProp.matchedSelectors.length > 0);
       }
 
       return { ruleProps, isMatching };

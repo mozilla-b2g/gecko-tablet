@@ -232,6 +232,7 @@ public:
   NS_IMETHOD GetUseRemoteTabs(bool*) override;
   NS_IMETHOD SetRemoteTabs(bool) override;
   NS_IMETHOD GetOriginAttributes(JS::MutableHandle<JS::Value>) override;
+  NS_IMETHOD IsTrackingProtectionOn(bool*) override;
 
   // Restores a cached presentation from history (mLSHE).
   // This method swaps out the content viewer and simulates loads for
@@ -276,7 +277,7 @@ public:
     return mOriginAttributes;
   }
 
-  void SetOriginAttributes(const mozilla::DocShellOriginAttributes& aAttrs);
+  nsresult SetOriginAttributes(const mozilla::DocShellOriginAttributes& aAttrs);
 
   void GetInterceptedDocumentId(nsAString& aId)
   {
@@ -352,12 +353,7 @@ protected:
   // not have an owner on the channel should just pass null.
   // If aSrcdoc is not void, the load will be considered as a srcdoc load,
   // and the contents of aSrcdoc will be loaded instead of aURI.
-  // aOriginalURI will be set as the originalURI on the channel that does the
-  // load. If aOriginalURI is null, aURI will be set as the originalURI.
-  // If aLoadReplace is true, OLOAD_REPLACE flag will be set to the nsIChannel.
   nsresult DoURILoad(nsIURI* aURI,
-                     nsIURI* aOriginalURI,
-                     bool aLoadReplace,
                      nsIURI* aReferrer,
                      bool aSendReferrer,
                      uint32_t aReferrerPolicy,
@@ -946,7 +942,6 @@ protected:
   bool mIsPrerendered;
   bool mIsAppTab;
   bool mUseGlobalHistory;
-  bool mInPrivateBrowsing;
   bool mUseRemoteTabs;
   bool mDeviceSizeIsPageSize;
   bool mWindowDraggingAllowed;
@@ -1005,6 +1000,13 @@ protected:
   // Are we a regular frame, a browser frame, or an app frame?
   uint32_t mFrameType;
 
+  // This represents the state of private browsing in the docshell.
+  // Currently treated as a binary value: 1 - in private mode, 0 - not private mode
+  // On content docshells mPrivateBrowsingId == mOriginAttributes.mPrivateBrowsingId
+  // On chrome docshells this value will be set, but not have the corresponding
+  // origin attribute set.
+  uint32_t mPrivateBrowsingId;
+
   nsString mPaymentRequestId;
 
   nsString GetInheritedPaymentRequestId();
@@ -1033,6 +1035,10 @@ private:
                               nsISupports* aRequestor,
                               nsIDocShellTreeItem* aOriginalRequestor,
                               nsIDocShellTreeItem** aResult);
+
+  // Helper assertion to enforce that mInPrivateBrowsing is in sync with
+  // OriginAttributes.mPrivateBrowsingId
+  void AssertOriginAttributesMatchPrivateBrowsing();
 
   // Notify consumers of a search being loaded through the observer service:
   void MaybeNotifyKeywordSearchLoading(const nsString& aProvider,

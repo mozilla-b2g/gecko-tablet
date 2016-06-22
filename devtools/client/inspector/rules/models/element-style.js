@@ -6,12 +6,12 @@
 
 "use strict";
 
-const {Cc, Ci, Cu} = require("chrome");
+const {Cc, Ci} = require("chrome");
 const promise = require("promise");
 const {Rule} = require("devtools/client/inspector/rules/models/rule");
 const {promiseWarn} = require("devtools/client/inspector/shared/utils");
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+const {ELEMENT_STYLE} = require("devtools/server/actors/styles");
+const {XPCOMUtils} = require("resource://gre/modules/XPCOMUtils.jsm");
 
 loader.lazyGetter(this, "PSEUDO_ELEMENTS", () => {
   return domUtils.getCSSPseudoElementNames();
@@ -229,7 +229,9 @@ ElementStyle.prototype = {
     // determine if the property is overridden.
     let textProps = [];
     for (let rule of this.rules) {
-      if (rule.pseudoElement === pseudo && !rule.keyframes) {
+      if ((rule.matchedSelectors.length > 0 ||
+           rule.domRule.type === ELEMENT_STYLE) &&
+          rule.pseudoElement === pseudo && !rule.keyframes) {
         for (let textProp of rule.textProps.slice(0).reverse()) {
           if (textProp.enabled) {
             textProps.push(textProp);

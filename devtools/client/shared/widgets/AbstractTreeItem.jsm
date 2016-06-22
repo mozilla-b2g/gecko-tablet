@@ -5,10 +5,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
+const { interfaces: Ci, utils: Cu } = Components;
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 const { require } = Cu.import("resource://devtools/shared/Loader.jsm", {});
+const { XPCOMUtils } = require("resource://gre/modules/XPCOMUtils.jsm");
 const { ViewHelpers } = require("devtools/client/shared/widgets/view-helpers");
 
 XPCOMUtils.defineLazyModuleGetter(this, "EventEmitter",
@@ -50,7 +50,7 @@ this.EXPORTED_SYMBOLS = ["AbstractTreeItem"];
  *     ...
  *     // Use `this.itemDataSrc` to customize the tree item and
  *     // `this.level` to calculate the indentation.
- *     node.marginInlineStart = (this.level * 10) + "px";
+ *     node.style.marginInlineStart = (this.level * 10) + "px";
  *     node.appendChild(document.createTextNode(this.itemDataSrc.label));
  *     ...
  *     return node;

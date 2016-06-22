@@ -942,6 +942,18 @@ nsWindowWatcher::OpenWindowInternal(mozIDOMWindowProxy* aParent,
                                             nullptr;
 
   if (windowIsNew) {
+    auto* docShell = static_cast<nsDocShell*>(newDocShell.get());
+
+    // If this is not a chrome docShell, we apply originAttributes from the
+    // subjectPrincipal.
+    if (subjectPrincipal &&
+        docShell->ItemType() != nsIDocShellTreeItem::typeChrome) {
+      DocShellOriginAttributes attrs;
+      attrs.InheritFromDocToChildDocShell(BasePrincipal::Cast(subjectPrincipal)->OriginAttributesRef());
+
+      docShell->SetOriginAttributes(attrs);
+    }
+
     // Now set the opener principal on the new window.  Note that we need to do
     // this no matter whether we were opened from JS; if there is nothing on
     // the JS stack, just use the principal of our parent window.  In those
@@ -1024,20 +1036,6 @@ nsWindowWatcher::OpenWindowInternal(mozIDOMWindowProxy* aParent,
       loadInfo->SetReferrer(doc->GetDocumentURI());
       loadInfo->SetReferrerPolicy(doc->GetReferrerPolicy());
     }
-  }
-
-  // If this is a new window, we must set the userContextId from the
-  // subjectPrincipal.
-  if (windowIsNew && subjectPrincipal) {
-    uint32_t userContextId;
-    rv = subjectPrincipal->GetUserContextId(&userContextId);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    auto* docShell = static_cast<nsDocShell*>(newDocShell.get());
-
-    DocShellOriginAttributes attr = docShell->GetOriginAttributes();
-    attr.mUserContextId = userContextId;
-    docShell->SetOriginAttributes(attr);
   }
 
   if (isNewToplevelWindow) {
@@ -1543,7 +1541,7 @@ nsWindowWatcher::URIfromURL(const char* aURL,
 #define NS_CALCULATE_CHROME_FLAG_FOR(feature, flag)                            \
   prefBranch->GetBoolPref(feature, &forceEnable);                              \
   if (forceEnable && !(aDialog && !openedFromContentScript) &&                 \
-      !(!openedFromContentScript && aHasChromeParent) && !aChromeURL) {                  \
+      !(!openedFromContentScript && aHasChromeParent) && !aChromeURL) {        \
     chromeFlags |= flag;                                                       \
   } else {                                                                     \
     chromeFlags |=                                                             \
@@ -1658,12 +1656,15 @@ nsWindowWatcher::CalculateChromeFlags(mozIDOMWindowProxy* aParent,
                                nsIWebBrowserChrome::CHROME_STATUSBAR);
   NS_CALCULATE_CHROME_FLAG_FOR("menubar",
                                nsIWebBrowserChrome::CHROME_MENUBAR);
-  NS_CALCULATE_CHROME_FLAG_FOR("scrollbars",
-                               nsIWebBrowserChrome::CHROME_SCROLLBARS);
   NS_CALCULATE_CHROME_FLAG_FOR("resizable",
                                nsIWebBrowserChrome::CHROME_WINDOW_RESIZE);
   NS_CALCULATE_CHROME_FLAG_FOR("minimizable",
                                nsIWebBrowserChrome::CHROME_WINDOW_MIN);
+
+  // default scrollbar to "on," unless explicitly turned off
+  if (WinHasOption(aFeatures, "scrollbars", 1, &presenceFlag) || !presenceFlag) {
+    chromeFlags |= nsIWebBrowserChrome::CHROME_SCROLLBARS;
+  }
 
   chromeFlags |= WinHasOption(aFeatures, "popup", 0, &presenceFlag) ?
     nsIWebBrowserChrome::CHROME_WINDOW_POPUP : 0;

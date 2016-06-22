@@ -293,6 +293,10 @@ public:
   mozilla::a11y::Accessible* GetRootAccessible();
 #endif
 
+  // Return true if this is a simple widget (that is typically not worth
+  // accelerating)
+  bool IsSmallPopup() const;
+
   nsPopupLevel PopupLevel() { return mPopupLevel; }
 
   virtual LayoutDeviceIntSize
@@ -588,7 +592,7 @@ protected:
   bool              mUpdateCursor;
   bool              mUseAttachedEvents;
   bool              mIMEHasFocus;
-#if defined(XP_WIN) || defined(XP_MACOSX)
+#if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
   bool              mAccessibilityInUseFlag;
 #endif
   static nsIRollupListener* gRollupListener;

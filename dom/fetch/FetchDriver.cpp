@@ -83,20 +83,12 @@ FetchDriver::Fetch(FetchDriverObserver* aObserver)
   MOZ_RELEASE_ASSERT(!mRequest->IsSynchronous(),
                      "Synchronous fetch not supported");
 
-  return NS_DispatchToCurrentThread(NewRunnableMethod(this, &FetchDriver::ContinueFetch));
-}
-
-nsresult
-FetchDriver::ContinueFetch()
-{
-  workers::AssertIsOnMainThread();
-
-  nsresult rv = HttpFetch();
-  if (NS_FAILED(rv)) {
+  if (NS_FAILED(HttpFetch())) {
     FailWithNetworkError();
   }
 
-  return rv;
+  // Any failure is handled by FailWithNetworkError notifying the aObserver.
+  return NS_OK;
 }
 
 // This function implements the "HTTP Fetch" algorithm from the Fetch spec.
@@ -488,6 +480,10 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
 
   bool foundOpaqueRedirect = false;
 
+  int64_t contentLength = InternalResponse::UNKNOWN_BODY_SIZE;
+  rv = channel->GetContentLength(&contentLength);
+  MOZ_ASSERT_IF(NS_FAILED(rv), contentLength == InternalResponse::UNKNOWN_BODY_SIZE);
+
   if (httpChannel) {
     uint32_t responseStatus;
     httpChannel->GetResponseStatus(&responseStatus);
@@ -512,6 +508,17 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
     if (NS_WARN_IF(NS_FAILED(rv))) {
       NS_WARNING("Failed to visit all headers.");
     }
+
+    // If Content-Encoding or Transfer-Encoding headers are set, then the actual
+    // Content-Length (which refer to the decoded data) is obscured behind the encodings.
+    ErrorResult result;
+    if (response->Headers()->Has(NS_LITERAL_CSTRING("content-encoding"), result) ||
+        response->Headers()->Has(NS_LITERAL_CSTRING("transfer-encoding"), result)) {
+      NS_WARNING("Cannot know response Content-Length due to presence of Content-Encoding "
+                 "or Transfer-Encoding headers.");
+      contentLength = InternalResponse::UNKNOWN_BODY_SIZE;
+    }
+    MOZ_ASSERT(!result.Failed());
   } else {
     response = new InternalResponse(200, NS_LITERAL_CSTRING("OK"));
 
@@ -531,9 +538,7 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
       MOZ_ASSERT(!result.Failed());
     }
 
-    int64_t contentLength;
-    rv = channel->GetContentLength(&contentLength);
-    if (NS_SUCCEEDED(rv) && contentLength) {
+    if (contentLength > 0) {
       nsAutoCString contentLenStr;
       contentLenStr.AppendInt(contentLength);
       response->Headers()->Append(NS_LITERAL_CSTRING("Content-Length"),
@@ -561,7 +566,7 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
     // Cancel request.
     return rv;
   }
-  response->SetBody(pipeInputStream);
+  response->SetBody(pipeInputStream, contentLength);
 
   response->InitChannelInfo(channel);
 

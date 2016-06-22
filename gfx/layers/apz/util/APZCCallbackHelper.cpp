@@ -5,7 +5,7 @@
 
 #include "APZCCallbackHelper.h"
 
-#include "ContentHelper.h"
+#include "TouchActionHelper.h"
 #include "gfxPlatform.h" // For gfxPlatform::UseTiling
 #include "gfxPrefs.h"
 #include "LayersLogging.h"  // For Stringify
@@ -762,6 +762,9 @@ APZCCallbackHelper::SendSetTargetAPZCNotification(nsIWidget* aWidget,
       } else if (const WidgetWheelEvent* wheelEvent = aEvent.AsWheelEvent()) {
         waitForRefresh = PrepareForSetTargetAPZCNotification(aWidget, aGuid,
             rootFrame, wheelEvent->mRefPoint, &targets);
+      } else if (const WidgetMouseEvent* mouseEvent = aEvent.AsMouseEvent()) {
+        waitForRefresh = PrepareForSetTargetAPZCNotification(aWidget, aGuid,
+            rootFrame, mouseEvent->mRefPoint, &targets);
       }
       // TODO: Do other types of events need to be handled?
 
@@ -787,7 +790,7 @@ APZCCallbackHelper::SendSetAllowedTouchBehaviorNotification(
   nsTArray<TouchBehaviorFlags> flags;
   for (uint32_t i = 0; i < aEvent.mTouches.Length(); i++) {
     flags.AppendElement(
-      widget::ContentHelper::GetAllowedTouchBehavior(
+      widget::TouchActionHelper::GetAllowedTouchBehavior(
                                aWidget, aEvent.mTouches[i]->mRefPoint));
   }
   aCallback(aInputBlockId, Move(flags));

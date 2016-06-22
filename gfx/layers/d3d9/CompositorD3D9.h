@@ -27,7 +27,6 @@ public:
   virtual CompositorD3D9* AsCompositorD3D9() override { return this; }
 
   virtual bool Initialize() override;
-  virtual void Destroy() override {}
 
   virtual TextureFactoryIdentifier
     GetTextureFactoryIdentifier() override;
@@ -124,7 +123,7 @@ public:
 private:
   // ensure mSize is up to date with respect to mWidget
   void EnsureSize();
-  void SetSamplerForFilter(gfx::Filter aFilter);
+  void SetSamplerForSamplingFilter(gfx::SamplingFilter aSamplingFilter);
   void PaintToTarget();
   void SetMask(const EffectChain &aEffectChain, uint32_t aMaskTexture);
   /**

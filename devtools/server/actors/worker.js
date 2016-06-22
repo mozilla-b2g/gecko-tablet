@@ -1,14 +1,21 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 "use strict";
 
-var { Ci, Cu } = require("chrome");
-var { DebuggerServer } = require("devtools/server/main");
-var Services = require("Services");
+const { Ci } = require("chrome");
+const { DebuggerServer } = require("devtools/server/main");
+const Services = require("Services");
+const { XPCOMUtils } = require("resource://gre/modules/XPCOMUtils.jsm");
 const protocol = require("devtools/shared/protocol");
 const { Arg, method, RetVal } = protocol;
+const {
+  workerSpec,
+  serviceWorkerRegistrationSpec,
+} = require("devtools/shared/specs/worker");
 
 loader.lazyRequireGetter(this, "ChromeUtils");
-
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(
   this, "wdm",
@@ -40,9 +47,7 @@ function matchWorkerDebugger(dbg, options) {
   return true;
 }
 
-let WorkerActor = protocol.ActorClass({
-  typeName: "worker",
-
+let WorkerActor = protocol.ActorClassWithSpec(workerSpec, {
   initialize: function (conn, dbg) {
     protocol.Actor.prototype.initialize.call(this, conn);
     this._dbg = dbg;
@@ -69,7 +74,7 @@ let WorkerActor = protocol.ActorClass({
     return form;
   },
 
-  attach: method(function () {
+  attach: function () {
     if (this._dbg.isClosed) {
       return { error: "closed" };
     }
@@ -91,12 +96,9 @@ let WorkerActor = protocol.ActorClass({
       type: "attached",
       url: this._dbg.url
     };
-  }, {
-    request: {},
-    response: RetVal("json")
-  }),
+  },
 
-  detach: method(function () {
+  detach: function () {
     if (!this._attached) {
       return { error: "wrongState" };
     }
@@ -104,12 +106,9 @@ let WorkerActor = protocol.ActorClass({
     this._detach();
 
     return { type: "detached" };
-  }, {
-    request: {},
-    response: RetVal("json")
-  }),
+  },
 
-  connect: method(function (options) {
+  connect: function (options) {
     if (!this._attached) {
       return { error: "wrongState" };
     }
@@ -136,14 +135,9 @@ let WorkerActor = protocol.ActorClass({
     }, (error) => {
       return { error: error.toString() };
     });
-  }, {
-    request: {
-      options: Arg(0, "json"),
-    },
-    response: RetVal("json")
-  }),
+  },
 
-  push: method(function () {
+  push: function () {
     if (this._dbg.type !== Ci.nsIWorkerDebugger.TYPE_SERVICE) {
       return { error: "wrongType" };
     }
@@ -152,10 +146,7 @@ let WorkerActor = protocol.ActorClass({
       this._dbg.principal.originAttributes);
     swm.sendPushEvent(originAttributes, registration.scope);
     return { type: "pushed" };
-  }, {
-    request: {},
-    response: RetVal("json")
-  }),
+  },
 
   onClose: function () {
     if (this._attached) {
@@ -307,9 +298,8 @@ exports.WorkerActorList = WorkerActorList;
 // Lazily load the service-worker-child.js process script only once.
 let _serviceWorkerProcessScriptLoaded = false;
 
-let ServiceWorkerRegistrationActor = protocol.ActorClass({
-  typeName: "serviceWorkerRegistration",
-
+let ServiceWorkerRegistrationActor =
+protocol.ActorClassWithSpec(serviceWorkerRegistrationSpec, {
   initialize: function (conn, registration) {
     protocol.Actor.prototype.initialize.call(this, conn);
     this._registration = registration;
@@ -327,7 +317,7 @@ let ServiceWorkerRegistrationActor = protocol.ActorClass({
     };
   },
 
-  start: method(function () {
+  start: function () {
     if (!_serviceWorkerProcessScriptLoaded) {
       Services.ppmm.loadProcessScript(
         "resource://devtools/server/service-worker-child.js", true);
@@ -337,12 +327,9 @@ let ServiceWorkerRegistrationActor = protocol.ActorClass({
       scope: this._registration.scope
     });
     return { type: "started" };
-  }, {
-    request: {},
-    response: RetVal("json")
-  }),
+  },
 
-  unregister: method(function () {
+  unregister: function () {
     let { principal, scope } = this._registration;
     let unregisterCallback = {
       unregisterSucceeded: function () {},
@@ -355,10 +342,7 @@ let ServiceWorkerRegistrationActor = protocol.ActorClass({
     swm.propagateUnregister(principal, unregisterCallback, scope);
 
     return { type: "unregistered" };
-  }, {
-    request: {},
-    response: RetVal("json")
-  }),
+  },
 });
 
 function ServiceWorkerRegistrationActorList(conn) {

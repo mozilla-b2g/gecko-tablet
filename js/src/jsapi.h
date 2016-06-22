@@ -124,14 +124,14 @@ class MOZ_RAII AutoVectorRooterBase : protected AutoGCRooter
     size_t length() const { return vector.length(); }
     bool empty() const { return vector.empty(); }
 
-    bool append(const T& v) { return vector.append(v); }
-    bool appendN(const T& v, size_t len) { return vector.appendN(v, len); }
-    bool append(const T* ptr, size_t len) { return vector.append(ptr, len); }
-    bool appendAll(const AutoVectorRooterBase<T>& other) {
+    MOZ_MUST_USE bool append(const T& v) { return vector.append(v); }
+    MOZ_MUST_USE bool appendN(const T& v, size_t len) { return vector.appendN(v, len); }
+    MOZ_MUST_USE bool append(const T* ptr, size_t len) { return vector.append(ptr, len); }
+    MOZ_MUST_USE bool appendAll(const AutoVectorRooterBase<T>& other) {
         return vector.appendAll(other.vector);
     }
 
-    bool insert(T* p, const T& val) { return vector.insert(p, val); }
+    MOZ_MUST_USE bool insert(T* p, const T& val) { return vector.insert(p, val); }
 
     /* For use when space has already been reserved. */
     void infallibleAppend(const T& v) { vector.infallibleAppend(v); }
@@ -139,7 +139,7 @@ class MOZ_RAII AutoVectorRooterBase : protected AutoGCRooter
     void popBack() { vector.popBack(); }
     T popCopy() { return vector.popCopy(); }
 
-    bool growBy(size_t inc) {
+    MOZ_MUST_USE bool growBy(size_t inc) {
         size_t oldLength = vector.length();
         if (!vector.growByUninitialized(inc))
             return false;
@@ -147,7 +147,7 @@ class MOZ_RAII AutoVectorRooterBase : protected AutoGCRooter
         return true;
     }
 
-    bool resize(size_t newLength) {
+    MOZ_MUST_USE bool resize(size_t newLength) {
         size_t oldLength = vector.length();
         if (newLength <= oldLength) {
             vector.shrinkBy(oldLength - newLength);
@@ -161,7 +161,7 @@ class MOZ_RAII AutoVectorRooterBase : protected AutoGCRooter
 
     void clear() { vector.clear(); }
 
-    bool reserve(size_t newLength) {
+    MOZ_MUST_USE bool reserve(size_t newLength) {
         return vector.reserve(newLength);
     }
 
@@ -222,6 +222,7 @@ typedef AutoVectorRooter<JSObject*> AutoObjectVector;
 using ValueVector = JS::GCVector<JS::Value>;
 using IdVector = JS::GCVector<jsid>;
 using ScriptVector = JS::GCVector<JSScript*>;
+using StringVector = JS::GCVector<JSString*>;
 
 template<class Key, class Value>
 class MOZ_RAII AutoHashMapRooter : protected AutoGCRooter
@@ -536,27 +537,6 @@ struct JSFreeOp {
 
 /************************************************************************/
 
-typedef enum JSContextOp {
-    JSCONTEXT_NEW,
-    JSCONTEXT_DESTROY
-} JSContextOp;
-
-/**
- * The possible values for contextOp when the runtime calls the callback are:
- *   JSCONTEXT_NEW      JS_NewContext successfully created a new JSContext
- *                      instance. The callback can initialize the instance as
- *                      required. If the callback returns false, the instance
- *                      will be destroyed and JS_NewContext returns null. In
- *                      this case the callback is not called again.
- *   JSCONTEXT_DESTROY  One of JS_DestroyContext* methods is called. The
- *                      callback may perform its own cleanup and must always
- *                      return true.
- *   Any other value    For future compatibility the callback must do nothing
- *                      and return true in this case.
- */
-typedef bool
-(* JSContextCallback)(JSContext* cx, unsigned contextOp, void* data);
-
 typedef enum JSGCStatus {
     JSGC_BEGIN,
     JSGC_END
@@ -603,19 +583,32 @@ typedef bool
 (* JSInterruptCallback)(JSContext* cx);
 
 typedef bool
-(* JSEnqueuePromiseJobCallback)(JSContext* cx, JS::HandleObject job, void* data);
+(* JSEnqueuePromiseJobCallback)(JSContext* cx, JS::HandleObject job,
+                                JS::HandleObject allocationSite, void* data);
+
+enum class PromiseRejectionHandlingState {
+    Unhandled,
+    Handled
+};
 
 typedef void
-(* JSErrorReporter)(JSContext* cx, const char* message, JSErrorReport* report);
+(* JSPromiseRejectionTrackerCallback)(JSContext* cx, JS::HandleObject promise,
+                                      PromiseRejectionHandlingState state, void* data);
+
+typedef void
+(* JSProcessPromiseCallback)(JSContext* cx, JS::HandleObject promise);
 
 /**
  * Possible exception types. These types are part of a JSErrorFormatString
  * structure. They define which error to throw in case of a runtime error.
- * JSEXN_NONE marks an unthrowable error.
+ *
+ * JSEXN_WARN is used for warnings in js.msg files (for instance because we
+ * don't want to prepend 'Error:' to warning messages). This value can go away
+ * if we ever decide to use an entirely separate mechanism for warnings.
  */
 typedef enum JSExnType {
-    JSEXN_NONE = -1,
-      JSEXN_ERR,
+    JSEXN_ERR,
+    JSEXN_FIRST = JSEXN_ERR,
         JSEXN_INTERNALERR,
         JSEXN_EVALERR,
         JSEXN_RANGEERR,
@@ -624,7 +617,8 @@ typedef enum JSExnType {
         JSEXN_TYPEERR,
         JSEXN_URIERR,
         JSEXN_DEBUGGEEWOULDRUN,
-        JSEXN_LIMIT
+    JSEXN_WARN,
+    JSEXN_LIMIT
 } JSExnType;
 
 typedef struct JSErrorFormatString {
@@ -1047,9 +1041,6 @@ class MOZ_RAII JSAutoRequest
 #endif
 };
 
-extern JS_PUBLIC_API(void)
-JS_SetContextCallback(JSRuntime* rt, JSContextCallback cxCallback, void* data);
-
 extern JS_PUBLIC_API(JSContext*)
 JS_NewContext(JSRuntime* rt, size_t stackChunkSize);
 
@@ -1106,6 +1097,7 @@ class JS_PUBLIC_API(RuntimeOptions) {
         ion_(true),
         asmJS_(true),
         wasm_(false),
+        wasmAlwaysBaseline_(false),
         throwOnAsmJSValidationFailure_(false),
         nativeRegExp_(true),
         unboxedArrays_(false),
@@ -1155,6 +1147,16 @@ class JS_PUBLIC_API(RuntimeOptions) {
     }
     RuntimeOptions& toggleWasm() {
         wasm_ = !wasm_;
+        return *this;
+    }
+
+    bool wasmAlwaysBaseline() const { return wasmAlwaysBaseline_; }
+    RuntimeOptions& setWasmAlwaysBaseline(bool flag) {
+        wasmAlwaysBaseline_ = flag;
+        return *this;
+    }
+    RuntimeOptions& toggleWasmAlwaysBaseline() {
+        wasmAlwaysBaseline_ = !wasmAlwaysBaseline_;
         return *this;
     }
 
@@ -1233,6 +1235,7 @@ class JS_PUBLIC_API(RuntimeOptions) {
     bool ion_ : 1;
     bool asmJS_ : 1;
     bool wasm_ : 1;
+    bool wasmAlwaysBaseline_ : 1;
     bool throwOnAsmJSValidationFailure_ : 1;
     bool nativeRegExp_ : 1;
     bool unboxedArrays_ : 1;
@@ -1249,80 +1252,6 @@ RuntimeOptionsRef(JSRuntime* rt);
 
 JS_PUBLIC_API(RuntimeOptions&)
 RuntimeOptionsRef(JSContext* cx);
-
-class JS_PUBLIC_API(ContextOptions) {
-  public:
-    ContextOptions()
-      : privateIsNSISupports_(false),
-        dontReportUncaught_(false),
-        autoJSAPIOwnsErrorReporting_(false)
-    {
-    }
-
-    bool privateIsNSISupports() const { return privateIsNSISupports_; }
-    ContextOptions& setPrivateIsNSISupports(bool flag) {
-        privateIsNSISupports_ = flag;
-        return *this;
-    }
-    ContextOptions& togglePrivateIsNSISupports() {
-        privateIsNSISupports_ = !privateIsNSISupports_;
-        return *this;
-    }
-
-    bool dontReportUncaught() const { return dontReportUncaught_; }
-    ContextOptions& setDontReportUncaught(bool flag) {
-        dontReportUncaught_ = flag;
-        return *this;
-    }
-    ContextOptions& toggleDontReportUncaught() {
-        dontReportUncaught_ = !dontReportUncaught_;
-        return *this;
-    }
-
-    bool autoJSAPIOwnsErrorReporting() const { return autoJSAPIOwnsErrorReporting_; }
-    ContextOptions& setAutoJSAPIOwnsErrorReporting(bool flag) {
-        autoJSAPIOwnsErrorReporting_ = flag;
-        return *this;
-    }
-    ContextOptions& toggleAutoJSAPIOwnsErrorReporting() {
-        autoJSAPIOwnsErrorReporting_ = !autoJSAPIOwnsErrorReporting_;
-        return *this;
-    }
-
-
-  private:
-    bool privateIsNSISupports_ : 1;
-    bool dontReportUncaught_ : 1;
-    // dontReportUncaught isn't respected by all JSAPI codepaths, particularly the
-    // JS_ReportError* functions that eventually report the error even when dontReportUncaught is
-    // set, if script is not running. We want a way to indicate that the embedder will always
-    // handle any exceptions, and that SpiderMonkey should just leave them on the context. This is
-    // the way we want to do all future error handling in Gecko - stealing the exception explicitly
-    // from the context and handling it as per the situation. This will eventually become the
-    // default and these 2 flags should go away.
-    bool autoJSAPIOwnsErrorReporting_ : 1;
-};
-
-JS_PUBLIC_API(ContextOptions&)
-ContextOptionsRef(JSContext* cx);
-
-class JS_PUBLIC_API(AutoSaveContextOptions) {
-  public:
-    explicit AutoSaveContextOptions(JSContext* cx)
-      : cx_(cx),
-        oldOptions_(ContextOptionsRef(cx_))
-    {
-    }
-
-    ~AutoSaveContextOptions()
-    {
-        ContextOptionsRef(cx_) = oldOptions_;
-    }
-
-  private:
-    JSContext* cx_;
-    JS::ContextOptions oldOptions_;
-};
 
 } /* namespace JS */
 
@@ -4402,12 +4331,22 @@ namespace JS {
  *
  * SpiderMonkey doesn't schedule Promise resolution jobs itself; instead,
  * using this function the embedding can provide a callback to do that
- * scheduling. The provided `callback` is invoked with the promise job
- * and the `data` pointer passed here as arguments.
+ * scheduling. The provided `callback` is invoked with the promise job,
+ * the corresponding Promise's allocation stack, and the `data` pointer
+ * passed here as arguments.
  */
 extern JS_PUBLIC_API(void)
 SetEnqueuePromiseJobCallback(JSRuntime* rt, JSEnqueuePromiseJobCallback callback,
                              void* data = nullptr);
+
+/**
+ * Sets the callback that's invoked whenever a Promise is rejected without
+ * a rejection handler, and when a Promise that was previously rejected
+ * without a handler gets a handler attached.
+ */
+extern JS_PUBLIC_API(void)
+SetPromiseRejectionTrackerCallback(JSRuntime* rt, JSPromiseRejectionTrackerCallback callback,
+                                   void* data = nullptr);
 
 /**
  * Returns a new instance of the Promise builtin class in the current
@@ -4453,7 +4392,7 @@ GetPromiseState(JS::HandleObject promise);
 /**
  * Returns the given Promise's process-unique ID.
  */
-JS_PUBLIC_API(double)
+JS_PUBLIC_API(uint64_t)
 GetPromiseID(JS::HandleObject promise);
 
 /**
@@ -4550,23 +4489,6 @@ GetWaitForAllPromise(JSContext* cx, const JS::AutoObjectVector& promises);
 
 extern JS_PUBLIC_API(bool)
 JS_IsRunning(JSContext* cx);
-
-/*
- * Saving and restoring frame chains.
- *
- * These two functions are used to set aside cx's call stack while that stack
- * is inactive. After a call to JS_SaveFrameChain, it looks as if there is no
- * code running on cx. Before calling JS_RestoreFrameChain, cx's call stack
- * must be balanced and all nested calls to JS_SaveFrameChain must have had
- * matching JS_RestoreFrameChain calls.
- *
- * JS_SaveFrameChain deals with cx not having any code running on it.
- */
-extern JS_PUBLIC_API(bool)
-JS_SaveFrameChain(JSContext* cx);
-
-extern JS_PUBLIC_API(void)
-JS_RestoreFrameChain(JSContext* cx);
 
 namespace JS {
 
@@ -4987,6 +4909,7 @@ GetSymbolDescription(HandleSymbol symbol);
     macro(replace) \
     macro(search) \
     macro(species) \
+    macro(hasInstance) \
     macro(split) \
     macro(toPrimitive) \
     macro(unscopables)
@@ -5157,8 +5080,7 @@ const uint16_t MaxNumErrorArguments = 10;
 
 /**
  * Report an exception represented by the sprintf-like conversion of format
- * and its arguments.  This exception message string is passed to a pre-set
- * JSErrorReporter function (set by JS_SetErrorReporter).
+ * and its arguments.
  */
 extern JS_PUBLIC_API(void)
 JS_ReportError(JSContext* cx, const char* format, ...);
@@ -5289,13 +5211,16 @@ class JSErrorReport
 #define JSREPORT_IS_STRICT(flags)       (((flags) & JSREPORT_STRICT) != 0)
 #define JSREPORT_IS_STRICT_MODE_ERROR(flags) (((flags) &                      \
                                               JSREPORT_STRICT_MODE_ERROR) != 0)
-extern JS_PUBLIC_API(JSErrorReporter)
-JS_GetErrorReporter(JSRuntime* rt);
-
-extern JS_PUBLIC_API(JSErrorReporter)
-JS_SetErrorReporter(JSRuntime* rt, JSErrorReporter er);
-
 namespace JS {
+
+typedef void
+(* WarningReporter)(JSContext* cx, const char* message, JSErrorReport* report);
+
+extern JS_PUBLIC_API(WarningReporter)
+SetWarningReporter(JSRuntime* rt, WarningReporter reporter);
+
+extern JS_PUBLIC_API(WarningReporter)
+GetWarningReporter(JSRuntime* rt);
 
 extern JS_PUBLIC_API(bool)
 CreateError(JSContext* cx, JSExnType type, HandleObject stack,
@@ -5475,9 +5400,6 @@ JS_SetPendingException(JSContext* cx, JS::HandleValue v);
 extern JS_PUBLIC_API(void)
 JS_ClearPendingException(JSContext* cx);
 
-extern JS_PUBLIC_API(bool)
-JS_ReportPendingException(JSContext* cx);
-
 namespace JS {
 
 /**
@@ -5609,7 +5531,7 @@ extern JS_PUBLIC_API(void)
 JS_GetGCZealBits(JSContext* cx, uint32_t* zealBits, uint32_t* frequency, uint32_t* nextScheduled);
 
 extern JS_PUBLIC_API(void)
-JS_SetGCZeal(JSContext* cx, uint8_t zeal, uint32_t frequency);
+JS_SetGCZeal(JSRuntime* rt, uint8_t zeal, uint32_t frequency);
 
 extern JS_PUBLIC_API(void)
 JS_ScheduleGC(JSContext* cx, uint32_t count);
@@ -5800,8 +5722,8 @@ typedef void
 /** The list of reasons why an asm.js module may not be stored in the cache. */
 enum AsmJSCacheResult
 {
-    AsmJSCache_MIN,
-    AsmJSCache_Success = AsmJSCache_MIN,
+    AsmJSCache_Success,
+    AsmJSCache_MIN = AsmJSCache_Success,
     AsmJSCache_ModuleTooSmall,
     AsmJSCache_SynchronousScript,
     AsmJSCache_QuotaExceeded,
@@ -6228,6 +6150,8 @@ struct PerformanceGroup {
     uint64_t refCount_;
 };
 
+using PerformanceGroupVector = mozilla::Vector<RefPtr<js::PerformanceGroup>, 0, SystemAllocPolicy>;
+
 /**
  * Commit any Performance Monitoring data.
  *
@@ -6286,12 +6210,12 @@ extern JS_PUBLIC_API(bool)
 SetStopwatchStartCallback(JSRuntime*, StopwatchStartCallback, void*);
 
 typedef bool
-(*StopwatchCommitCallback)(uint64_t, mozilla::Vector<RefPtr<PerformanceGroup>>&, void*);
+(*StopwatchCommitCallback)(uint64_t, PerformanceGroupVector&, void*);
 extern JS_PUBLIC_API(bool)
 SetStopwatchCommitCallback(JSRuntime*, StopwatchCommitCallback, void*);
 
 typedef bool
-(*GetGroupsCallback)(JSContext*, mozilla::Vector<RefPtr<PerformanceGroup>>&, void*);
+(*GetGroupsCallback)(JSContext*, PerformanceGroupVector&, void*);
 extern JS_PUBLIC_API(bool)
 SetGetPerformanceGroupsCallback(JSRuntime*, GetGroupsCallback, void*);
 

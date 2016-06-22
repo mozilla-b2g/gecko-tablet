@@ -10,6 +10,7 @@
 #include "mozilla/Casting.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/unused.h"
 #include "nsContentUtils.h"
 #include "nsICertOverrideService.h"
 #include "nsIHttpChannelInternal.h"
@@ -1032,6 +1033,8 @@ AccumulateCipherSuite(Telemetry::ID probe, const SSLChannelInfo& channelInfo)
     case TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA: value = 10; break;
     case TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256: value = 11; break;
     case TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256: value = 12; break;
+    case TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: value = 13; break;
+    case TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384: value = 14; break;
     // DHE key exchange
     case TLS_DHE_RSA_WITH_AES_128_CBC_SHA: value = 21; break;
     case TLS_DHE_RSA_WITH_CAMELLIA_128_CBC_SHA: value = 22; break;
@@ -1161,10 +1164,6 @@ void HandshakeCallback(PRFileDesc* fd, void* client_data) {
               AccumulateNonECCKeySize(Telemetry::SSL_AUTH_RSA_KEY_SIZE_FULL,
                                       channelInfo.authKeyBits);
               break;
-            case ssl_auth_dsa:
-              AccumulateNonECCKeySize(Telemetry::SSL_AUTH_DSA_KEY_SIZE_FULL,
-                                      channelInfo.authKeyBits);
-              break;
             case ssl_auth_ecdsa:
               AccumulateECCCurve(Telemetry::SSL_AUTH_ECDSA_CURVE_FULL,
                                  channelInfo.authKeyBits);
@@ -1234,25 +1233,17 @@ void HandshakeCallback(PRFileDesc* fd, void* client_data) {
     status->SetServerCert(nssc, nsNSSCertificate::ev_status_unknown);
   }
 
-  nsCOMPtr<nsICertOverrideService> overrideService =
-      do_GetService(NS_CERTOVERRIDE_CONTRACTID);
-
-  if (overrideService) {
-    bool haveOverride;
-    uint32_t overrideBits = 0; // Unused.
-    bool isTemporaryOverride; // Unused.
-    const nsACString& hostString(infoObject->GetHostName());
-    const int32_t port(infoObject->GetPort());
-    nsCOMPtr<nsIX509Cert> cert;
-    status->GetServerCert(getter_AddRefs(cert));
-    nsresult nsrv = overrideService->HasMatchingOverride(hostString, port,
-                                                         cert,
-                                                         &overrideBits,
-                                                         &isTemporaryOverride,
-                                                         &haveOverride);
-    if (NS_SUCCEEDED(nsrv) && haveOverride) {
-      state |= nsIWebProgressListener::STATE_CERT_USER_OVERRIDDEN;
-    }
+  bool domainMismatch;
+  bool untrusted;
+  bool notValidAtThisTime;
+  // These all return NS_OK, so don't even bother checking the return values.
+  Unused << status->GetIsDomainMismatch(&domainMismatch);
+  Unused << status->GetIsUntrusted(&untrusted);
+  Unused << status->GetIsNotValidAtThisTime(&notValidAtThisTime);
+  // If we're here, the TLS handshake has succeeded. Thus if any of these
+  // booleans are true, the user has added an override for a certificate error.
+  if (domainMismatch || untrusted || notValidAtThisTime) {
+    state |= nsIWebProgressListener::STATE_CERT_USER_OVERRIDDEN;
   }
 
   infoObject->SetSecurityState(state);

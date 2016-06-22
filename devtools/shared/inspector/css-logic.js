@@ -44,6 +44,7 @@ const { Cc, Ci, Cu } = require("chrome");
 const Services = require("Services");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const { getRootBindingParent } = require("devtools/shared/layout/utils");
+const nodeConstants = require("devtools/shared/dom-node-constants");
 
 // This should be ok because none of the functions that use this should be used
 // on the worker thread, where Cu is not available.
@@ -51,8 +52,13 @@ loader.lazyRequireGetter(this, "CSS", "CSS");
 
 loader.lazyRequireGetter(this, "CSSLexer", "devtools/shared/css-lexer");
 
-function CssLogic() {
+/**
+ * @param {function} isInherited A function that determines if the CSS property
+ *                   is inherited.
+ */
+function CssLogic(isInherited) {
   // The cache of examined CSS properties.
+  this._isInherited = isInherited;
   this._propertyInfos = {};
 }
 
@@ -253,7 +259,7 @@ CssLogic.prototype = {
 
     let info = this._propertyInfos[property];
     if (!info) {
-      info = new CssPropertyInfo(this, property);
+      info = new CssPropertyInfo(this, property, this._isInherited);
       this._propertyInfos[property] = info;
     }
 
@@ -301,11 +307,11 @@ CssLogic.prototype = {
 
       // Find import and keyframes rules.
       for (let aDomRule of domSheet.cssRules) {
-        if (aDomRule.type == Ci.nsIDOMCSSRule.IMPORT_RULE &&
+        if (aDomRule.type == CSSRule.IMPORT_RULE &&
             aDomRule.styleSheet &&
             this.mediaMatches(aDomRule)) {
           this._cacheSheet(aDomRule.styleSheet);
-        } else if (aDomRule.type == Ci.nsIDOMCSSRule.KEYFRAMES_RULE) {
+        } else if (aDomRule.type == CSSRule.KEYFRAMES_RULE) {
           this._keyframesRules.push(aDomRule);
         }
       }
@@ -539,7 +545,7 @@ CssLogic.prototype = {
         return true;
       }
     } while ((element = element.parentNode) &&
-             element.nodeType === Ci.nsIDOMNode.ELEMENT_NODE);
+             element.nodeType === nodeConstants.ELEMENT_NODE);
 
     return false;
   },
@@ -568,7 +574,7 @@ CssLogic.prototype = {
         if (rule.getPropertyValue(property) &&
             (status == CssLogic.STATUS.MATCHED ||
              (status == CssLogic.STATUS.PARENT_MATCH &&
-              domUtils.isInheritedProperty(property)))) {
+              this._isInherited(property)))) {
           result[property] = true;
           return false;
         }
@@ -620,7 +626,7 @@ CssLogic.prototype = {
       let numDomRules = domRules ? domRules.Count() : 0;
       for (let i = 0; i < numDomRules; i++) {
         let domRule = domRules.GetElementAt(i);
-        if (domRule.type !== Ci.nsIDOMCSSRule.STYLE_RULE) {
+        if (domRule.type !== CSSRule.STYLE_RULE) {
           continue;
         }
 
@@ -652,7 +658,7 @@ CssLogic.prototype = {
         this._matchedRules.push([rule, status]);
       }
     } while ((element = element.parentNode) &&
-              element.nodeType === Ci.nsIDOMNode.ELEMENT_NODE);
+              element.nodeType === nodeConstants.ELEMENT_NODE);
   },
 
   /**
@@ -784,7 +790,7 @@ CssLogic.getBindingElementAndPseudo = function (node) {
 CssLogic.getComputedStyle = function (node) {
   if (!node ||
       Cu.isDeadWrapper(node) ||
-      node.nodeType !== Ci.nsIDOMNode.ELEMENT_NODE ||
+      node.nodeType !== nodeConstants.ELEMENT_NODE ||
       !node.ownerDocument ||
       !node.ownerDocument.defaultView) {
     return null;
@@ -1336,10 +1342,10 @@ CssSheet.prototype = {
     let domRules = this.domSheet.cssRules;
 
     function _iterator(domRule) {
-      if (domRule.type == Ci.nsIDOMCSSRule.STYLE_RULE) {
+      if (domRule.type == CSSRule.STYLE_RULE) {
         callback.call(scope, this.getRule(domRule));
         ruleCount++;
-      } else if (domRule.type == Ci.nsIDOMCSSRule.MEDIA_RULE &&
+      } else if (domRule.type == CSSRule.MEDIA_RULE &&
           domRule.cssRules && this._cssLogic.mediaMatches(domRule)) {
         Array.prototype.forEach.call(domRule.cssRules, _iterator, this);
       }
@@ -1369,9 +1375,9 @@ CssSheet.prototype = {
   forSomeRules: function (callback, scope) {
     let domRules = this.domSheet.cssRules;
     function _iterator(domRule) {
-      if (domRule.type == Ci.nsIDOMCSSRule.STYLE_RULE) {
+      if (domRule.type == CSSRule.STYLE_RULE) {
         return callback.call(scope, this.getRule(domRule));
-      } else if (domRule.type == Ci.nsIDOMCSSRule.MEDIA_RULE &&
+      } else if (domRule.type == CSSRule.MEDIA_RULE &&
           domRule.cssRules && this._cssLogic.mediaMatches(domRule)) {
         return Array.prototype.some.call(domRule.cssRules, _iterator, this);
       }
@@ -1403,7 +1409,7 @@ function CssRule(cssSheet, domRule, element) {
   this.domRule = domRule;
 
   let parentRule = domRule.parentRule;
-  if (parentRule && parentRule.type == Ci.nsIDOMCSSRule.MEDIA_RULE) {
+  if (parentRule && parentRule.type == CSSRule.MEDIA_RULE) {
     this.mediaText = parentRule.media.mediaText;
   }
 
@@ -1646,12 +1652,15 @@ CssSelector.prototype = {
  *
  * @param {CssLogic} cssLogic Reference to the parent CssLogic instance
  * @param {string} property The CSS property we are gathering information for
+ * @param {function} isInherited A function that determines if the CSS property
+ *                   is inherited.
  * @constructor
  */
-function CssPropertyInfo(cssLogic, property) {
+function CssPropertyInfo(cssLogic, property, isInherited) {
   this._cssLogic = cssLogic;
   this.property = property;
   this._value = "";
+  this._isInherited = isInherited;
 
   // The number of matched rules holding the this.property style property.
   // Additionally, only rules that come from allowed stylesheets are counted.
@@ -1763,7 +1772,7 @@ CssPropertyInfo.prototype = {
     if (value &&
         (status == CssLogic.STATUS.MATCHED ||
          (status == CssLogic.STATUS.PARENT_MATCH &&
-          domUtils.isInheritedProperty(this.property)))) {
+          this._isInherited(this.property)))) {
       let selectorInfo = new CssSelectorInfo(selector, this.property, value,
           status);
       this._matchedSelectors.push(selectorInfo);
