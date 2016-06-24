@@ -25,6 +25,7 @@ config = {
         "BOWER_FLAGS": "--allow-root",
         "WGET_OPTS": "-c -q",
         "HG_SHARE_BASE_DIR": HG_SHARE_BASE_DIR,
+        "B2G_ANDROID_NDK_PATH": "/home/worker/workspace/gecko/android-ndk",
     },
     "is_automation": True,
     "repo_remote_mappings": {
