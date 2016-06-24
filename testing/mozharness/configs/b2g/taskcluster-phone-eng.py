@@ -39,4 +39,5 @@ config = {
         'git://github.com/apitrace/': 'https://git.mozilla.org/external/apitrace',
     },
     "download_tooltool": True,
+    "tooltool_servers": ['http://relengapi/tooltool/'],
 }
