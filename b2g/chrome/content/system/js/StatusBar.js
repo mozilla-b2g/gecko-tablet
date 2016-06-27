@@ -13,11 +13,14 @@ var StatusBar = {
 
     // Get DOM elements
     this.element = document.getElementById('status-bar');
+    this.battery = document.getElementById('battery');
     this.clock = document.getElementById('clock');
 
     // Set the clock going
     this.updateClock(true);
     window.setInterval(this.updateClock.bind(this, false), 1000);
+
+    window.addEventListener('_batterychange', this.updateBatteryStatus.bind(this));
 
     return this;
   },
@@ -43,6 +46,15 @@ var StatusBar = {
     if (initial || seconds === 0) {
       this.clock.textContent = hours + ':' + minutes;
     }
+  },
+
+  updateBatteryStatus: function(evt) {
+    console.debug('Received _batterychange event:', evt, JSON.stringify(evt.detail));
+
+    this.battery.setAttribute('data-charging-status', evt.detail.charging);
+
+    let lvl = Math.floor(evt.detail.level * 10)
+    this.battery.setAttribute('data-charging-level', lvl);
   }
 
 };
