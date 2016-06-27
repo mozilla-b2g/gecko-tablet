@@ -48,6 +48,56 @@ button::-moz-focus-inner {
   background-color: rgba(0, 0, 0, 0.1);
 }
 
+#battery {
+  border: 2px solid white;
+  height: 40%;
+  width: 4rem;
+  margin: 0;
+  padding: 0;
+  align-self: center;
+}
+
+#battery[data-charging-status="true"] {
+  border: 2px solid red;
+}
+
+#battery[data-charging-status="false"] {
+}
+
+#battery[data-charging-level="0"] {
+  background: linear-gradient(90deg, white 0%, transparent 100%);
+}
+#battery[data-charging-level="1"] {
+  background: linear-gradient(90deg, white 10%, transparent 90%);
+}
+#battery[data-charging-level="2"] {
+  background: linear-gradient(90deg, white 20%, transparent 80%);
+}
+#battery[data-charging-level="3"] {
+  background: linear-gradient(90deg, white 30%, transparent 70%);
+}
+#battery[data-charging-level="4"] {
+  background: linear-gradient(90deg, white 40%, transparent 60%);
+}
+#battery[data-charging-level="5"] {
+  background: linear-gradient(90deg, white 50%, transparent 50%);
+}
+#battery[data-charging-level="6"] {
+  background: linear-gradient(90deg, white 60%, transparent 40%);
+}
+#battery[data-charging-level="7"] {
+  background: linear-gradient(90deg, white 70%, transparent 30%);
+}
+#battery[data-charging-level="8"] {
+  background: linear-gradient(90deg, white 80%, transparent 20%);
+}
+#battery[data-charging-level="9"] {
+  background: linear-gradient(90deg, white 90%, transparent 10%);
+}
+#battery[data-charging-level="10"] {
+  background: linear-gradient(90deg, white 100%, transparent 0%);
+}
+
 #clock {
   font-size: 1.1rem;
   line-height: 2.5rem;

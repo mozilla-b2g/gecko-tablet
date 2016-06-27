@@ -16,6 +16,7 @@ var System = {
     this.systemToolbar = SystemToolbar.start();
     this.homeScreen = HomeScreen.start();
     this.powerManager = PowerManager.start();
+    this.batteryManager = BatteryManager.start();
     this.hwButtons = HwButtons.start();
     this.keyboardManager = KeyboardManager.start();
 
