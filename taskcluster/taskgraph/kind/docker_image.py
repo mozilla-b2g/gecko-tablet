@@ -52,7 +52,7 @@ class DockerImageKind(base.Kind):
             'level': params['level'],
             'from_now': json_time_from_now,
             'now': current_json_time(),
-            'source': '{repo}file/{rev}/testing/taskcluster/tasks/image.yml'
+            'source': '{repo}file/{rev}/taskcluster/ci/docker-image/image.yml'
                       .format(repo=params['head_repository'], rev=params['head_rev']),
         }
 

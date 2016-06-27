@@ -7,8 +7,6 @@ PATH=$DIRNAME:$PATH
 
 . desktop-setup.sh
 
-# use "simple" package names so that they can be hard-coded in the task's
-# extras.locations
 export MOZ_SIMPLE_PACKAGE_NAME=target
 
 cd $GECKO_DIR

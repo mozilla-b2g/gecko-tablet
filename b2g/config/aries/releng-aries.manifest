@@ -1,5 +1,14 @@
 [
 {
+"version": "Android NDK r11b for B2G",
+"algorithm": "sha512",
+"visibility": "internal",
+"filename": "android-ndk-b2g.tar.xz",
+"unpack": true,
+"digest": "775e764ac9db77c12c2cb320f1bfe4ba734b8e0214fc86833d908ea190482ffbdfa074d6e00097da4b92e7594482be7ccdf90dc7c98d9fde0901b3d179535e0c",
+"size": 153402080
+},
+{
 "version": "gcc 4.8.5 + PR64905",
 "size": 80160264,
 "digest": "c1a9dc9da289b8528874d16300b9d13a997cec99195bb0bc46ff665216d8535d6d6cb5af6b4b1f2749af6815dab12e703fdb3849014e5c23a70eff351a0baf4e",

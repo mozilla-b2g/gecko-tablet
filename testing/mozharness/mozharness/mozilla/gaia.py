@@ -417,12 +417,14 @@ class GaiaMixin(object):
 
         # Copy the b2g desktop we built to the gaia directory so that it
         # gets used by the marionette-js-runner.
-        b2g_dest = os.path.join(dirs['abs_gaia_dir'], 'b2g')
+        firefox_dest = os.path.join(dirs['abs_gaia_dir'], 'firefox')
         self.copytree(
             os.path.join(os.path.dirname(self.binary_path)),
-            b2g_dest,
+            firefox_dest,
             overwrite='clobber'
         )
         # Ensure modified time is more recent than node_modules!
-        self.run_command(['touch', '-c', b2g_dest])
+        self.run_command(['touch', '-c', firefox_dest])
+        # DEBUG
+        self.run_command(['ls', '-la', firefox_dest]);
 

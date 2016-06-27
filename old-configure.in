@@ -2691,7 +2691,7 @@ fi
 MOZ_NO_SMART_CARDS=
 NSS_DISABLE_DBM=
 NECKO_COOKIES=1
-NECKO_PROTOCOLS_DEFAULT="about app data file ftp http res viewsource websocket wyciwyg device"
+NECKO_PROTOCOLS_DEFAULT="about data file ftp http res viewsource websocket wyciwyg device"
 if test -n "$MOZ_RTSP"; then
   NECKO_PROTOCOLS_DEFAULT="$NECKO_PROTOCOLS_DEFAULT rtsp"
 fi
@@ -4035,19 +4035,6 @@ AC_SUBST(MOZ_PERMISSIONS)
 if test -n "$MOZ_PERMISSIONS"; then
     AC_DEFINE(MOZ_PERMISSIONS)
 fi
-
-dnl ========================================================
-dnl Child permissions, currently only used for b2g
-dnl ========================================================
-if test -n "$MOZ_B2G"; then
-    if test -n "$MOZ_PERMISSIONS"; then
-        MOZ_CHILD_PERMISSIONS=1
-        AC_DEFINE(MOZ_CHILD_PERMISSIONS)
-    else
-        AC_MSG_ERROR([You need to enable MOZ_PERMISSIONS for MOZ_CHILD_PERMISSIONS])
-    fi
-fi
-AC_SUBST(MOZ_CHILD_PERMISSIONS)
 
 dnl ========================================================
 dnl NegotiateAuth
@@ -5752,14 +5739,6 @@ if test -n "$MOZ_PAY"; then
     AC_DEFINE(MOZ_PAY)
 fi
 AC_SUBST(MOZ_PAY)
-
-dnl ========================================================
-dnl = Enable Browser Support for Activities
-dnl ========================================================
-if test -n "$MOZ_ACTIVITIES"; then
-    AC_DEFINE(MOZ_ACTIVITIES)
-fi
-AC_SUBST(MOZ_ACTIVITIES)
 
 dnl ========================================================
 dnl = Enable Support for AudioChannelManager API

@@ -1,5 +1,10 @@
 #!/usr/bin/env python
+
+HG_SHARE_BASE_DIR = "/builds/hg-shared"
+
 config = {
+    # mozharness script options
+    "vcs_share_base": HG_SHARE_BASE_DIR,
     "default_vcs": "tc-vcs",
     "default_actions": [
         'checkout-sources',
@@ -19,6 +24,8 @@ config = {
         "B2G_PATH": "%(work_dir)s",
         "BOWER_FLAGS": "--allow-root",
         "WGET_OPTS": "-c -q",
+        "HG_SHARE_BASE_DIR": HG_SHARE_BASE_DIR,
+        "B2G_ANDROID_NDK_PATH": "/home/worker/workspace/gecko/android-ndk",
     },
     "is_automation": True,
     "repo_remote_mappings": {
@@ -32,4 +39,5 @@ config = {
         'git://github.com/apitrace/': 'https://git.mozilla.org/external/apitrace',
     },
     "download_tooltool": True,
+    "tooltool_servers": ['http://relengapi/tooltool/'],
 }

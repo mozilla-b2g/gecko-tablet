@@ -1,9 +1,9 @@
 {
     "git": {
-        "git_revision": "a954bd2954c422b7d24d92cfd73000cb455dce44", 
-        "remote": "https://git.mozilla.org/releases/gaia.git", 
-        "branch": ""
-    }, 
-    "revision": "e9e8c44b43178139fca915cfe97ae3c52a9afe34", 
+        "git_revision": "025b492204ace6b21fc992cb48ced184add5576e",
+        "remote": "https://github.com/mozilla-b2g/gaia.git",
+        "branch": "kanikani"
+    },
+    "revision": "07d30dcbe75d2c053a6e98697fd2e362fb786ca9",
     "repo_path": "integration/gaia-central"
 }

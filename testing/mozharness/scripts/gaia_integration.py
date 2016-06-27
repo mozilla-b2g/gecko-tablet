@@ -59,10 +59,6 @@ class GaiaIntegrationTest(GaiaTest):
             'VIRTUALENV_EXISTS=1'
         ]
 
-        # for Mulet
-        if 'firefox' in self.binary_path:
-            cmd += ['RUNTIME=%s' % self.binary_path]
-
         code = self.run_command(cmd, cwd=dirs['abs_gaia_dir'], env=env,
            output_parser=output_parser,
            output_timeout=330)
