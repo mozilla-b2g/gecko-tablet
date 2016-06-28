@@ -174,6 +174,7 @@ pref("dom.enable_performance_observer", false);
 
 // Whether the Gamepad API is enabled
 pref("dom.gamepad.enabled", true);
+pref("dom.gamepad.test.enabled", false);
 #ifdef RELEASE_BUILD
 pref("dom.gamepad.non_standard_events.enabled", false);
 #else
@@ -5088,7 +5089,7 @@ pref("urlclassifier.max-complete-age", 2700);
 pref("urlclassifier.alternate_error_page", "blocked");
 
 // Enable phishing protection
-pref("browser.safebrowsing.enabled", true);
+pref("browser.safebrowsing.phishing.enabled", true);
 
 // Enable malware protection
 pref("browser.safebrowsing.malware.enabled", true);

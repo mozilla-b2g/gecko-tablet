@@ -316,10 +316,11 @@ struct JSContext : public js::ExclusiveContext,
     using ExclusiveContext::pod_calloc;
     using ExclusiveContext::pod_malloc;
     using ExclusiveContext::staticStrings;
+    using ExclusiveContext::updateMallocCounter;
     using ExclusiveContext::wellKnownSymbols;
 
-    JSRuntime* runtime() const { return runtime_; }
-    js::PerThreadData& mainThread() const { return runtime()->mainThread; }
+    JSRuntime* runtime() { return this; }
+    js::PerThreadData& mainThread() { return this->JSRuntime::mainThread; }
 
     static size_t offsetOfRuntime() {
         return offsetof(JSContext, runtime_);

@@ -11,6 +11,7 @@
 #include "Units.h"
 #include "mozilla/dom/ipc/IdType.h"
 #include "mozilla/gfx/GPUProcessHost.h"
+#include "mozilla/gfx/Point.h"
 #include "mozilla/ipc/Transport.h"
 #include "nsIObserverService.h"
 
@@ -65,8 +66,7 @@ public:
     CSSToLayoutDeviceScale aScale,
     bool aUseAPZ,
     bool aUseExternalSurfaceSize,
-    int aSurfaceWidth,
-    int aSurfaceHeight);
+    const gfx::IntSize& aSurfaceSize);
 
   layers::PCompositorBridgeParent* CreateTabCompositorBridge(
     ipc::Transport* aTransport,
@@ -105,6 +105,11 @@ public:
 
   void OnProcessLaunchComplete(GPUProcessHost* aHost) override;
   void OnProcessUnexpectedShutdown(GPUProcessHost* aHost) override;
+
+  // Returns access to the PGPU protocol if a GPU process is present.
+  GPUChild* GetGPUChild() {
+    return mGPUChild;
+  }
 
 private:
   // Called from our xpcom-shutdown observer.
