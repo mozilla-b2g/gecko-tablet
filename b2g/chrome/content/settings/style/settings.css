@@ -1,0 +1,334 @@
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  font-size: 10px;
+  overflow: hidden;
+}
+* {
+  -moz-user-select: none;
+}
+input[type="email"],
+input[type="password"],
+input[type="search"],
+input[type="tel"],
+input[type="text"],
+input[type="url"],
+textarea,
+[contenteditable="true"] {
+  -moz-user-select: text;
+}
+section[role="region"] {
+  position: absolute;
+  top: 0;
+  offset-inline-start: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  overflow: hidden;
+  z-index: 1;
+}
+section[role="region"],
+section[role="region"].previous {
+  visibility: hidden;
+}
+section[role="region"].current {
+  visibility: visible;
+}
+html[dir="ltr"] section[role="region"] { transform: translateX(+100%); }
+html[dir="rtl"] section[role="region"] { transform: translateX(-100%); }
+html[dir="ltr"] section[role="region"].previous { transform: translateX(-100%); }
+html[dir="rtl"] section[role="region"].previous { transform: translateX(+100%); }
+html[dir="ltr"] section[role="region"].current { transform: translateX(0); }
+html[dir="rtl"] section[role="region"].current { transform: translateX(0); }
+.skin-organic section.dialog > header:first-child .icon.icon-back {
+  background-image: url(/shared/style/headers/images/icons/organic/close.png);
+}
+section.dialog > header:first-child .icon.icon-back {
+  background-image: url(/shared/css/headers/images/icons/close.png);
+}
+body[data-ready="true"] section[role="region"] {
+  transition: transform .4s ease, visibility .4s;
+}
+body[data-ready="true"] section[role="region"].current {
+  transition: transform .4s ease;
+}
+section[role="region"] > header {
+  position: absolute;
+}
+section[role="region"] > div {
+  position: absolute;
+  top: 5rem;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: calc(100% - 5rem);
+  overflow-y: scroll;
+  will-change: scroll-position;
+}
+gaia-header a:first-child,
+gaia-header button:first-child,
+gaia-header [data-icon="close"] {
+  color: var(--header-action-button-color) !important;
+}
+section[role="region"],
+section[role="region"] > div > ul {
+  background-color: #f4f4f4;
+}
+gaia-header [data-icon] > span {
+  font-size: 0; 
+}
+ul li > a.menu-item > * {
+  overflow: unset;
+  text-overflow: unset;
+  white-space: initial;
+}
+#frame iframe {
+  position: absolute;
+  top: 0;
+  offset-inline-start: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+#activityDoneButton {
+  display: none !important; 
+}
+body[data-filter-by] #activityDoneButton {
+  display: inherit !important; 
+}
+body[data-filter-by] #root > div header,
+body[data-filter-by] #root > div li {
+  display: none;
+}
+body[data-filter-by="connectivity"] #root > div [data-category="connectivity"] {
+  display: block;
+}
+.explanation {
+  padding: 0.5rem 3rem;
+  font-style: italic;
+  font-size: 1.4rem;
+  color: #505859;
+}
+.description {
+  font-size: 1.7rem;
+  line-height: 2.3rem;
+  white-space: normal;
+  -moz-hyphens: auto;
+}
+.description p,
+.description a,
+.description label {
+  font-size: 1.7rem;
+  line-height: 2.3rem;
+  white-space: normal;
+}
+.description label {
+    padding: 0;
+}
+.description label span {
+  height: auto;
+  min-height: 6rem;
+  padding-top: 1.2rem;
+  padding-bottom: 1.2rem;
+  font-size: 1.7rem;
+  line-height: 2.3rem;
+  white-space: normal;
+}
+.description small {
+  font-size: 1.7rem;
+  color: #505859;
+}
+.link-text {
+  font-size: 1.4rem;
+  color: #35679A;
+  text-decoration: underline;
+}
+.link-text:active {
+  background-color: #c1d6e6;
+}
+.hint label span {
+  top: 2.9rem !important;
+}
+.hint span {
+  line-height: 6rem;
+}
+.hint .explanation {
+  font-style: normal;
+  position: relative;
+  margin-top: -2rem;
+  padding: 0.5rem 4rem 1.3rem;
+  padding-inline-start: 1.5rem;
+  white-space: normal;
+}
+.hint > gaia-switch ~ .explanation,
+.hint > label:not([for]) ~ .explanation {
+  padding-inline-end: 8rem;
+}
+.hint .explanation[hidden] {
+  display: none;
+}
+.disabled a,
+.disabled p,
+.disabled h2,
+.disabled label,
+.disabled select,
+gaia-checkbox[disabled],
+gaia-radio[disabled],
+gaia-switch[disabled] {
+  opacity: 0.3;
+  pointer-events: none;
+}
+body.spatial-navigation gaia-menu button:focus {
+  background-color: #b2f2ff !important;
+  color: #222;
+}
+body.spatial-navigation section#root ul li > gaia-radio,
+body.spatial-navigation section#root ul li > gaia-checkbox,
+body.spatial-navigation section#root ul li > gaia-switch {
+  outline: medium none;
+  margin-inline-start: -15px;
+  padding: 5px 30px 5px 15px;
+}
+body.spatial-navigation section:not(#root) ul li > gaia-radio,
+body.spatial-navigation section:not(#root) ul li > gaia-checkbox,
+body.spatial-navigation section:not(#root) ul li > gaia-switch {
+  outline: medium none;
+  margin-inline-start: -15px;
+  padding: 5px 30px;
+}
+body.spatial-navigation .current .action-button:focus,
+body.spatial-navigation .current gaia-header button:focus,
+body.spatial-navigation .current li a.menu-item:focus,
+body.spatial-navigation .current li .icon:focus,
+body.spatial-navigation .current li .button:focus,
+body.spatial-navigation .current li button:focus,
+body.spatial-navigation .current li input:focus,
+body.spatial-navigation .current ul.wifi-availableNetworks li:not([data-state]):focus,
+body.spatial-navigation .current ul.bluetooth-paired-devices li:not([data-state]):focus,
+body.spatial-navigation .current ul.bluetooth-devices li:not([data-state]):focus,
+body.spatial-navigation .current li gaia-radio:focus,
+body.spatial-navigation .current li gaia-checkbox:focus,
+body.spatial-navigation .current li gaia-switch:focus {
+  background-color: #b2f2ff !important;
+  color: #222;
+}
+#mediaStorage .space-stackedbar {
+  background-color: #E7E7E7;
+  border: solid 0.1rem #A6A6A6;
+  border-radius: 0.3rem;
+  display: inline-block;
+  height: 3rem;
+  margin: 0.8rem 5%;
+  padding: 0.1rem;
+  width: 90%;
+}
+#mediaStorage .space-stackedbar .stackedbar-item {
+  display: inline-block;
+  height: 3rem;
+}
+#mediaStorage .space-stackedbar .color-music,
+#mediaStorage .color-music .stackedbar-color-label {
+  background-color: #82C72C;
+}
+#mediaStorage .space-stackedbar .color-pictures,
+#mediaStorage .color-pictures .stackedbar-color-label {
+  background-color: #00CAF2;
+}
+#mediaStorage .space-stackedbar .color-videos,
+#mediaStorage .color-videos .stackedbar-color-label {
+  background-color: #2295D3;
+}
+#mediaStorage .space-stackedbar .color-free,
+#mediaStorage .color-free .stackedbar-color-label {
+  background-color: #E7E7E7;
+}
+#mediaStorage .color-free .stackedbar-color-label {
+  border: solid 0.1rem #A6A6A6;
+}
+#mediaStorage .color-music .stackedbar-color-label,
+#mediaStorage .color-pictures .stackedbar-color-label,
+#mediaStorage .color-videos .stackedbar-color-label,
+#mediaStorage .color-free .stackedbar-color-label {
+  border-radius: 0.3rem;
+}
+#mediaStorage .stackedbar-color-label {
+  display: inline-block;
+  height: 2rem;
+  offset-inline-start: 1.5rem;
+  padding: 0;
+  position: absolute;
+  top: 2.1rem;
+  width: 2rem;
+}
+#mediaStorage .stackedbar-color-label + a {
+  padding-inline-start: 4rem;
+}
+#menuItem-callWaiting[data-state="on"] span,
+#menuItem-callWaiting[data-state="off"] span {
+  display: inherit;
+}
+#menuItem-callWaiting span.cw-alert-icon,
+#menuItem-callWaiting[data-state="on"] span.cw-alert-icon,
+#menuItem-callWaiting[data-state="off"] span.cw-alert-icon {
+  display: none;
+}
+#menuItem-callWaiting[data-state="unknown"] label {
+  pointer-events: none;
+  opacity: 0.3;
+}
+#menuItem-callWaiting[data-state="unknown"] span.cw-alert-icon {
+  display: inherit;
+}
+#wallpaper-header { border: none; }
+.wallpaper {
+  position: relative;
+  overflow: hidden;
+  height: 17rem;
+}
+.wallpaper .wallpaper-button {
+  position: absolute;
+  border: none;
+  height: 100%;
+  width: 100%;
+  top: 0;
+  offset-inline-start: 0;
+  margin: 0;
+  background: none;
+}
+.wallpaper .wallpaper-button > span {
+  position: absolute;
+  offset-inline-end: 0;
+  bottom: 0;
+  width: 4.6rem;
+  height: 4.6rem;
+  margin: 1.5rem;
+  font-size: 21px;
+  line-height: 4.6rem;
+  text-align: center;
+  background: rgba(0,0,0,0.5);
+  border-radius: 50%;
+  color: #fff;
+}
+.wallpaper .wallpaper-button:active > span {
+ background: #00C7EF;
+}
+.wallpaper .wallpaper-button > span:before {
+  font-size: 40px;
+  margin-inline-end: -2px;
+}
+.wallpaper .wallpaper-preview {
+  margin-top: -10rem;
+  position: absolute;
+  width: 100%;
+}
+section[role="status"] {
+  transition: opacity .6s ease 0s;
+  opacity: 0;
+}
+section[role="status"].toast-visible {
+  opacity: 1;
+}

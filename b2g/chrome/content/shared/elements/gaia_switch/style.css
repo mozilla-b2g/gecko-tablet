@@ -1,0 +1,116 @@
+gaia-switch {
+  display: inline-block;
+  width: 100%;
+}
+
+#switch {
+  display: inline-block;
+  vertical-align: middle;
+  width: 100%;
+  position: relative;
+  background: none;
+}
+
+#switch span {
+  font-size: 1.9rem;
+  color: var(--label-color);
+  padding: 1rem 0;
+  line-height: 3rem;
+  box-sizing: border-box;
+  display: block;
+  /* Override inheriting nowrap from legacy lists building blocks. */
+  white-space: normal;
+}
+#switch span:-moz-dir(ltr) { float: left; }
+#switch span:-moz-dir(rtl) { float: right; }
+
+#switch span:not(:empty) {
+  padding-inline-end: 6rem;
+}
+
+#switch input {
+  margin: 0;
+  opacity: 0;
+  position: absolute;
+  top: 0;
+  offset-inline-start: 0;
+}
+
+#switch input:checked ~ span::after {
+  background-position: center bottom;
+}
+
+/* ----------------------------------
+ * ON/OFF SWITCHES
+ * ---------------------------------- */
+
+#switch input ~ span::after {
+  content: '';
+  position: absolute;
+  offset-inline-end: 0;
+  top: 2.5rem;
+  width: 6rem;
+  margin: -1.4rem 0 0;
+  height: 2.7rem;
+  border-radius: 1.35rem;
+  overflow: hidden;
+  background-color: #e6e6e6;
+  background-image: url(images/background_off.png);
+  background-repeat: no-repeat;
+  background-size: 9.2rem 2.7rem;
+  transition: background 0.2s ease;
+}
+#switch input ~ span:-moz-dir(ltr)::after { background-position: -3.2rem 0; }
+#switch input ~ span:-moz-dir(rtl)::after { background-position: 0 0; }
+
+/* switch: 'ON' state */
+#switch input:checked ~ span:-moz-dir(ltr)::after {
+  background-image: url(images/background.png);
+  background-position: 0 0;
+}
+#switch input:checked ~ span:-moz-dir(rtl)::after {
+  background-image: url(images/background_rtl.png);
+  background-position: -3.2rem 0;
+}
+
+/* switch: disabled state */
+#switch input:disabled ~ span::after {
+  opacity: 0.4;
+}
+
+#switch input.uninit ~ span::after {
+  transition: none;
+}
+
+/**
+ * A <details> slot may be specified in addition the the <label>.
+ * When provided, it appears under the <label> and can provide additional context.
+ */
+#switch div.details {
+  clear: both;
+  position: relative;
+  top: -1.5rem;
+  display: block;
+  margin: 0;
+  padding-top: 0.5rem;
+  padding-inline-start: 0;
+  padding-inline-end: 8rem;
+  font-size: 1.4rem;
+  line-height: 1.6rem;
+  color: #505859;
+  font-style: normal;
+  white-space: normal;
+}
+
+/**
+ * A <a> link slow may be specified in addition to the <label> and <details>.
+ * When provided, it will appear under the <details> section.
+ */
+gaia-switch a {
+  position: relative;
+  top: -0.8rem;
+  font-size: 1.7rem;
+  line-height: 2.4rem;
+  font-weight: 400;
+  color: #35679a;
+}
