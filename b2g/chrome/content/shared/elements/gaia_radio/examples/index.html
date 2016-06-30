@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <title>GaiaRadio Demo</title>
+  <meta name="description" content="Demo app for gaia-radio" />
+  <style type="text/css">
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      font-size: 10px;
+      background-color: #fff;
+      width: 100%;
+    }
+    html[dir="ltr"] header[dir] { text-align: left; }
+    html[dir="rtl"] header[dir] { text-align: right; }
+  </style>
+  <script src="../../../js/component_utils.js"></script>
+  <script>window.GaiaRadioBaseurl = '../';</script>
+  <script src="../script.js"></script>
+  <script defer src="example.js"></script>
+  <script>
+    window.onload = function() {
+      document.getElementById('dir').checked = false;
+    };
+  </script>
+
+  <!-- List styling -->
+  <link href="../../../style/lists.css" rel="stylesheet">
+</head>
+<body role="application">
+  <p dir="ltr">
+    <label>
+      <input id="dir" type="checkbox"
+        onchange="document.documentElement.dir = this.checked ? 'rtl' : 'ltr'">
+      RTL mode
+    </label>
+  </p>
+  <section data-type="list">
+    <header dir="auto">With class="inline":</header>
+    <ul>
+      <li>
+        <gaia-radio name="first" class="inline"></gaia-radio>
+        <gaia-radio name="first" checked class="inline"></gaia-radio>
+      </li>
+      <li>
+        <gaia-radio name="second" class="danger inline"></gaia-radio>
+        <gaia-radio name="second" checked class="danger inline"></gaia-radio>
+      </li>
+    </ul>
+    <header dir="auto">With an inner label:</header>
+    <ul role="menu">
+      <li role="presentation">
+        <gaia-radio name="third" checked>
+          <label>Here is the first option</label>
+        </gaia-radio>
+      </li>
+      <li role="presentation">
+        <gaia-radio name="third">
+          <label>Here is the second option</label>
+        </gaia-radio>
+      </li>
+      <li role="presentation">
+        <gaia-radio name="third" class="truncate">
+          <p>Here is a truncated option. Here is a truncated option. Here is a truncated option. Here is a truncated option. Here is a truncated option.</p>
+        </gaia-radio>
+      </li>
+    </ul>
+    <header dir="auto">With class="checkone":</header>
+    <ul role="menu">
+      <li role="presentation">
+        <gaia-radio name="fourth" class="checkone" checked>
+          <label>Here is the first option</label>
+        </gaia-radio>
+      </li>
+      <li role="presentation">
+        <gaia-radio name="fourth" class="checkone">
+          <label>Here is the second option</label>
+        </gaia-radio>
+      </li>
+    </ul>
+    <header dir="auto">With class="split"</header>
+    <ul role="menu">
+      <li role="presentation">
+        <gaia-radio name="fourth" class="split" checked>
+          <label class="split">A split label.</label>
+        </gaia-radio>
+      </li>
+    </ul>
+  </section>
+  <div id="result"></div>
+</body>
+</html>

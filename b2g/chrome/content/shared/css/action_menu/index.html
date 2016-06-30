@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <title>Action menu</title>
+  <meta name="description" content="Presenting a list of actions related to the App content">
+
+  <link rel="stylesheet" href="../action_menu.css">
+  <!--
+    - These <style> and <script> elements are only used for the example code;
+    - they are not required for the real use case.
+    -->
+  <style type="text/css">
+    html, body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      font-size: 10px;
+      background-color: #fff;
+    }
+    body {
+      background: none;
+    }
+  </style>
+  <script>
+    window.onkeypress = event => {
+      var dir = document.documentElement.dir;
+      document.documentElement.dir = (dir === 'ltr') ? 'rtl' : 'ltr';
+    };
+  </script>
+</head>
+<body role="application">
+  <form role="dialog" data-type="action">
+    <header><span class="icon icon-back"></span>Title</header> <!-- this header is optional -->
+    <menu type="toolbar">
+      <button>Action 1</button>
+      <button disabled> Action 2 (disabled) </button>
+      <button> Action 3. </button>
+      <button> الولايات 4</button>
+      <button disabled> Action 5 (disabled) </button>
+      <button> Action 6 </button>
+      <button> Action 7 </button>
+      <button disabled> Action 8 (disabled) </button>
+      <button> Action 9 </button>
+      <button> Cancel </button>
+    </menu>
+  </form>
+
+</body>
+</html>
+
