@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+  <head>
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1">
+    <meta charset="utf-8">
+    <meta name="theme-group" content="theme-settings">
+    <meta name="theme-color" content="var(--header-background)">
+    <title>Settings</title>
+
+    <!-- Debug/DUMP method support -->
+    <script defer="" src="../shared/js/dump.js"></script>
+
+    <!-- Manifest -->
+    <link rel="manifest" href="manifest.webapp">
+
+    <!-- Common style -->
+    <link rel="stylesheet" type="text/css" href="../shared/css/headers.css">
+    <link rel="stylesheet" type="text/css" href="../shared/css/status.css">
+    <link rel="stylesheet" type="text/css" href="../shared/css/buttons.css">
+    <link rel="stylesheet" type="text/css" href="../shared/css/input_areas.css">
+
+    <!-- Specific style -->
+    <link rel="stylesheet" type="text/css" href="style/lists.css">
+    <link rel="stylesheet" type="text/css" href="style/icons.css">
+    <link rel="stylesheet" type="text/css" href="style/settings.css">
+    
+    <link rel="stylesheet" type="text/css" href="style/settings_phone.css" data-device-type="phone">
+    <link rel="stylesheet" type="text/css" href="style/dialog.css">
+    <link rel="stylesheet" type="text/css" href="style/icc.css">
+    <!-- Panel Stylesheets
+    <link rel="stylesheet" type="text/css" href="../shared/elements/gaia-icons/bidi-helper.css">
+    <link rel="stylesheet" type="text/css" href="../shared/css/confirm.css"/>
+    <link rel="stylesheet" type="text/css" href="../shared/css/progress_activity.css"/>
+    <link rel="stylesheet" type="text/css" href="style/homescreens.css"/>
+    <link rel="stylesheet" type="text/css" href="style/achievements.css"/>
+    <link rel="stylesheet" type="text/css" href="style/apps.css"/>
+    <link rel="stylesheet" type="text/css" href="style/screen_lock.css"/>
+    <link rel="stylesheet" type="text/css" href="style/simcard.css"/>
+    <link rel="stylesheet" type="text/css" href="style/updates.css"/>
+    <link rel="stylesheet" type="text/css" href="style/downloads.css"/>
+    <link rel="stylesheet" type="text/css" href="style/developer_service_workers.css"/>
+    <script defer="" src="../shared/elements/gaia_buttons/script.js"></script>
+    <script defer="" src="../shared/elements/gaia_confirm/script.js"></script>
+    <script defer="" src="../shared/elements/gaia_menu/script.js"></script>
+    -->
+
+    <!-- Shared resources
+    <link rel="resource" type="application/json" href="../shared/resources/tz.json"/>
+    <link rel="resource" type="application/json" href="../shared/resources/apn.json"/>
+    <link rel="resource" type="application/json" href="../shared/resources/apn_tz.json"/>
+    <link rel="resource" type="application/json" href="../shared/resources/languages.json"/>
+    <link rel="resource" type="application/json" href="../shared/resources/media/ringtones/"/>
+    <link rel="resource" type="application/json" href="../shared/resources/media/notifications/"/>
+    <link rel="resource" type="image/png" href="../shared/resources/branding/privacy_sprite.png"/>
+    <link rel="resource" type="application/json" href="../shared/js/search_providers.json"/>
+    -->
+
+    <!-- Components -->
+    <script defer="" src="../shared/elements/config.js"></script>
+    <link rel="stylesheet" type="text/css" href="../shared/elements/gaia-icons/gaia-icons.css">
+    <link rel="stylesheet" type="text/css" href="../shared/elements/gaia-theme/gaia-theme.css" data-device-type="phone">
+    
+    <script defer="" src="../shared/elements/gaia-header/dist/gaia-header.js"></script>
+    <script defer="" src="../shared/js/component_utils.js"></script>
+    <script defer="" src="../shared/elements/gaia_checkbox/script.js"></script>
+    <script defer="" src="../shared/elements/gaia_menu/script.js"></script>
+    <script defer="" src="../shared/elements/gaia_radio/script.js"></script>
+    <script defer="" src="../shared/elements/gaia_switch/script.js"></script>
+
+    <!-- Localization -->
+    <meta name="defaultLanguage" content="en-US">
+    <meta name="availableLanguages" content="en-US:201605291008, fr-x-psaccent:201605291008, ar-x-psbidi:201605291008">
+
+    <link rel="localization" href="locales-obj/index.{locale}.json">
+
+    <script src="../shared/js/intl/l20n.js"></script>
+    <script src="../shared/js/moz_intl.js"></script>
+    <script defer="" src="../shared/js/date_time_helper.js"></script>
+
+    <!-- Lazy loader -->
+    <script src="../shared/js/lazy_loader.js"></script>
+
+    <!-- Screen layout watcher -->
+    <script defer="" src="../shared/js/screen_layout.js"></script>
+  <meta content="2.5" name="appVersion"></head>
+  <body class="skin-organic uninit theme-settings">
+    <!--
+      - Lazy-Loading: to avoid parsing all settings panels before necessary, the
+      - HTML markup is included in a comment node and applied with `.innerHTML'
+      - when the sub-panel is loaded.
+      -
+      - When a panel includes <script> nodes, these scripts might require all
+      - sub-panels to be loaded to work properly. We rely on the panel ID to get
+      - its dependencies, e.g. the #wifi panel depends on all panels matching
+      - the « section[id^="wifi-"] » selector.
+      -
+      - Long story short: BE VERY CAREFUL WHEN CHANGING A SECTION ID!
+      -
+      - Regarding data-require-sub-panels: This is a temporary declarative way
+      - to say that a panel requires the all subpanels which match the pattern
+      - 'section[id^="' + panel.id + '-"]' to be loaded before loading.
+      - This is to be removed soon in bug 922658.
+      -->
+
+    <!--
+      - Note: the panels are stacked in reverse order on purpose - the main
+      - panel always comes last.  With this order, no 'z-index' rule is required
+      - to handle the panel transitions.
+      -->
+
+    <!-- Connectivity :: Wi-Fi :: Network Status -->
+    <section role="region" class="dialog" id="wifi-status"><!--
+
+    <gaia-header>
+      <button type="reset"><span data-icon="close" data-l10n-id="closeButton"></span></button>
+      <h1 data-ssid=""> Network Status </h1>
+      <button type="submit"><span data-l10n-id="forget"></span></button>
+    </gaia-header>
+
+    <div>
+      <ul>
+        <li>
+          <a>
+            <span data-l10n-id="security"></span>
+            <span data-security=""></span>
+          </a>
+        </li>
+        <li>
+          <a>
+            <span data-l10n-id="signalStrength"></span>
+            <span data-signal=""></span>
+          </a>
+        </li>
+        <li>
+          <a>
+            <span data-l10n-id="ipAddress"></span>
+            <span data-ip=""></span>
+          </a>
+        </li>
+        <li>
+          <a>
+            <span data-l10n-id="linkSpeed"></span>
+            <span data-speed=""></span>
+          </a>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/wifi_status/panel"></panel>
+
+  --></section>
+    <!-- Connectivity :: Wi-Fi :: Network Authentication -->
+    <section role="region" class="dialog" id="wifi-auth"><!--
+
+    <gaia-header>
+      <button type="reset"><span data-icon="close" data-l10n-id="closeButton"></span></button>
+      <h1 data-ssid=""></h1>
+      <button type="submit"><span data-l10n-id="ok"></span></button>
+    </gaia-header>
+
+    <div>
+      <ul>
+        <li>
+          <a>
+            <span data-l10n-id="security"></span>
+            <span data-security="">WPA-PSK</span>
+          </a>
+        </li>
+        <li>
+          <a>
+            <span data-l10n-id="signalStrength"></span>
+            <span data-signal="">good</span>
+          </a>
+        </li>
+        <li class="eap">
+          <p data-l10n-id="eap">EAP method</p>
+          <span class="button icon icon-dialog" data-eapmethod="">
+            <select>
+              <option value="SIM">SIM</option>
+              <option value="PEAP">PEAP</option>
+              <option value="TTLS">TTLS</option>
+            </select>
+          </span>
+        </li>
+        <li class="auth-phase2">
+          <p data-l10n-id="auth-phase2"></p>
+          <span class="button icon icon-dialog">
+            <select>
+              <option value="No">No</option>
+              <option value="PAP">PAP</option>
+              <option value="MSCHAP">MSCHAP</option>
+              <option value="MSCHAPV2">MSCHAP V2</option>
+              <option value="GTC">GTC</option>
+            </select>
+          </span>
+        </li>
+        <li class="identity">
+          <p data-l10n-id="wifi-auth-username"></p>
+          <input data-ignore="" name="identity" dir="auto" type="text">
+        </li>
+        <li class="password">
+          <p data-l10n-id="wifi-auth-password"></p>
+          <input data-ignore="" name="password" maxlength="63" x-inputmode="verbatim" type="password">
+          <gaia-checkbox data-ignore="" name="show-pwd" id="pwd-auth" class="inline">
+            <label data-l10n-id="showPassword"></label>
+          </gaia-checkbox>
+        </li>
+        <li class="server-certificate">
+          <p data-l10n-id="server-certificate"></p>
+          <span class="button icon icon-dialog">
+            <select>
+              <option value="none">--</option>
+            </select>
+          </span>
+        </li>
+        <li class="description server-certificate-description">
+          <p data-l10n-id="import-certificate-msg"></p>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/wifi_auth/panel"></panel>
+
+  --></section>
+    <!-- Connectivity :: Wi-Fi :: Join Hidden Network -->
+    <section role="region" class="dialog" id="wifi-joinHidden"><!--
+
+    <gaia-header>
+      <button type="reset"><span data-icon="close" data-l10n-id="closeButton"></span></button>
+      <h1 data-l10n-id="authentication-header"></h1>
+      <button type="submit"><span data-l10n-id="ok"></span></button>
+    </gaia-header>
+
+    <div>
+      <ul>
+        <li>
+          <p data-l10n-id="ssid-name"></p>
+          <input data-ignore="" name="ssid" dir="auto" type="text">
+        </li>
+        <li>
+          <p data-l10n-id="security"></p>
+          <span class="button icon icon-dialog">
+            <select name="security">
+              <option data-l10n-id="securityNone"></option>
+              <option>WEP</option>
+              <option selected="">WPA-PSK</option>
+              <option>WPA-EAP</option>
+            </select>
+          </span>
+        </li>
+        <li class="eap">
+          <p data-l10n-id="eap"></p>
+          <span class="button icon icon-dialog" data-eapmethod="">
+            <select name="eap">
+              <option value="SIM">SIM</option>
+              <option value="PEAP">PEAP</option>
+              <option value="TTLS">TTLS</option>
+            </select>
+          </span>
+        </li>
+        <li class="auth-phase2">
+          <p data-l10n-id="auth-phase2"></p>
+          <span class="button icon icon-dialog">
+            <select>
+              <option value="No">No</option>
+              <option value="PAP">PAP</option>
+              <option value="MSCHAP">MSCHAP</option>
+              <option value="MSCHAPV2">MSCHAP V2</option>
+              <option value="GTC">GTC</option>
+            </select>
+          </span>
+        </li>
+        <li class="identity">
+          <p data-l10n-id="wifi-join-username"></p>
+          <input data-ignore="" name="identity" dir="auto" type="text">
+        </li>
+        <li class="password">
+          <p data-l10n-id="wifi-join-password"></p>
+          <input data-ignore="" name="password" maxlength="63" type="password">
+          <gaia-checkbox data-ignore="" name="show-pwd" id="pwd-joinHidden" class="inline">
+            <label data-l10n-id="showPassword"></label>
+          
+        </gaia-checkbox></li>
+        <li class="server-certificate">
+          <p data-l10n-id="server-certificate"></p>
+          <span class="button icon icon-dialog">
+            <select>
+              <option value="none">--</option>
+            </select>
+          </span>
+        </li>
+        <li class="description server-certificate-description">
+          <p data-l10n-id="import-certificate-msg"></p>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/wifi_join_hidden/panel"></panel>
+
+  --></section>
+    <!-- Connectivity :: Wi-Fi :: WPS -->
+    <section role="region" class="dialog" id="wifi-wps"><!--
+
+    <gaia-header>
+      <button type="reset"><span data-icon="close" data-l10n-id="closeButton"></span></button>
+      <h1 data-l10n-id="wpsMessage-header"></h1>
+      <button type="submit"><span data-l10n-id="ok">OK</span></button>
+    </gaia-header>
+
+    <div>
+      <header>
+        <h2 data-l10n-id="wpsMethodSelection"></h2>
+      </header>
+      <ul>
+        <li>
+          <gaia-radio data-setting="wifi.wps.method" name="wpsMethodSelection" value="pbc" checked="">
+            <label data-l10n-id="wpsPbcLabel"></label>
+          </gaia-radio>
+        </li>
+        <li>
+          <gaia-radio data-setting="wifi.wps.method" name="wpsMethodSelection" value="myPin">
+            <label data-l10n-id="wpsMyPinLabel"></label>
+          </gaia-radio>
+        </li>
+        <li hidden="">
+          <gaia-radio data-setting="wifi.wps.method" name="wpsMethodSelection" value="apPin">
+            <label data-l10n-id="wpsApPinLabel"></label>
+          </gaia-radio>
+        </li>
+        <li class="wifi-wps-pin-area">
+          <p data-l10n-id="wpsPinDescription"></p>
+          <input x-inputmode="digit" size="8" maxlength="8" type="password">
+        </li>
+        <li class="wifi-wps-pin-aps">
+          <p data-l10n-id="wpsPinAps"></p>
+          <span class="button icon icon-dialog">
+            <select></select>
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/wifi_wps/panel"></panel>
+
+  --></section>
+    <!-- Connectivity :: Wi-Fi :: Saved Networks -->
+    <section role="region" id="wifi-manageNetworks"><!--
+
+    <gaia-header action="back" data-href="#wifi">
+      <h1 data-l10n-id="manageNetworks-header"></h1>
+    </gaia-header>
+
+    <div>
+      <ul>
+        <li>
+          <span data-l10n-id="macAddress"></span>
+          <small data-name="deviceinfo.mac"></small>
+        </li>
+      </ul>
+
+      <header>
+        <h2 data-l10n-id="knownNetworks"></h2>
+      </header>
+      <ul class="wifi-knownNetworks" data-state="ready">
+      </ul>
+
+      <header>
+        <h2 data-l10n-id="hiddenNetworks"></h2>
+      </header>
+      <ul>
+        <li>
+          <a class="menu-item joinHidden" href="#">
+            <span data-l10n-id="joinHiddenNetwork"></span>
+          </a>
+        </li>
+      </ul>
+    </div>
+
+    <form role="dialog" data-type="confirm" hidden="">
+      <section>
+        <h1 data-l10n-id="forgetNetwork-confirmation"></h1>
+        <p data-l10n-id="forgetNetwork-dialog"></p>
+      </section>
+      <menu>
+        <button data-l10n-id="cancel" type="reset"></button>
+        <button data-l10n-id="device-option-confirm" id="confirm-option" class="danger"></button>
+      </menu>
+    </form>
+
+    <panel data-path="panels/wifi_manage_networks/panel"></panel>
+
+  --></section>
+    <!-- Connectivity :: Wi-Fi :: Manage Certificates -->
+    <section role="region" id="wifi-manageCertificates"><!--
+
+    <gaia-header action="back" data-href="#wifi">
+      <h1 data-l10n-id="manageCertificates-header"></h1>
+    </gaia-header>
+
+    <div>
+      <header>
+        <h2 data-l10n-id="certificateList"></h2>
+      </header>
+      <ul class="wifi-certificateList">
+      </ul>
+      <ul class="operate-certificate">
+        <li>
+          <button class="icon deleteCertificate" data-l10n-id="deleteCertificate" disabled="true"></button>
+        </li>
+        <li>
+          <a class="menu-item importCertificate" href="#wifi-selectCertificateFile">
+            <span data-l10n-id="importCertificate"></span>
+          </a>
+        </li>
+      </ul>
+    </div>
+
+    <form role="dialog" data-type="confirm" class="certificate-deletion-failed" hidden="">
+      <section>
+        <h1 data-l10n-id="certificate-deletion-failed"></h1>
+        <p data-l10n-id="certificate-deletion-failed-description"></p>
+      </section>
+      <menu>
+        <button data-l10n-id="ok" class="full danger" id="certificate-deletion-failed-confirm"></button>
+      </menu>
+    </form>
+
+    <panel data-path="panels/wifi_manage_certificates/panel"></panel>
+
+  --></section>
+    <!-- Connectivity :: Wi-Fi :: Select Certificate File -->
+    <section role="region" id="wifi-selectCertificateFile"><!--
+
+    <gaia-header action="back" data-href="#wifi-manageCertificates">
+      <h1 data-l10n-id="selectCertificateFile"></h1>
+    </gaia-header>
+
+    <div>
+      <ul class="wifi-certificate-files-List">
+      </ul>
+    </div>
+
+    <panel data-path="panels/wifi_select_certificate_file/panel"></panel>
+
+  --></section>
+    <!-- Connectivity :: Wi-Fi :: Enter Certificate Nickname -->
+    <section role="region" class="dialog" id="wifi-enterCertificateNickname"><!--
+
+    <gaia-header>
+      <button type="reset"><span data-icon="close" data-l10n-id="closeButton"></span></button>
+      <h1 data-l10n-id="enterCertificateNickname"></h1>
+      <button type="submit"><span data-l10n-id="done"></span></button>
+    </gaia-header>
+
+    <div>
+      <ul>
+        <li class="nickname">
+          <p data-l10n-id="nickname"></p>
+          <input class="certificate-file-nickname" dir="auto" type="text">
+        </li>
+        <li class="description">
+          <p data-l10n-id="enter-certificate-name-msg"></p>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/wifi_enter_certificate_nickname/panel"></panel>
+
+  --></section>
+    <!-- Connectivity :: Wi-Fi -->
+    <section role="region" id="wifi"><!--
+
+    <gaia-header action="back" data-href="#root">
+      <h1 data-l10n-id="wifi-header"></h1>
+    </gaia-header>
+
+    <div>
+      <ul>
+        <li class="wifi-enabled">
+          <gaia-switch data-ignore="">
+            <label data-l10n-id="wifi"></label>
+          </gaia-switch>
+        </li>
+        <li hidden="">
+          <gaia-checkbox name="wifi.notification">
+            <label data-l10n-id="networkNotification"></label>
+          </gaia-checkbox>
+          <small data-l10n-id="networkNotification-expl" class="explanation"></small>
+        </li>
+      </ul>
+
+      <header>
+        <h2 data-l10n-id="availableNetworks"></h2>
+      </header>
+      <ul class="wifi-availableNetworks" data-state="off">
+        <li class="explanation" data-state="off" data-l10n-id="wifi-disabled"></li>
+        <li data-state="on">
+          <progress></progress><span data-l10n-id="scanning"></span>
+        </li>
+        <li data-state="ready">
+          <button data-l10n-id="scanNetworks"></button>
+        </li>
+      </ul>
+
+      <header>
+        <h2 data-l10n-id="advancedSettings"></h2>
+      </header>
+      <ul>
+        <li>
+          <gaia-switch name="wifi.sleepMode">
+            <label data-l10n-id="wifi-sleep"></label>
+            <details data-l10n-id="wifi-sleep-description"></details>
+          </gaia-switch>
+        </li>
+        <li>
+          <a class="menu-item" href="#wifi-manageNetworks">
+            <span data-l10n-id="manageNetworks"></span>
+          </a>
+        </li>
+        <li>
+          <a class="menu-item" href="#wifi-manageCertificates">
+            <span data-l10n-id="manageCertificates"></span>
+          </a>
+        </li>
+        <li class="wps-column">
+          <a class="menu-item" href="#">
+            <span data-l10n-id="wpsMessage"></span>
+            <small data-l10n-id="wpsDescription2"></small>
+          </a>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/wifi/panel"></panel>
+  --></section>
+    <!-- Personalization :: Display -->
+    <section role="region" id="display"><!--
+
+    <gaia-header action="back" data-href="#root">
+      <h1 data-l10n-id="display-header"></h1>
+    </gaia-header>
+
+    <div>
+      <ul>
+        <li>
+          <gaia-switch name="screen.orientation.lock">
+            <label data-l10n-id="lock-orientation"></label>
+          </gaia-switch>
+        </li>
+      </ul>
+
+      <header>
+        <h2 id="brightness-heading" data-l10n-id="brightness"></h2>
+      </header>
+      <ul>
+        <li class="brightness-auto">
+          <gaia-checkbox name="screen.automatic-brightness">
+            <label data-l10n-id="brightness-autoAdjust"></label>
+          </gaia-checkbox>
+        </li>
+        <li class="brightness-manual">
+          <label class="range-icons brightness">
+            <span data-icon="moon" aria-hidden="true"></span>
+            <input aria-labelledby="brightness-heading" step="0.01" min="0.1" value="0.5" max="1" type="range">
+            <span data-icon="brightness" aria-hidden="true"></span>
+          </label>
+        </li>
+        <li id="screen-timeout">
+          <p data-l10n-id="screen-timeout"></p>
+          <span class="button icon icon-dialog">
+            <select name="screen.timeout" data-value-type="integer">
+              <option value="60" data-l10n-id="one-minute" selected=""></option>
+              <option value="120" data-l10n-id="two-minutes"></option>
+              <option value="300" data-l10n-id="five-minutes"></option>
+              <option value="600" data-l10n-id="ten-minutes"></option>
+              <option value="0" data-l10n-id="screen-timeout-never"></option>
+            </select>
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/display/panel"></panel>
+
+  --></section>
+    <!-- Personalization :: Date & Time -->
+    <section role="region" id="dateTime"><!--
+
+    <gaia-header action="back" data-href="#root">
+      <h1 data-l10n-id="dateAndTime-header"></h1>
+    </gaia-header>
+
+    <div>
+      <ul class="time-auto" data-state="auto" hidden="">
+        <li>
+          <gaia-switch name="time.clock.automatic-update.enabled">
+            <label data-l10n-id="setTimeAutomatically"></label>
+          </gaia-switch>
+        </li>
+      </ul>
+      <ul class="time-manual">
+        <li>
+          <input class="date-picker" min="1970-1-1" max="2035-12-31" type="date">
+          <p data-l10n-id="dateMessage"></p>
+          <span class="clock-date button icon icon-dialog"></span>
+        </li>
+        <li>
+          <input class="time-picker" type="time">
+          <p data-l10n-id="timeMessage"></p>
+          <span class="clock-time button icon icon-dialog"></span>
+        </li>
+      </ul>
+
+      <header>
+        <h2 data-l10n-id="timezoneMessage"></h2>
+      </header>
+      <ul class="timezone">
+        <li class="timezone-picker">
+          <p data-l10n-id="tz-region"></p>
+          <span class="button icon icon-dialog">
+            <select class="timezone-region"></select>
+          </span>
+        </li>
+        <li class="timezone-picker">
+          <p data-l10n-id="tz-city"></p>
+          <span class="button icon icon-dialog">
+            <select class="timezone-city"></select>
+          </span>
+        </li>
+        <li class="timezone-info" hidden="">
+          <span class="timezone-info-text"></span>
+        </li>
+      </ul>
+
+      <header>
+        <h2 data-l10n-id="time-format"></h2>
+      </header>
+      <ul class="time-format-auto" data-state="auto">
+        <li>
+          <gaia-switch checked="">
+            <label data-l10n-id="useDefaultTimeFormat"></label>
+          </gaia-switch>
+        </li>
+      </ul>
+      <ul class="timeformat disabled">
+        <li>
+          <p data-l10n-id="time-format-time"></p>
+          <span class="button icon icon-dialog">
+            <select class="time-format-time"></select>
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/date_time/panel"><panel>
+
+  </panel></panel>--></section>
+
+    <!-- SettingsDialog :: AlertDialog -->
+    <section role="region" class="dialog" id="settings-alert-dialog"><!--
+    <gaia-confirm>
+      <h1 class="settings-dialog-title" data-l10n-id="settings-alert-dialog-header"></h1>
+      <p class="settings-dialog-message"></p>
+      <gaia-buttons skin="dark">
+        <button type="submit" data-l10n-id="ok" class="recommend full"></button>
+      </gaia-buttons>
+    </gaia-confirm>
+  --></section>
+    <!-- SettingsDialog :: ConFirmDialog -->
+    <section role="region" class="dialog" id="settings-confirm-dialog"><!--
+    <gaia-confirm>
+      <h1 class="settings-dialog-title" data-l10n-id="settings-confirm-dialog-header"></h1>
+      <p class="settings-dialog-message"></p>
+      <gaia-buttons skin="dark">
+        <button type="reset" data-l10n-id="cancel" class=""></button>
+        <button type="submit" data-l10n-id="ok" class="recommend"></button>
+      </gaia-buttons>
+    </gaia-confirm>
+  --></section>
+    <!-- SettingsDialog :: PromptDialog -->
+    <section role="region" class="dialog" id="settings-prompt-dialog"><!--
+    <form role="dialog" data-type="confirm">
+      <section>
+        <h1 class="settings-dialog-title" data-l10n-id="settings-prompt-dialog-header"></h1>
+        <p>
+          <input class="settings-dialog-input" type="text">
+          <span class="settings-dialog-message">
+        </span></p>
+      </section>
+      <menu>
+        <button type="reset" data-l10n-id="cancel" class=""></button>
+        <button type="submit" data-l10n-id="ok" class="recommend"></button>
+      </menu>
+    </form>
+  --></section>
+
+    <!-- templates -->
+    <!-- templates :: Messaging -->
+    <section role="region" id="template-messaging"><!--
+
+    <header>
+      <h2 data-l10n-id="cellBroadcastMessages"></h2>
+    </header>
+
+    <ul>
+      <li id="menuItem-cellBroadcast" aria-disabled="true">
+        <gaia-switch data-ignore="" disabled="">
+          <label data-l10n-id="cellBroadcast"></label>
+        </gaia-switch>
+      </li>
+      <li id="menuItem-emergencyAlert" aria-disabled="true">
+        <gaia-switch data-ignore="" disabled="">
+          <label data-l10n-id="emergencyAlert"></label>
+        </gaia-switch>
+      </li>
+    </ul>
+
+    <header>
+      <h2 data-l10n-id="messagingInformation"></h2>
+    </header>
+
+    <ul>
+      <li class="hint smsc">
+        <span data-l10n-id="messaging-SMSC"></span>
+        <p class="explanation"></p>
+      </li>
+    </ul>
+
+  --></section>
+
+    <!-- Main List -->
+    <section role="region" id="root"><!--
+
+    <gaia-header id="main-header">
+      <h1 id="main-list-title" data-l10n-id="settings"></h1>
+      <a id="activityDoneButton" role="menuitem" data-l10n-id="done"></a>
+    </gaia-header>
+
+    <div>
+      <header data-category="connectivity">
+        <h2 data-l10n-id="networkAndConnectivity"></h2>
+      </header>
+      <ul>
+        <li data-category="connectivity">
+          <a id="menuItem-wifi" class="menu-item" data-icon="wifi-4" href="#wifi" data-l10n-id="wifiSection" aria-describedby="wifi-desc">
+            <span data-l10n-id="wifi"></span>
+            <small id="wifi-desc" class="menu-item-desc"></small>
+          </a>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/root/panel"><panel>
+
+  </panel></panel>--></section>
+
+    <div class="settings-dialog-overlay" hidden=""></div>
+
+    <script src="js/startup.js"></script>
+  </body>
+
+</html>

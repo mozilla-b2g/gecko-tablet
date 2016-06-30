@@ -1,0 +1,51 @@
+<element name="display" extends="section">
+  <template>
+
+    <gaia-header action="back" data-href="#root">
+      <h1 data-l10n-id="display-header"></h1>
+    </gaia-header>
+
+    <div>
+      <ul>
+        <li>
+          <gaia-switch name="screen.orientation.lock">
+            <label data-l10n-id="lock-orientation"></label>
+          </gaia-switch>
+        </li>
+      </ul>
+
+      <header>
+        <h2 id="brightness-heading" data-l10n-id="brightness"></h2>
+      </header>
+      <ul>
+        <li class="brightness-auto">
+          <gaia-checkbox name="screen.automatic-brightness">
+            <label data-l10n-id="brightness-autoAdjust"></label>
+          </gaia-checkbox>
+        </li>
+        <li class="brightness-manual">
+          <label class="range-icons brightness">
+            <span data-icon="moon" aria-hidden="true"></span>
+            <input aria-labelledby="brightness-heading" type="range" step="0.01" min="0.1" value="0.5" max="1" />
+            <span data-icon="brightness" aria-hidden="true"></span>
+          </label>
+        </li>
+        <li id="screen-timeout">
+          <p data-l10n-id="screen-timeout"></p>
+          <span class="button icon icon-dialog">
+            <select name="screen.timeout" data-value-type="integer">
+              <option value="60"  data-l10n-id="one-minute" selected></option>
+              <option value="120" data-l10n-id="two-minutes"></option>
+              <option value="300" data-l10n-id="five-minutes"></option>
+              <option value="600" data-l10n-id="ten-minutes"></option>
+              <option value="0"   data-l10n-id="screen-timeout-never"></option>
+            </select>
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <panel data-path="panels/display/panel"></panel>
+
+  </template>
+</element>
