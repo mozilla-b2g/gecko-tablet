@@ -1,0 +1,31 @@
+/* ----------------------------------
+ * Status
+ * ---------------------------------- */
+
+html[dir="ltr"] section[role="status"] [dir] { text-align: left; }
+html[dir="rtl"] section[role="status"] [dir] { text-align: right; }
+
+section[role="status"] {
+  background-color: #4d4d4d;
+  overflow: hidden;
+  position: absolute;
+  z-index: 100;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  color: #fff;
+}
+html[dir="ltr"] section[role="status"] { background-position: left top; }
+html[dir="rtl"] section[role="status"] { background-position: right top; }
+
+section[role="status"] p {
+  font-size: 1.8rem;
+  font-weight: normal;
+  line-height: 2.2rem;
+  margin: 1rem 3rem;
+  padding: 0;
+}
+
+section[role="status"] p strong {
+  font-weight: 500;
+}

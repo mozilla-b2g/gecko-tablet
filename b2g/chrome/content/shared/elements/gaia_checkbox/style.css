@@ -1,0 +1,71 @@
+gaia-checkbox {
+  display: inline-block;
+  width: 100%;
+}
+
+#checkbox {
+  display: block;
+  width: 100%;
+  /* Normal gaia-checkboxes are the heights of their parents. */
+  height: 100%;
+  position: relative;
+  background: none;
+}
+
+#checkbox span {
+  font-size: 1.9rem;
+  font-weight: normal;
+  color: var(--label-color);
+  line-height: 3rem;
+  box-sizing: border-box;
+  display: block;
+  min-width: 2.2rem;
+  min-height: 2.2rem;
+  width: 100%;
+  padding-inline-end: 2.2rem;
+  /* Override inheriting nowrap from legacy lists building blocks. */
+  white-space: normal;
+}
+
+/* Inline gaia-checkboxes are the heights of their parents. */
+#checkbox.inline {
+  display: inline-block;
+  vertical-align: middle;
+}
+
+#checkbox:not(.invisible) span:after {
+  content: '';
+  position: absolute;
+  offset-inline-end: 0;
+  top: 50%;
+  margin: -1.2rem 0 0;
+  margin-inline-start: -1.2rem;
+  width: 2.2rem;
+  height: 2.2rem;
+}
+
+#checkbox.inline span {
+  padding-inline-start: 3rem;
+  padding-inline-end: 0;
+  height: auto;
+}
+
+#checkbox.inline span:after {
+  offset-inline-start: 1.2rem;
+  offset-inline-end: unset;
+  margin: -1.2rem 0 0;
+  margin-inline-start: -1.2rem;
+}
+
+#checkbox:not(.invisible) span:after {
+  background: url(images/default.png) no-repeat center top / 2.2rem auto;
+}
+
+#checkbox.checked span:after {
+  background-position: center bottom;
+}
+
+/* 'Dangerous' checkboxes */
+#checkbox.danger span:after {
+  background-image: url(images/danger.png);
+}
