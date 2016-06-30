@@ -20,7 +20,6 @@ task:
       relengAPIProxy: true
     env:
       TARGET: 'aries'
-      MOZHARNESS_CONFIG: b2g/taskcluster-phone-eng.py
   extra:
     treeherderEnv:
       - production

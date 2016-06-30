@@ -10,7 +10,6 @@ config = {
         'checkout-sources',
         'get-blobs',
         'build',
-        'build-symbols',
         'prep-upload'
     ],
     "upload": {
@@ -25,7 +24,8 @@ config = {
         "BOWER_FLAGS": "--allow-root",
         "WGET_OPTS": "-c -q",
         "HG_SHARE_BASE_DIR": HG_SHARE_BASE_DIR,
-        "B2G_ANDROID_NDK_PATH": "/home/worker/workspace/gecko/android-ndk",
+        "B2G_ANDROID_NDK_PATH": "%(b2g_repo)s/android-ndk",
+        "ANDROIDFS_DIR": "%(b2g_repo)s/backup-%(b2g_target)s",
     },
     "is_automation": True,
     "repo_remote_mappings": {
