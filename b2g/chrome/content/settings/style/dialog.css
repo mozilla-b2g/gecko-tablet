@@ -1,0 +1,58 @@
+
+html[dir="ltr"] section[role="region"].dialog [dir] { text-align: left; }
+html[dir="rtl"] section[role="region"].dialog [dir] { text-align: right; }
+.settings-dialog-overlay {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #000000;
+  opacity: 0.5;
+  z-index: 2;
+}
+html[dir="ltr"] section[role="region"].dialog,
+html[dir="rtl"] section[role="region"].dialog {
+  
+  transform: unset;
+  z-index: 3;
+}
+body[data-ready="true"] section[role="region"].dialog {
+  transition: transform var(--transition-duration),
+              visibility var(--transition-duration),
+              opacity var(--transition-duration);
+}
+section[role="region"].dialog.bottom-up {
+  transform: translateY(100%);
+}
+section[role="region"].dialog.bottom-up.current {
+  transform: translateY(0);
+}
+section[role="region"].dialog.zoom-in {
+  transform: scale(0);
+}
+section[role="region"].dialog.zoom-in.current {
+  transform: scale(1);
+}
+section[role="region"].dialog.zoom-in-80 {
+  transform: translate(-50%, -50%) scale(0);
+  top: 50%;
+  left: 50%; 
+  width: 80%;
+  height: 80%;
+}
+section[role="region"].dialog.zoom-in-80.current {
+  transform: translate(-50%, -50%) scale(1);
+}
+section[role="region"].dialog.zoom-out {
+  transform: scale(1);
+}
+section[role="region"].dialog.zoom-out.current {
+  transform: scale(0);
+}
+section[role="region"].dialog.fade {
+  opacity: 0;
+}
+section[role="region"].dialog.fade.current {
+  opacity: 1;
+}
