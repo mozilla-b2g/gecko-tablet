@@ -657,6 +657,12 @@ public:
     return mLoadInfo.mReportCSPViolations;
   }
 
+  void
+  SetReportCSPViolations(bool aReport)
+  {
+    mLoadInfo.mReportCSPViolations = aReport;
+  }
+
   bool
   XHRParamsAllowed() const
   {
