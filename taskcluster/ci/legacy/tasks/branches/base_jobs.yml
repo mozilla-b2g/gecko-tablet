@@ -20,6 +20,8 @@ builds:
     types:
       opt:
         task: tasks/builds/mulet_linux.yml
+      debug:
+        task: tasks/builds/mulet_linux_dbg.yml
   linux:
     platforms:
       - Linux
@@ -397,6 +399,8 @@ tests:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
         task: tasks/tests/mulet_mochitests.yml
+      tasks/builds/mulet_linux_dbg.yml:
+        task: tasks/tests/mulet_mochitests.yml
       tasks/builds/opt_linux64.yml:
         task: tasks/tests/fx_linux64_mochitest_plain_opt.yml
       tasks/builds/dbg_linux64.yml:
@@ -588,6 +592,8 @@ tests:
   reftest:
     allowed_build_tasks:
       tasks/builds/mulet_linux.yml:
+        task: tasks/tests/mulet_reftests.yml
+      tasks/builds/mulet_linux_dbg.yml:
         task: tasks/tests/mulet_reftests.yml
       tasks/builds/opt_linux64.yml:
         task: tasks/tests/fx_linux64_reftest_opt.yml
