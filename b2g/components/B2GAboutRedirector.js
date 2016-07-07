@@ -17,10 +17,24 @@ var modules = {
     privileged: false,
     hide: true
   },
+  home: {
+    uri: "chrome://b2g/content/home/home.html",
+    privileged: true,
+    hide: true,
+    forceLoadInChild: true,
+    indexedDB: true
+  },
   neterror: {
     uri: "chrome://b2g/content/system/net_error.html",
     privileged: false,
     hide: true
+  },
+  newtab: {
+    uri: "chrome://b2g/content/newtab/newtab.html",
+    privileged: true,
+    hide: true,
+    forceLoadInChild: true,
+    indexedDB: true
   }
 };
 
@@ -36,12 +50,30 @@ B2GAboutRedirector.prototype = {
 
   // nsIAboutModule
   getURIFlags: function(aURI) {
-    let flags;
     let moduleInfo = this._getModuleInfo(aURI);
-    if (moduleInfo.hide)
-      flags = Ci.nsIAboutModule.HIDE_FROM_ABOUTABOUT;
+    let flags = Ci.nsIAboutModule.ALLOW_SCRIPT;
 
-    return flags | Ci.nsIAboutModule.ALLOW_SCRIPT;
+    if (moduleInfo.hide) {
+      flags |= Ci.nsIAboutModule.HIDE_FROM_ABOUTABOUT;
+    }
+
+    if (moduleInfo.safeForUntrusted) {
+      flags |= Ci.nsIAboutModule.URI_SAFE_FOR_UNTRUSTED_CONTENT;
+    }
+
+    if (moduleInfo.canLoadInChild) {
+      flags |= Ci.nsIAboutModule.URI_CAN_LOAD_IN_CHILD;
+    }
+
+    if (moduleInfo.forceLoadInChild) {
+      flags |= Ci.nsIAboutModule.URI_MUST_LOAD_IN_CHILD;
+    }
+
+    if (moduleInfo.indexedDB) {
+      flags |= Ci.nsIAboutModule.ENABLE_INDEXED_DB;
+    }
+
+    return flags;
   },
 
   newChannel: function(aURI, aLoadInfo) {
