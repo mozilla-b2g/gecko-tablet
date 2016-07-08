@@ -205,10 +205,15 @@ BrowserWindow.prototype.handleUrlBarBlur = function (e) {
  */
 BrowserWindow.prototype.handleUrlSubmit = function (e) {
   e.preventDefault();
-  if (this.urlBar.validity.valid) {
-    this.frame.src = this.urlBar.value;
+  var input = this.urlBar.value;
+  if (UrlHelper.isURL(input)) {
+    if (UrlHelper.hasScheme(input)) {
+      this.frame.src = input;
+    } else {
+     this.frame.src = 'http://' + input;
+    }
   } else {
-    this.frame.src = 'http://' + this.urlBar.value;
+    this.frame.src = 'https://google.com/search?q=' + input;
   }
   this.urlBar.blur();
 };
