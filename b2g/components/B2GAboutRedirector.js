@@ -35,6 +35,13 @@ var modules = {
     hide: true,
     forceLoadInChild: true,
     indexedDB: true
+  },
+  settings: {
+    uri: "chrome://b2g/content/settings/index.html",
+    privileged: true,
+    hide: true,
+    forceLoadInChild: true,
+    indexedDB: true
   }
 };
 
