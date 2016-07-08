@@ -65,6 +65,7 @@ contract @mozilla.org/network/protocol/about;1?what=certerror {920400b1-cf8f-476
 contract @mozilla.org/network/protocol/about;1?what=home {920400b1-cf8f-4760-a9c4-441417b15134}
 contract @mozilla.org/network/protocol/about;1?what=neterror {920400b1-cf8f-4760-a9c4-441417b15134}
 contract @mozilla.org/network/protocol/about;1?what=newtab {920400b1-cf8f-4760-a9c4-441417b15134}
+contract @mozilla.org/network/protocol/about;1?what=settings {920400b1-cf8f-4760-a9c4-441417b15134}
 
 #ifndef MOZ_GRAPHENE
 # FilePicker.js
