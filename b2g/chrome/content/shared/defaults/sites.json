@@ -11,6 +11,17 @@
     "background_color": "#3b5998"
   },
   {
+    "name": "Settings",
+    "icons": [{
+      "src": "chrome://b2g/content/settings/style/icons/settings_84.png",
+      "sizes": "75x75",
+      "type": "image/png"
+    }],
+    "start_url": "chrome://b2g/content/settings/index.html",
+    "theme_color": "#f4f4f4",
+    "background_color": "#f4f4f4"
+  },
+  {
     "name": "Twitter",
     "icons": [{
       "src": "chrome://b2g/content/shared/defaults/icons/twitter.png",
