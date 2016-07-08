@@ -72,9 +72,6 @@ chrome.jar:
   content/home/js                             (content/home/js/*.js)
   content/home/css                            (content/home/css/*.css)
 
-# Settings
-  content/settings                            (content/settings/*)
-
 # Keyboard
   content/keyboard/index.html                 (content/keyboard/index.html)
   content/keyboard/js/keyboard                (content/keyboard/js/keyboard/*.js)
@@ -94,10 +91,8 @@ chrome.jar:
   content/newtab/css/newtab.css               (content/newtab/css/newtab.css)
 
 # Shared
-  content/shared/js                           (content/shared/js/*)
-  content/shared/elements                     (content/shared/elements/*)
+  content/shared/js                           (content/shared/js/*.js)
   content/shared/css                          (content/shared/css/*.css)
   content/shared/defaults/sites.json          (content/shared/defaults/sites.json)
   content/shared/defaults/icons               (content/shared/defaults/icons/*.png)
   content/shared/images                       (content/shared/images/*.png)
-  content/shared/resources                    (content/shared/resources/*)

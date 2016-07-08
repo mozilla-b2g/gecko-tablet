@@ -1103,5 +1103,3 @@ pref("dom.audiochannel.audioCompeting", false);
 
 // Project tablet specific!!!
 pref("b2g.system_startup_url", "chrome://b2g/content/system/index.html");
-
-pref("dom.webcomponents.enabled", true);
