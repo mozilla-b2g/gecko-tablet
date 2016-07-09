@@ -2071,7 +2071,7 @@ class BaseCompiler
 
     void addInterruptCheck()
     {
-        if (mg_.args.useSignalHandlersForInterrupt)
+        if (mg_.usesSignal.forInterrupt)
             return;
 
         // FIXME - implement this.
@@ -2710,13 +2710,12 @@ class BaseCompiler
 #if defined(JS_CODEGEN_X64)
     // Copied from CodeGenerator-x64.cpp
     // TODO / CLEANUP - share with the code generator.
-
-    wasm::MemoryAccess
-    AsmJSMemoryAccess(uint32_t before, wasm::MemoryAccess::OutOfBoundsBehavior throwBehavior,
-                      uint32_t offsetWithinWholeSimdVector = 0)
+    MemoryAccess
+    WasmMemoryAccess(uint32_t before)
     {
-        return wasm::MemoryAccess(before, throwBehavior, wasm::MemoryAccess::WrapOffset,
-                                  offsetWithinWholeSimdVector);
+        if (isCompilingAsmJS())
+            return MemoryAccess(before, MemoryAccess::CarryOn, MemoryAccess::WrapOffset);
+        return MemoryAccess(before, MemoryAccess::Throw, MemoryAccess::DontWrapOffset);
     }
 #endif
 
@@ -2739,7 +2738,7 @@ class BaseCompiler
         // can't (yet) use the signal handlers.
 
 #if defined(ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB)
-        if (mg_.args.useSignalHandlersForOOB && !access.isAtomicAccess())
+        if (mg_.usesSignal.forOOB && !access.isAtomicAccess())
             return false;
 #endif
 
@@ -2760,6 +2759,11 @@ class BaseCompiler
 #endif
 
     void loadHeap(const MWasmMemoryAccess& access, RegI32 ptr, AnyReg dest) {
+        if (access.offset() > INT32_MAX) {
+            masm.jump(wasm::JumpTarget::OutOfBounds);
+            return;
+        }
+
 #if defined(JS_CODEGEN_X64)
         // CodeGeneratorX64::visitAsmJSLoadHeap()
 
@@ -2783,7 +2787,7 @@ class BaseCompiler
         }
         uint32_t after = masm.size();
 
-        masm.append(AsmJSMemoryAccess(before, wasm::MemoryAccess::CarryOn));
+        masm.append(WasmMemoryAccess(before));
         verifyHeapAccessDisassembly(before, after, IsLoad(true), access.accessType(), 0, srcAddr, dest);
 #else
         MOZ_CRASH("BaseCompiler platform hook: loadHeap");
@@ -2814,7 +2818,7 @@ class BaseCompiler
         }
         uint32_t after = masm.size();
 
-        masm.append(AsmJSMemoryAccess(before, wasm::MemoryAccess::CarryOn));
+        masm.append(WasmMemoryAccess(before));
         verifyHeapAccessDisassembly(before, after, IsLoad(false), access.accessType(), 0, dstAddr, src);
 #else
         MOZ_CRASH("BaseCompiler platform hook: storeHeap");
@@ -5210,8 +5214,7 @@ BaseCompiler::emitLoad(ValType type, Scalar::Type viewType)
     // TODO / OPTIMIZE: Disable bounds checking on constant accesses
     // below the minimum heap length.
 
-    MWasmMemoryAccess access(viewType, addr.align);
-    access.setOffset(addr.offset);
+    MWasmMemoryAccess access(viewType, addr.align, addr.offset);
 
     switch (type) {
       case ValType::I32: {
@@ -5260,8 +5263,7 @@ BaseCompiler::emitStore(ValType resultType, Scalar::Type viewType)
     // TODO / OPTIMIZE: Disable bounds checking on constant accesses
     // below the minimum heap length.
 
-    MWasmMemoryAccess access(viewType, addr.align);
-    access.setOffset(addr.offset);
+    MWasmMemoryAccess access(viewType, addr.align, addr.offset);
 
     switch (resultType) {
       case ValType::I32: {
@@ -5540,8 +5542,7 @@ BaseCompiler::emitStoreWithCoercion(ValType resultType, Scalar::Type viewType)
     // TODO / OPTIMIZE: Disable bounds checking on constant accesses
     // below the minimum heap length.
 
-    MWasmMemoryAccess access(viewType, addr.align);
-    access.setOffset(addr.offset);
+    MWasmMemoryAccess access(viewType, addr.align, addr.offset);
 
     if (resultType == ValType::F32 && viewType == Scalar::Float64) {
         RegF32 rv = popF32();
@@ -6195,7 +6196,7 @@ BaseCompiler::BaseCompiler(const ModuleGeneratorData& mg,
                            const ValTypeVector& locals,
                            FuncCompileResults& compileResults)
     : mg_(mg),
-      iter_(BaseCompilePolicy(), decoder),
+      iter_(decoder),
       func_(func),
       lastReadCallSite_(0),
       alloc_(compileResults.alloc()),
@@ -6399,7 +6400,7 @@ js::wasm::BaselineCompileFunction(IonCompileTask* task)
 
     // The MacroAssembler will sometimes access the jitContext.
 
-    JitContext jitContext(CompileRuntime::get(task->runtime()), &results.alloc());
+    JitContext jitContext(&results.alloc());
 
     // One-pass baseline compilation.
 

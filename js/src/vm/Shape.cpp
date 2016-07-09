@@ -1198,7 +1198,10 @@ JSObject::setFlags(ExclusiveContext* cx, BaseShape::Flag flags, GenerateShape ge
     if (!newShape)
         return false;
 
-    self->setShapeMaybeNonNative(newShape);
+    // The success of the |JSObject::ensureShape| call above means that |self|
+    // can be assumed to have a shape.
+    self->as<ShapedObject>().setShape(newShape);
+
     return true;
 }
 
@@ -1354,6 +1357,28 @@ BaseShape::traceShapeTable(JSTracer* trc)
     if (hasTable())
         table().trace(trc);
 }
+
+#ifdef DEBUG
+bool
+BaseShape::canSkipMarkingShapeTable(Shape* lastShape)
+{
+    // Check that every shape in the shape table will be marked by marking
+    // |lastShape|.
+
+    if (!hasTable())
+        return true;
+
+    uint32_t count = 0;
+    for (Shape::Range<NoGC> r(lastShape); !r.empty(); r.popFront()) {
+        Shape* shape = &r.front();
+        ShapeTable::Entry& entry = table().search<MaybeAdding::NotAdding>(shape->propid());
+        if (entry.isLive())
+            count++;
+    }
+
+    return count == table().entryCount();
+}
+#endif
 
 #ifdef JSGC_HASH_TABLE_CHECKS
 

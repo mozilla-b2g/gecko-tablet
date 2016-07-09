@@ -82,6 +82,7 @@ SessionStore.prototype = {
     this._sessionFileBackup.append("sessionstore.bak");
 
     this._loadState = STATE_STOPPED;
+    this._startupRestoreFinished = false;
 
     this._interval = Services.prefs.getIntPref("browser.sessionstore.interval");
     this._maxTabsUndo = Services.prefs.getIntPref("browser.sessionstore.max_tabs_undo");
@@ -214,6 +215,10 @@ SessionStore.prototype = {
                   selected: true
                 });
               }
+              // Normally, _restoreWindow() will have set this to true already,
+              // but we want to make sure it's set even in case of a restore failure.
+              this._startupRestoreFinished = true;
+              log("startupRestoreFinished = true (through notification)");
             }.bind(this)
           };
           Services.obs.addObserver(restoreCleanup, "sessionstore-windows-restored", false);
@@ -223,12 +228,20 @@ SessionStore.prototype = {
           this.restoreLastSession(data.sessionString);
         } else {
           // Not doing a restore; just send restore message
+          this._startupRestoreFinished = true;
+          log("startupRestoreFinished = true");
           Services.obs.notifyObservers(null, "sessionstore-windows-restored", "");
         }
         break;
       }
       case "Session:NotifyLocationChange": {
         let browser = aSubject;
+
+        if (browser.__SS_restoreReloadPending && this._startupRestoreFinished) {
+          delete browser.__SS_restoreReloadPending;
+          log("remove restoreReloadPending");
+        }
+
         if (browser.__SS_restoreDataOnLocationChange) {
           delete browser.__SS_restoreDataOnLocationChange;
           this._restoreZoom(browser.__SS_data.scrolldata, browser);
@@ -496,17 +509,10 @@ SessionStore.prototype = {
     aBrowser.removeEventListener("scroll", this, true);
     aBrowser.removeEventListener("resize", this, true);
 
-    let tabId = aWindow.BrowserApp.getTabForBrowser(aBrowser).id;
-
-    // If this browser is being restored, skip any session save activity
-    if (aBrowser.__SS_restore) {
-      log("onTabRemove() ran for zombie tab " + tabId + ", aNoNotification = " + aNoNotification);
-      return;
-    }
-
     delete aBrowser.__SS_data;
 
-    log("onTabRemove() ran for tab " + tabId + ", aNoNotification = " + aNoNotification);
+    log("onTabRemove() ran for tab " + aWindow.BrowserApp.getTabForBrowser(aBrowser).id +
+        ", aNoNotification = " + aNoNotification);
     if (!aNoNotification) {
       this.saveStateDelayed();
     }
@@ -542,8 +548,9 @@ SessionStore.prototype = {
   },
 
   onTabLoad: function ss_onTabLoad(aWindow, aBrowser) {
-    // If this browser is being restored, skip any session save activity
-    if (aBrowser.__SS_restore) {
+    // If this browser belongs to a zombie tab or the initial restore hasn't yet finished,
+    // skip any session save activity.
+    if (aBrowser.__SS_restore || !this._startupRestoreFinished || aBrowser.__SS_restoreReloadPending) {
       return;
     }
 
@@ -637,8 +644,9 @@ SessionStore.prototype = {
   },
 
   onTabInput: function ss_onTabInput(aWindow, aBrowser) {
-    // If this browser is being restored, skip any session save activity
-    if (aBrowser.__SS_restore) {
+    // If this browser belongs to a zombie tab or the initial restore hasn't yet finished,
+    // skip any session save activity.
+    if (aBrowser.__SS_restore || !this._startupRestoreFinished || aBrowser.__SS_restoreReloadPending) {
       return;
     }
 
@@ -696,8 +704,9 @@ SessionStore.prototype = {
       log("onTabScroll() clearing pending timeout");
     }
 
-    // If this browser is being restored, skip any session save activity.
-    if (aBrowser.__SS_restore) {
+    // If this browser belongs to a zombie tab or the initial restore hasn't yet finished,
+    // skip any session save activity.
+    if (aBrowser.__SS_restore || !this._startupRestoreFinished || aBrowser.__SS_restoreReloadPending) {
       return;
     }
 
@@ -744,11 +753,8 @@ SessionStore.prototype = {
 
     // Save some data that'll help in adjusting the zoom level
     // when restoring in a different screen orientation.
-    let viewportInfo = this._getViewportInfo(aWindow.outerWidth, aWindow.outerHeight, content);
-    scrolldata.zoom.autoSize = viewportInfo.autoSize;
-    log("onTabScroll() autoSize: " + scrolldata.zoom.autoSize);
-    scrolldata.zoom.windowWidth = aWindow.outerWidth;
-    log("onTabScroll() windowWidth: " + scrolldata.zoom.windowWidth);
+    scrolldata.zoom.displaySize = this._getContentViewerSize(content);
+    log("onTabScroll() displayWidth: " + scrolldata.zoom.displaySize.width);
 
     // Save zoom and scroll data.
     data.scrolldata = scrolldata;
@@ -758,23 +764,16 @@ SessionStore.prototype = {
     this.saveStateDelayed();
   },
 
-  _getViewportInfo: function ss_getViewportInfo(aDisplayWidth, aDisplayHeight, aWindow) {
-    let viewportInfo = {};
-    let defaultZoom = {}, allowZoom = {}, minZoom = {}, maxZoom ={},
-        width = {}, height = {}, autoSize = {};
+  _getContentViewerSize: function ss_getContentViewerSize(aWindow) {
+    let displaySize = {};
+    let width = {}, height = {};
     aWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(
-      Ci.nsIDOMWindowUtils).getViewportInfo(aDisplayWidth, aDisplayHeight,
-        defaultZoom, allowZoom, minZoom, maxZoom, width, height, autoSize);
+      Ci.nsIDOMWindowUtils).getContentViewerSize(width, height);
 
-    viewportInfo.defaultZoom = defaultZoom.value;
-    viewportInfo.allowZoom = allowZoom.value;
-    viewportInfo.minZoom = maxZoom.value;
-    viewportInfo.maxZoom = maxZoom.value;
-    viewportInfo.width = width.value;
-    viewportInfo.height = height.value;
-    viewportInfo.autoSize = autoSize.value;
+    displaySize.width = width.value;
+    displaySize.height = height.value;
 
-    return viewportInfo;
+    return displaySize;
   },
 
   saveStateDelayed: function ss_saveStateDelayed() {
@@ -1376,38 +1375,21 @@ SessionStore.prototype = {
   },
 
   /**
-  * Restores the zoom level of the window. This needs to be called before
-  * first paint/load (whichever comes first) to take any effect.
-  */
+   * Restores the zoom level of the window. This needs to be called before
+   * first paint/load (whichever comes first) to take any effect.
+   */
   _restoreZoom: function ss_restoreZoom(aScrollData, aBrowser) {
-    if (aScrollData && aScrollData.zoom) {
-      let recalculatedZoom = this._recalculateZoom(aScrollData.zoom);
-      log("_restoreZoom(), resolution: " + recalculatedZoom);
+    if (aScrollData && aScrollData.zoom && aScrollData.zoom.displaySize) {
+      log("_restoreZoom(), resolution: " + aScrollData.zoom.resolution +
+          ", old displayWidth: " + aScrollData.zoom.displaySize.width);
 
       let utils = aBrowser.contentWindow.QueryInterface(
         Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
       // Restore zoom level.
-      utils.setRestoreResolution(recalculatedZoom);
+      utils.setRestoreResolution(aScrollData.zoom.resolution,
+                                 aScrollData.zoom.displaySize.width,
+                                 aScrollData.zoom.displaySize.height);
     }
-  },
-
-  /**
-  * Recalculates the zoom level to account for a changed display width,
-  * e.g. because the device was rotated.
-  */
-  _recalculateZoom: function ss_recalculateZoom(aZoomData) {
-    let browserWin = Services.wm.getMostRecentWindow("navigator:browser");
-
-    // Pages with "width=device-width" won't need any zoom level scaling.
-    if (!aZoomData.autoSize) {
-      let oldWidth = aZoomData.windowWidth;
-      let newWidth = browserWin.outerWidth;
-      if (oldWidth != newWidth && oldWidth > 0 && newWidth > 0) {
-        log("_recalculateZoom(), old resolution: " + aZoomData.resolution);
-        return newWidth / oldWidth * aZoomData.resolution;
-      }
-    }
-    return aZoomData.resolution;
   },
 
   /**
@@ -1478,6 +1460,13 @@ SessionStore.prototype = {
 
       if (window.BrowserApp.selectedTab == tab) {
         this._restoreTab(tabData, tab.browser);
+
+        // We can now lift the general ban on tab data capturing,
+        // but we still need to protect the foreground tab until we're
+        // sure it's actually reloading after history restoring has finished.
+        tab.browser.__SS_restoreReloadPending = true;
+        this._startupRestoreFinished = true;
+        log("startupRestoreFinished = true");
 
         delete tab.browser.__SS_restore;
         tab.browser.removeAttribute("pending");

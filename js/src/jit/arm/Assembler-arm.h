@@ -1080,7 +1080,6 @@ class Operand
     Tag_ Tag : 3;
     uint32_t reg : 5;
     int32_t offset;
-    uint32_t data;
 
   public:
     explicit Operand(Register reg_)
@@ -1207,6 +1206,7 @@ class Assembler : public AssemblerShared
         LessThan = LT,
         LessThanOrEqual = LE,
         Overflow = VS,
+        CarrySet = CS,
         Signed = MI,
         NotSigned = PL,
         Zero = EQ,
@@ -1751,6 +1751,9 @@ class Assembler : public AssemblerShared
 
     static bool SupportsFloatingPoint() {
         return HasVFP();
+    }
+    static bool SupportsUnalignedAccesses() {
+        return HasARMv7();
     }
     static bool SupportsSimd() {
         return js::jit::SupportsSimd;

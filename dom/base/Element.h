@@ -140,6 +140,7 @@ class UndoManager;
 class DOMRect;
 class DOMRectList;
 class DestinationInsertionPointList;
+class Grid;
 
 // IID for the dom::Element interface
 #define NS_ELEMENT_IID \
@@ -830,6 +831,8 @@ public:
            0;
   }
 
+  void GetGridFragments(nsTArray<RefPtr<Grid>>& aResult);
+
   virtual already_AddRefed<UndoManager> GetUndoManager()
   {
     return nullptr;
@@ -952,6 +955,11 @@ public:
   const nsAttrValue* GetParsedAttr(nsIAtom* aAttr) const
   {
     return mAttrsAndChildren.GetAttr(aAttr);
+  }
+
+  const nsAttrValue* GetParsedAttr(nsIAtom* aAttr, int32_t aNameSpaceID) const
+  {
+    return mAttrsAndChildren.GetAttr(aAttr, aNameSpaceID);
   }
 
   /**

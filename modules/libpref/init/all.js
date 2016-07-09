@@ -579,11 +579,7 @@ pref("media.video_stats.enabled", true);
 pref("layers.amd-switchable-gfx.enabled", true);
 
 // Whether to use async panning and zooming
-pref("layers.async-pan-zoom.enabled", false);
-
-#ifdef MOZ_WIDGET_UIKIT
 pref("layers.async-pan-zoom.enabled", true);
-#endif
 
 // Whether to enable event region building during painting
 pref("layout.event-regions.enabled", false);
@@ -5276,8 +5272,6 @@ pref("browser.addon-watch.interval", 15000);
 pref("browser.addon-watch.interval", -1);
 #endif
 pref("browser.addon-watch.ignore", "[\"mochikit@mozilla.org\",\"special-powers@mozilla.org\",\"fxdevtools-adapters@mozilla.org\",\"fx-devtools\"]");
-// the percentage of time addons are allowed to use without being labeled slow
-pref("browser.addon-watch.percentage-limit", 5);
 
 // Search service settings
 pref("browser.search.log", false);

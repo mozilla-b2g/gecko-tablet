@@ -719,7 +719,7 @@ GeckoMediaPluginServiceParent::UnloadPlugins()
     MutexAutoLock lock(mMutex);
     // Move all plugins references to a local array. This way mMutex won't be
     // locked when calling CloseActive (to avoid inter-locking).
-    plugins = Move(mPlugins);
+    Swap(plugins, mPlugins);
   }
 
   LOGD(("%s::%s plugins:%u including async:%u", __CLASS__, __FUNCTION__,
@@ -1835,8 +1835,6 @@ GeckoMediaPluginServiceParent::GetById(uint32_t aPluginId)
 
 GMPServiceParent::~GMPServiceParent()
 {
-  RefPtr<DeleteTask<Transport>> task = new DeleteTask<Transport>(GetTransport());
-  XRE_GetIOMessageLoop()->PostTask(task.forget());
 }
 
 bool
