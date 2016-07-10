@@ -65,6 +65,7 @@ chrome.jar:
   content/system/net_error.html               (content/system/net_error.html)
   content/system/css                          (content/system/css/*.css)
   content/system/images                       (content/system/images/*.png)
+  content/system/images                       (content/system/images/*.gif)
   content/system/js                           (content/system/js/*.js)
 
 # Home
