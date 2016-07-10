@@ -283,12 +283,16 @@ body.task-manager-active .browser-window {
   position: absolute;
   overflow: hidden;
   pointer-events: none;
-  bottom: 32px;
+  bottom: 3.2rem;
   transform: translateY(100%);
 }
 
 #keyboard.active {
   transform: translateY(0);
+}
+
+body.task-manager-active #keyboard {
+  display: none;
 }
 
 #keyboard iframe {
