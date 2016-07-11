@@ -849,6 +849,9 @@ pref("webgl.can-lose-context-in-foreground", false);
 pref("memory_info_dumper.watch_fifo.enabled", true);
 pref("memory_info_dumper.watch_fifo.directory", "/data/local");
 
+// Temporary override for tablet prototype
+pref("general.useragent.override", "Mozilla/5.0 (Mobile; rv:50.0) Gecko/50.0 Firefox/50.0");
+
 // See ua-update.json.in for the packaged UA override list
 pref("general.useragent.updates.enabled", true);
 pref("general.useragent.updates.url", "https://dynamicua.cdn.mozilla.net/0/%APP_ID%");
