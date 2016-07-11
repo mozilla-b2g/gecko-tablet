@@ -16,6 +16,7 @@ var BrowserWindow = function(id, url) {
   this.currentURL = '';
   this.currentTitle = '';
   this.render(url);
+  this.pageIconURL = '';
   return this;
 };
 
@@ -61,6 +62,8 @@ BrowserWindow.prototype.render = function(url) {
     this.handleLoadStart.bind(this));
  this.frame.addEventListener('mozbrowserloadend',
     this.handleLoadEnd.bind(this));
+ this.frame.addEventListener('mozbrowsericonchange',
+    this.handleIconChange.bind(this));
  window.addEventListener('_setvolume', this.setVolume.bind(this));
  this.urlBar.addEventListener('focus', this.handleUrlBarFocus.bind(this));
  this.urlBar.addEventListener('blur', this.handleUrlBarBlur.bind(this));
@@ -116,6 +119,7 @@ BrowserWindow.prototype.destroy = function() {
  * @param {Event} e mozbrowserlocationchange event.
  */
 BrowserWindow.prototype.handleLocationChange = function(e) {
+  this.pageIconURL = '';
   var url = e.detail;
   if (url == 'about:blank' || url =='about:newtab') {
      this.urlBar.focus();
@@ -125,8 +129,6 @@ BrowserWindow.prototype.handleLocationChange = function(e) {
   var hostname = new URL(url).hostname;
   this.currentTitle = hostname;
   this.urlBar.value = hostname;
-
-  Places.updateSite(url);
 };
 
 /**
@@ -177,7 +179,19 @@ BrowserWindow.prototype.handleLoadStart = function(e) {
  */
 BrowserWindow.prototype.handleLoadEnd = function(e) {
   this.urlBar.classList.remove('loading');
-}
+  Places.updateSite(this.currentURL, this.pageIconURL);
+};
+
+/*
+ * Handle icon change.
+ *
+ * @param {Event} mozbrowsericonchange event.
+ */
+BrowserWindow.prototype.handleIconChange = function(e) {
+  if (e.detail.href) {
+    this.pageIconURL = e.detail.href
+  }
+};
 
 BrowserWindow.prototype.setVolume = function(e) {
   if (!e.detail.level) {
@@ -190,7 +204,7 @@ BrowserWindow.prototype.setVolume = function(e) {
     console.debug('Setting', ch, 'to', level);
     this._audioChannels[ch].setVolume(level);
   });
-}
+};
 
 /**
  *  Handle focus of URL bar.
