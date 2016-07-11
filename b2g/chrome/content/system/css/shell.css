@@ -312,6 +312,7 @@ body.task-manager-active .window-scrim {
   height: 100%;
   background-color: transparent;
   margin-top: -100%;
+  z-index: 1;
 }
 
 /* Browser Chrome */
@@ -402,7 +403,7 @@ body.task-manager-active .browser-chrome input {
 }
 
 body.task-manager-active #windows button.close-button {
-  z-index: 1;
+  z-index: 2;
 }
 
 body.task-manager-active .browser-chrome button.menu-button {
