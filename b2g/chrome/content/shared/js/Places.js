@@ -148,9 +148,10 @@ var Places = {
   /**
    * Add or update site in Sites data store.
    *
-   * @param <int> url URL of site.
+   * @param {String} url URL of site.
+   * @param {String} iconUrl URL of icon.
    */
-  updateSite: function(url) {
+  updateSite: function(url, iconUrl) {
     var transaction = this.db.transaction(this.SITES_STORE, 'readwrite');
     var objectStore = transaction.objectStore(this.SITES_STORE);
     var urlObject = new URL(url);
@@ -163,6 +164,7 @@ var Places = {
         var writeRequest = objectStore.add({
           'id': id,
           'startUrl': startUrl,
+          'iconUrl': iconUrl,
           'frecency': 1
         });
       // Otherwise update site frecency

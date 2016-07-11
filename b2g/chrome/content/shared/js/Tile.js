@@ -29,8 +29,11 @@ Tile.prototype.view = function() {
     var rgb = this._hexToRgb(this.siteObject.backgroundColor);
     backgroundBrightness = this._darkOrLight(rgb);
   }
-  if (this.siteObject.icons && this.siteObject.icons[0])
+  if (this.siteObject.icons && this.siteObject.icons[0]) {
     style += 'background-image: url(' + this.siteObject.icons[0].src +  ');'
+  } else if (this.siteObject.iconUrl) {
+    style += 'background-image: url(' + this.siteObject.iconUrl +  ');'
+  }
   var label = this.siteObject.name || this.siteObject.id;
   return '<li id="tile-' + this.siteObject.id +'" class="tile ' + backgroundBrightness
     + '" style="' + style + '"><span class="tile-name">' + label + '</span></li>';
