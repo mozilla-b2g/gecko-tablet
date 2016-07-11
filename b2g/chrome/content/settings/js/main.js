@@ -1,10 +1,10 @@
 require.config({
-  baseUrl: 'js',
+  baseUrl: 'chrome://b2g/content/settings/js',
   paths: {
-    'modules': 'modules',
-    'panels': 'panels',
-    'shared': '../../shared/js',
-    'views': '../views'
+    'modules': 'chrome://b2g/content/settings/js/modules',
+    'panels': 'chrome://b2g/content/settings/js/panels',
+    'shared': 'chrome://b2g/content/shared/js',
+    'views': 'chrome://b2g/content/settings/views'
   },
   // This is the default value of the loading timeout, we will disable the
   // timeout in the production build
@@ -2561,13 +2561,13 @@ define('modules/panel_cache',['require','modules/settings_panel','shared/lazy_lo
         return;
       }
 
-      LazyLoader.load(['../shared/css/action_menu.css',
-                       '../shared/css/confirm.css',
-                       '../shared/css/progress_activity.css',
-                       '../shared/elements/gaia-icons/bidi-helper.css',
-                       '../shared/elements/gaia_buttons/script.js',
-                       '../shared/elements/gaia_confirm/script.js',
-                       'style/apps.css'],
+      LazyLoader.load(['chrome://b2g/content/shared/css/action_menu.css',
+                       'chrome://b2g/content/shared/css/confirm.css',
+                       'chrome://b2g/content/shared/css/progress_activity.css',
+                       'chrome://b2g/content/shared/elements/gaia-icons/bidi-helper.css',
+                       'chrome://b2g/content/shared/elements/gaia_buttons/script.js',
+                       'chrome://b2g/content/shared/elements/gaia_confirm/script.js',
+                       'chrome://b2g/content/settings/style/apps.css'],
       function callback() {
         _panelStylesheetsLoaded = true;
       });

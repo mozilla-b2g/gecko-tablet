@@ -1,6 +1,9 @@
 /* global LazyLoader, InitialPanelHandler, AppStarter */
 /* exported InitialPanelHandler, AppStarter */
 
+window.GaiaSwitchBaseurl   = 'chrome://b2g/content/shared/elements/gaia_switch/';
+window.GaiaCheckboxBaseurl = 'chrome://b2g/content/shared/elements/gaia_checkbox/';
+
 /**
  * InitialPanelHandler provides basic interaction including navigation and
  * toggling settings before requirejs and other settings service get loaded.
@@ -346,8 +349,8 @@
      */
     _loadAlameda: function as_loadAlameda() {
       var scriptNode = document.createElement('script');
-      scriptNode.setAttribute('data-main', 'js/main.js');
-      scriptNode.src = 'js/vendor/alameda.js';
+      scriptNode.setAttribute('data-main', 'chrome://b2g/content/settings/js/main.js');
+      scriptNode.src = 'chrome://b2g/content/settings/js/vendor/alameda.js';
       document.head.appendChild(scriptNode);
     },
 
