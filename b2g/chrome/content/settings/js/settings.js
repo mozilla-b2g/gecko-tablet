@@ -76,10 +76,19 @@ window.Settings = {
       window.LaunchContext.activityHandler.targetPanelOptions;
   },
 
+  handleReset: function() {
+    Places.start().then((function() {
+      Places.clear();
+    }));
+  },
+
   init: function settings_init(options) {
     if (!this.hasMozSettings) {
       return;
     }
+
+    this.resetButton = document.getElementById('reset-button');
+    this.resetButton.addEventListener('click', this.handleReset.bind(this));
 
     this.SettingsService = options.SettingsService;
     this.ScreenLayout = options.ScreenLayout;

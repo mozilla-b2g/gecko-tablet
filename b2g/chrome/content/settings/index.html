@@ -12,6 +12,10 @@
 
     <!-- Manifest -->
     <link rel="manifest" href="manifest.webapp">
+    
+    <!-- Places -->
+    <script type="text/javascript" src="chrome://b2g/content/shared/js/Places.js"></script>
+    <script type="text/javascript" src="chrome://b2g/content/shared/js/Site.js"></script>
 
     <!-- Common style -->
     <link rel="stylesheet" type="text/css" href="chrome://b2g/content/shared/css/headers.css">
@@ -148,7 +152,7 @@
 
     <panel data-path="panels/wifi_status/panel"></panel>
 
-  --></section>
+  --><button type="button" id="reset-button">Reset Top Sites</button></section>
     <!-- Connectivity :: Wi-Fi :: Network Authentication -->
     <section role="region" class="dialog" id="wifi-auth"><!--
 
