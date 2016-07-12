@@ -242,5 +242,17 @@ var Places = {
         console.error('Failed to fetch list of pinned sites.');
       }
     }).bind(this));
+  },
+
+  /**
+   * Clear all data from the Places database.
+   */
+  clear: function() {
+    var transaction = this.db.transaction(this.SITES_STORE, 'readwrite');
+    var objectStore = transaction.objectStore(this.SITES_STORE);
+    var request = objectStore.clear();
+    request.onsuccess = (function() {
+      this.populate();
+    }).bind(this);
   }
 };
