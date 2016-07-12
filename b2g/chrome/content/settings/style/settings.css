@@ -332,3 +332,9 @@ section[role="status"] {
 section[role="status"].toast-visible {
   opacity: 1;
 }
+
+#reset-button {
+  visibility: visible;
+  position: fixed;
+  bottom: 1rem;
+}
