@@ -944,7 +944,7 @@ DecodeExport(Decoder& d, bool newFormat, ModuleGenerator& mg, CStringSet* dupSet
             return Fail(d, "expected export internal index");
 
         if (funcIndex >= mg.numFuncSigs())
-            return Fail(d, "export function index out of range");
+            return Fail(d, "exported function index out of bounds");
 
         if (!CheckTypeForJS(d, mg.funcSig(funcIndex)))
             return false;
@@ -953,7 +953,7 @@ DecodeExport(Decoder& d, bool newFormat, ModuleGenerator& mg, CStringSet* dupSet
         if (!fieldName)
             return false;
 
-        return mg.declareExport(Move(fieldName), funcIndex);
+        return mg.declareFuncExport(Move(fieldName), funcIndex);
     }
 
     UniqueChars fieldName = DecodeExportName(d, dupSet);
@@ -971,12 +971,22 @@ DecodeExport(Decoder& d, bool newFormat, ModuleGenerator& mg, CStringSet* dupSet
             return Fail(d, "expected export internal index");
 
         if (funcIndex >= mg.numFuncSigs())
-            return Fail(d, "export function index out of range");
+            return Fail(d, "exported function index out of bounds");
 
         if (!CheckTypeForJS(d, mg.funcSig(funcIndex)))
             return false;
 
-        return mg.declareExport(Move(fieldName), funcIndex);
+        return mg.declareFuncExport(Move(fieldName), funcIndex);
+      }
+      case DefinitionKind::Table: {
+        uint32_t tableIndex;
+        if (!d.readVarU32(&tableIndex))
+            return Fail(d, "expected table index");
+
+        if (tableIndex >= mg.tables().length())
+            return Fail(d, "exported table index out of bounds");
+
+        return mg.addTableExport(Move(fieldName));
       }
       case DefinitionKind::Memory: {
         uint32_t memoryIndex;
@@ -984,7 +994,7 @@ DecodeExport(Decoder& d, bool newFormat, ModuleGenerator& mg, CStringSet* dupSet
             return Fail(d, "expected memory index");
 
         if (memoryIndex > 0 || !mg.usesMemory())
-            return Fail(d, "memory index out of bounds");
+            return Fail(d, "exported memory index out of bounds");
 
         return mg.addMemoryExport(Move(fieldName));
       }
@@ -1214,6 +1224,8 @@ DecodeElemSection(Decoder& d, bool newFormat, Uint32Vector&& oldElems, ModuleGen
         for (uint32_t i = 0; i < numElems; i++) {
             if (!d.readVarU32(&seg.elems[i]))
                 return Fail(d, "failed to read element function index");
+            if (seg.elems[i] >= mg.numFuncSigs())
+                return Fail(d, "table element out of range");
         }
 
         prevEnd = seg.offset + seg.elems.length();
