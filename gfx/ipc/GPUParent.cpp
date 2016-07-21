@@ -5,12 +5,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "GPUParent.h"
 #include "gfxConfig.h"
+#include "gfxPlatform.h"
 #include "gfxPrefs.h"
 #include "GPUProcessHost.h"
+#include "VsyncBridgeParent.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/ipc/ProcessChild.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
 #include "mozilla/layers/CompositorThread.h"
+#include "mozilla/layers/ImageBridgeParent.h"
 
 namespace mozilla {
 namespace gfx {
@@ -38,6 +41,7 @@ GPUParent::Init(base::ProcessId aParentPid,
   // Ensure gfxPrefs are initialized.
   gfxPrefs::GetSingleton();
   CompositorThreadHolder::Start();
+  gfxPlatform::InitNullMetadata();
   return true;
 }
 
@@ -48,7 +52,20 @@ GPUParent::RecvInit(nsTArray<GfxPrefSetting>&& prefs)
     gfxPrefs::Pref* pref = gfxPrefs::all()[setting.index()];
     pref->SetCachedValue(setting.value());
   }
+  return true;
+}
 
+bool
+GPUParent::RecvInitVsyncBridge(Endpoint<PVsyncBridgeParent>&& aVsyncEndpoint)
+{
+  VsyncBridgeParent::Start(Move(aVsyncEndpoint));
+  return true;
+}
+
+bool
+GPUParent::RecvInitImageBridge(Endpoint<PImageBridgeParent>&& aEndpoint)
+{
+  ImageBridgeParent::CreateForGPUProcess(Move(aEndpoint));
   return true;
 }
 
@@ -89,6 +106,12 @@ GPUParent::RecvNewContentCompositorBridge(Endpoint<PCompositorBridgeParent>&& aE
   return CompositorBridgeParent::CreateForContent(Move(aEndpoint));
 }
 
+bool
+GPUParent::RecvNewContentImageBridge(Endpoint<PImageBridgeParent>&& aEndpoint)
+{
+  return ImageBridgeParent::CreateForContent(Move(aEndpoint));
+}
+
 void
 GPUParent::ActorDestroy(ActorDestroyReason aWhy)
 {
@@ -104,6 +127,9 @@ GPUParent::ActorDestroy(ActorDestroyReason aWhy)
   ProcessChild::QuickExit();
 #endif
 
+  if (mVsyncBridge) {
+    mVsyncBridge->Shutdown();
+  }
   CompositorThreadHolder::Shutdown();
   XRE_ShutdownChildProcess();
 }

@@ -97,6 +97,7 @@ hardware (via AudioStream).
 #include "MediaStatistics.h"
 #include "MediaTimer.h"
 #include "ImageContainer.h"
+#include "SeekJob.h"
 #include "SeekTask.h"
 
 namespace mozilla {
@@ -856,8 +857,10 @@ private:
   // True if all video frames are already rendered.
   Watchable<bool> mVideoCompleted;
 
-  // Set if MDSM receives dormant request during reading metadata.
-  Maybe<bool> mPendingDormant;
+  // True if we need to enter dormant state after reading metadata. Note that
+  // we can't enter dormant state until reading metadata is done for some
+  // limitations of the reader.
+  bool mPendingDormant = false;
 
   // Flag whether we notify metadata before decoding the first frame or after.
   //
@@ -866,11 +869,6 @@ private:
   // send suppressed event visibility for those cases. This code can probably be
   // simplified.
   bool mNotifyMetadataBeforeFirstFrame;
-
-  // True if we've dispatched an event to the decode task queue to call
-  // DecodeThreadRun(). We use this flag to prevent us from dispatching
-  // unnecessary runnables, since the decode thread runs in a loop.
-  bool mDispatchedEventToDecode;
 
   // If this is true while we're in buffering mode, we can exit early,
   // as it's likely we may be able to playback. This happens when we enter

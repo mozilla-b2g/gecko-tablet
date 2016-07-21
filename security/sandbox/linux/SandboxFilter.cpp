@@ -468,6 +468,7 @@ public:
     case SEMGET:
     case SEMCTL:
     case SEMOP:
+    case MSGGET:
       return Some(Allow());
     default:
       return SandboxPolicyCommon::EvaluateIpcCall(aCall);
@@ -646,6 +647,7 @@ public:
 #endif
 
     case __NR_mlock:
+    case __NR_munlock:
       return Allow();
 
       // We can't usefully allow fork+exec, even on a temporary basis;

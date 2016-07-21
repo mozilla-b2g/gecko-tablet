@@ -6,10 +6,13 @@
 #ifndef _include_gfx_ipc_GPUParent_h__
 #define _include_gfx_ipc_GPUParent_h__
 
+#include "mozilla/RefPtr.h"
 #include "mozilla/gfx/PGPUParent.h"
 
 namespace mozilla {
 namespace gfx {
+
+class VsyncBridgeParent;
 
 class GPUParent final : public PGPUParent
 {
@@ -22,6 +25,8 @@ public:
             IPC::Channel* aChannel);
 
   bool RecvInit(nsTArray<GfxPrefSetting>&& prefs) override;
+  bool RecvInitVsyncBridge(Endpoint<PVsyncBridgeParent>&& aVsyncEndpoint) override;
+  bool RecvInitImageBridge(Endpoint<PImageBridgeParent>&& aEndpoint) override;
   bool RecvUpdatePref(const GfxPrefSetting& pref) override;
   bool RecvNewWidgetCompositor(
     Endpoint<PCompositorBridgeParent>&& aEndpoint,
@@ -29,8 +34,12 @@ public:
     const bool& aUseExternalSurface,
     const IntSize& aSurfaceSize) override;
   bool RecvNewContentCompositorBridge(Endpoint<PCompositorBridgeParent>&& aEndpoint) override;
+  bool RecvNewContentImageBridge(Endpoint<PImageBridgeParent>&& aEndpoint) override;
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
+
+private:
+  RefPtr<VsyncBridgeParent> mVsyncBridge;
 };
 
 } // namespace gfx
