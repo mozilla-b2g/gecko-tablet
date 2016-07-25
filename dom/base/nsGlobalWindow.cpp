@@ -2745,8 +2745,16 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
     aDocument->NodePrincipal()->Equals(existing, &sameOrigin);
     MOZ_ASSERT(sameOrigin);
 #endif
-    JS_SetCompartmentPrincipals(compartment,
-                                nsJSPrincipals::get(aDocument->NodePrincipal()));
+    MOZ_ASSERT_IF(aDocument == oldDoc,
+                  xpc::GetCompartmentPrincipal(compartment) ==
+                  aDocument->NodePrincipal());
+    if (aDocument != oldDoc) {
+      JS_SetCompartmentPrincipals(compartment,
+                                  nsJSPrincipals::get(aDocument->NodePrincipal()));
+      // Make sure we clear out the old content XBL scope, so the new one will
+      // get created with a principal that subsumes our new principal.
+      xpc::ClearContentXBLScope(newInnerGlobal);
+    }
   } else {
     if (aState) {
       newInnerWindow = wsh->GetInnerWindow();
@@ -11833,7 +11841,7 @@ nsGlobalWindow::OpenInternal(const nsAString& aUrl, const nsAString& aName,
       // !aCalledNoScript.
       rv = pwwatch->OpenWindow2(AsOuter(), url.get(), name_ptr,
                                 options_ptr, /* aCalledFromScript = */ true,
-                                aDialog, aNavigate, nullptr, argv,
+                                aDialog, aNavigate, argv,
                                 1.0f, 0, getter_AddRefs(domReturn));
     } else {
       // Force a system caller here so that the window watcher won't screw us
@@ -11853,7 +11861,7 @@ nsGlobalWindow::OpenInternal(const nsAString& aUrl, const nsAString& aName,
 
       rv = pwwatch->OpenWindow2(AsOuter(), url.get(), name_ptr,
                                 options_ptr, /* aCalledFromScript = */ false,
-                                aDialog, aNavigate, nullptr, aExtraArgument,
+                                aDialog, aNavigate, aExtraArgument,
                                 1.0f, 0, getter_AddRefs(domReturn));
 
     }

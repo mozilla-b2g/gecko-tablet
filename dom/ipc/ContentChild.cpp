@@ -862,7 +862,7 @@ ContentChild::ProvideWindowCommon(TabChild* aTabOpener,
     if (!SendCreateWindow(aTabOpener, newChild, renderFrame,
                           aChromeFlags, aCalledFromJS, aPositionSpecified,
                           aSizeSpecified,
-                          name, features,
+                          features,
                           baseURIString,
                           openerDocShell
                             ? openerDocShell->GetOriginAttributes()
@@ -1422,7 +1422,8 @@ ContentChild::RecvSetProcessSandbox(const MaybeFileDesc& aBroker)
 #endif
   int brokerFd = -1;
   if (aBroker.type() == MaybeFileDesc::TFileDescriptor) {
-      brokerFd = aBroker.get_FileDescriptor().PlatformHandle();
+      auto fd = aBroker.get_FileDescriptor().ClonePlatformHandle();
+      brokerFd = fd.release();
       // brokerFd < 0 means to allow direct filesystem access, so
       // make absolutely sure that doesn't happen if the parent
       // didn't intend it.
@@ -1683,6 +1684,9 @@ bool
 ContentChild::RecvNotifyGMPsChanged()
 {
   GMPDecoderModule::UpdateUsableCodecs();
+  MOZ_ASSERT(NS_IsMainThread());
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  obs->NotifyObservers(nullptr, "gmp-changed", nullptr);
   return true;
 }
 

@@ -439,9 +439,11 @@ InitGlobalObjectOptions(JS::CompartmentOptions& aOptions,
         // Make sure [SecureContext] APIs are visible:
         aOptions.creationOptions().setSecureContext(true);
 
+#if 0 // TODO: Reenable in Bug 1288653
         // Enable the ECMA-402 experimental formatToParts in any chrome page
         aOptions.creationOptions()
                 .setExperimentalDateTimeFormatFormatToPartsEnabled(true);
+#endif
     }
 
     if (shouldDiscardSystemSource) {
